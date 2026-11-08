@@ -111,6 +111,9 @@ in [docs/alpha1.md](docs/alpha1.md).
   map; existing product reads supply edge numbering. Context ownership and all post-scan
   placement/hash work use compact indexes and one forward replay, including gzip sources.
 
+- `recognise_with_evidence` 共享一次识别与证据分析，保留两份完整输出及证据拒绝原因。
+  Rust 文件/字节入口和 Python 绑定、类型声明见 [共享分析](docs/shared-analysis.md)。
+
 - `internal_bevels` recognises bounded concave planar corner treatments with measured
   support legs, angle and run, backed by a complete material-filled wedge proof (#213).
   The optional sibling family preserves existing chamfer ranks and saved Spec references;
