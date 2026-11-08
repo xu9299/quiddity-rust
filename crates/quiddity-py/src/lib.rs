@@ -71,6 +71,16 @@ fn recognise(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 #[pyfunction]
+fn recognise_with_evidence(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
+    let input = Input::extract(step)?;
+    py.detach(|| match input {
+        Input::Path(path) => file_api::recognise_with_evidence_file(&path),
+        Input::Bytes(bytes) => file_api::recognise_with_evidence_bytes(bytes),
+    })
+    .map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
 #[pyo3(signature = (step, framed=false))]
 fn evidence(py: Python<'_>, step: &Bound<'_, PyAny>, framed: bool) -> PyResult<String> {
     let input = Input::extract(step)?;
@@ -207,6 +217,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(recognise, m)?)?;
     m.add_function(wrap_pyfunction!(_manifest, m)?)?;
     m.add_class::<ManifestHandle>()?;
+    m.add_function(wrap_pyfunction!(recognise_with_evidence, m)?)?;
     m.add_function(wrap_pyfunction!(evidence, m)?)?;
     m.add_function(wrap_pyfunction!(anchor, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprints, m)?)?;
