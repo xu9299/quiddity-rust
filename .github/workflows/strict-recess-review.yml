@@ -1,0 +1,112 @@
+# Local proposal only. This file is not installed in any remote repository.
+# Push this workflow on a separate validation branch of the fork only after user approval.
+# It never pushes commits, opens a PR, or accepts changes to existing expectations.
+name: Review strict snapshot reproduction
+
+on:
+  push:
+    branches: [validation/unowned-recess-strict-20261110]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  clean-baseline:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: b590592035733d8ac9fa5b3144bb5d969bda89a0
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+      - name: Strict replay of unchanged upstream expectations
+        run: cargo run -p snapshot-tool --release -- --check 2>&1 | tee ../validation-logs/baseline-strict.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: clean-baseline-strict-evidence
+          path: validation-logs/
+          retention-days: 7
+
+  fixed-source:
+    needs: clean-baseline
+    runs-on: macos-latest
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: f4941f1b3f0ee67654858d58389d7fa0781cf6ac
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+      - name: Format and lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Verify the reviewed expectation scope
+        run: |
+          git diff --exit-code b590592035733d8ac9fa5b3144bb5d969bda89a0 -- tests/fixtures/rust-snapshot/ ':(exclude)tests/fixtures/rust-snapshot/provenance.json' ':(exclude)tests/fixtures/rust-snapshot/unowned_recesses.json.gz'
+          cargo run -p snapshot-tool --release -- --diff b590592035733d8ac9fa5b3144bb5d969bda89a0 2>&1 | tee ../validation-logs/decompressed-diff.log
+          shasum -a 256 tests/fixtures/rust-snapshot/unowned_recesses.json.gz | tee ../validation-logs/new-snapshot-sha256.log
+      - name: Strict replay
+        run: cargo run -p snapshot-tool --release -- --check 2>&1 | tee ../validation-logs/fixed-strict.log
+      - name: Complete required workspace tests
+        run: cargo test --workspace --release 2>&1 | tee ../validation-logs/workspace-tests.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: fixed-source-validation-evidence
+          path: |
+            validation-logs/
+            source/tests/fixtures/rust-snapshot/provenance.json
+            source/tests/fixtures/rust-snapshot/unowned_recesses.json.gz
+          retention-days: 7
