@@ -141,8 +141,15 @@ fn publish(
     }
 }
 
-/// Recognise and project evidence from one inventory. Evidence uses the inferred part
-/// frame when available, otherwise file coordinates. Its failure does not erase recognition.
+/// Recognise and project evidence from one inventory.
+///
+/// Evidence uses part coordinates whenever recognition infers a frame, and file
+/// coordinates otherwise. This choice is automatic: unlike
+/// [`crate::evidence_view::document`], this function has no independent `framed`
+/// argument. Call that evidence API directly when a fixed coordinate mode is required.
+/// Recognition document parameters remain in file coordinates.
+///
+/// Evidence failure does not erase recognition.
 /// Strict/local-degradation retries and publication post-pass retries remain intact.
 pub fn recognise_with_evidence(
     part: &Part,
