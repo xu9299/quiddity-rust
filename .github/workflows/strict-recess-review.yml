@@ -21,7 +21,7 @@ env:
 
 jobs:
   clean-baseline:
-    runs-on: macos-26-intel
+    runs-on: macos-15
     timeout-minutes: 180
     defaults:
       run:
@@ -60,7 +60,7 @@ jobs:
 
   fixed-source:
     needs: clean-baseline
-    runs-on: macos-26-intel
+    runs-on: macos-15
     timeout-minutes: 360
     defaults:
       run:
