@@ -7,6 +7,13 @@ on:
   push:
     branches: [validation/unowned-recess-strict-20261110]
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Validation suite (strict replay remains a separate gate)
+        required: true
+        default: strict
+        type: choice
+        options: [strict, linux]
 
 permissions:
   contents: read
@@ -21,6 +28,7 @@ env:
 
 jobs:
   clean-baseline:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'strict'
     runs-on: macos-15
     timeout-minutes: 180
     defaults:
@@ -109,4 +117,58 @@ jobs:
             validation-logs/
             source/tests/fixtures/rust-snapshot/provenance.json
             source/tests/fixtures/rust-snapshot/unowned_recesses.json.gz
+          retention-days: 7
+
+  ordinary-linux:
+    if: github.event_name == 'push' || inputs.suite == 'linux'
+    name: Complete Linux regression (comparison bands and coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/verified-linux
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: f4941f1b3f0ee67654858d58389d7fa0781cf6ac
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record pinned source and environment
+        run: |
+          mkdir -p ../validation-logs ../verified-linux
+          rustup toolchain install
+          { git rev-parse HEAD; uname -a; cat /etc/os-release; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          git diff --exit-code b590592035733d8ac9fa5b3144bb5d969bda89a0 -- tests/fixtures/rust-snapshot/ ':(exclude)tests/fixtures/rust-snapshot/provenance.json' ':(exclude)tests/fixtures/rust-snapshot/unowned_recesses.json.gz'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+      - name: Format and lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Complete required workspace tests
+        run: cargo test --workspace --release 2>&1 | tee ../validation-logs/workspace-tests.log
+      - name: Validate complete producer coverage and provenance
+        run: |
+          cargo run -p snapshot-tool --release -- --check --coverage-only --verify-dir "$QUIDDITY_SNAPSHOT_VERIFY_DIR" 2>&1 | tee ../validation-logs/coverage.log
+          sha256sum tests/fixtures/rust-snapshot/unowned_recesses.json.gz ../verified-linux/unowned_recesses.json.gz | tee ../validation-logs/new-snapshot-sha256.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: linux-reviewed-fix-evidence
+          path: |
+            validation-logs/
+            verified-linux/
+            source/tests/fixtures/rust-snapshot/provenance.json
           retention-days: 7
