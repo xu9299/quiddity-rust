@@ -75,3 +75,12 @@ the public binding, type declaration, path/bytes inputs, digests and error seman
 These tests supplement the existing Rust snapshots and independent geometry, label,
 motion-invariance, inventory-floor and NIST checks. They do not replace those checks,
 change snapshot expectations or loosen comparison tolerances.
+
+## Instruction-count benchmark
+
+The optional [Windows benchmark](../tools/shared_analysis/README.md) compares both
+call paths using DynamoRIO software instruction counting in the native module.
+It validates the counter against known assembly loops and verifies complete outputs
+against an uninstrumented run. DynamoRIO is a development tool; no application or
+Python-package dependency is added. The measurement scope and build provenance are
+documented in the [benchmark report](../tools/shared_analysis/benchmark-windows-msvc.md).

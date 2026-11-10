@@ -1,0 +1,132 @@
+{
+  "source_commit": "54d2b7a3e4e97e91f4705453ae6f0fef4f6ecc00",
+  "python": "3.14.6",
+  "platform": "Windows-10-10.0.19041-SP0",
+  "native_sha256": "39994ca03abc347857c79689b2e3f5a793abd4fd59e32f9ddaf1802a724b7c6e",
+  "repetitions": 8,
+  "scope": "Executed application instructions inside quiddity's _native.pyd, summed across threads within explicit API-call regions. Imported libraries, kernel code and Python interpreter instructions are excluded.",
+  "complete": true,
+  "uninstrumented_complete_outputs_equal": true,
+  "counter": {
+    "tool": "DynamoRIO software dynamic instruction instrumentation",
+    "client_sha256": "969f5a239504c2a219ebcdacd20a2ee273633f44df2b08d4672644e2706a9392",
+    "calibration_library_sha256": "471ef94b6d54f335a57cc7f4d1d4d449d1cdd28b890b3615cd9e31c225520d96",
+    "runtime_sha256": "e00e2f367978d35b841164219ff18bc7dc52809af2361174448744b1cfd0b3d8",
+    "tool_sources_sha256": {
+      "instruction_counter.c": "7a5f5dac401ea645648c7500365908c97ea1f22c74d788d007ec8217b7eb7bd9",
+      "calibration.asm": "f1d9fe3adc9dc735dd02159b9dccc11fafe491e49a1b084c02f3b6333f2f3459",
+      "build_counter.ps1": "d229569df7522f30a91d76540e606c594a28bfbb06e98a48d697badf9bb4fdd8",
+      "benchmark_instructions.py": "cc8602dcda43f4f9433ce2665c11e08e52be2add03509ae2f18f9c519d5ee79c"
+    },
+    "hardware_pmu": false,
+    "release": "11.91.20763",
+    "options": [
+      "-thread_private"
+    ],
+    "archive_sha256": "ea3dad4ae6e39228fe87b5d4d7bc3a53fafdb6161ee5ba6a2e98fb64f8a7e0d4",
+    "calibration_regions_verified": 134
+  },
+  "cases": [
+    {
+      "input": "golden_simple_through_hole.step",
+      "sha256": "478471dc57efaaa393d018d69094f40239c1df7d16cacddc4138baa5b3bc641a",
+      "framed": true,
+      "complete_outputs_equal": true,
+      "median_instructions": {
+        "separate": 824343061.5,
+        "shared": 471305709.5
+      },
+      "reduction_percent": 42.82650858461796,
+      "region_prefix": "case0",
+      "paired_trials": 8,
+      "paired_reduction_percent_range": [
+        42.82648138002132,
+        42.82654508945449
+      ],
+      "complete_output_sha256": "3f5d57b5cf177e0a6e712c50be86142169d365fa2d06700b44864b7b428605e0"
+    },
+    {
+      "input": "golden_bolt_circle_and_rectangular_grid.step",
+      "sha256": "0099dd4bd54e0023fbb4f38ff58ad569e018ea3b526ab3878b622b0bd4519298",
+      "framed": true,
+      "complete_outputs_equal": true,
+      "median_instructions": {
+        "separate": 2930209649.5,
+        "shared": 1810924571.0
+      },
+      "reduction_percent": 38.19812274152433,
+      "region_prefix": "case1",
+      "paired_trials": 8,
+      "paired_reduction_percent_range": [
+        38.19810090811219,
+        38.19813381889799
+      ],
+      "complete_output_sha256": "88449a65433f07892e8bf2a1d53ff35af6e7c902c8583696416a37b80c085a5e"
+    },
+    {
+      "input": "golden_blind_pockets_and_pocket_patterns.step",
+      "sha256": "01822f0663a5ddf689f2215b91c4ba24b79558ce857ad32642894565b43fe1d8",
+      "framed": true,
+      "complete_outputs_equal": true,
+      "median_instructions": {
+        "separate": 1052141749.5,
+        "shared": 633556576.5
+      },
+      "reduction_percent": 39.78410448962039,
+      "region_prefix": "case2",
+      "paired_trials": 8,
+      "paired_reduction_percent_range": [
+        39.78405000919063,
+        39.78416666642589
+      ],
+      "complete_output_sha256": "2516b6a96dc0aceb67ed1f07f086b29705a092ed5c00461f143a6180c9fbdd4d"
+    },
+    {
+      "input": "turned_body_disc.step",
+      "sha256": "ca872dd9d70953c5393bb74bcc9ab3b409f9974edf4899104183c8e90dbf5a31",
+      "framed": true,
+      "complete_outputs_equal": true,
+      "median_instructions": {
+        "separate": 864920651.0,
+        "shared": 503680383.0
+      },
+      "reduction_percent": 41.7657119855264,
+      "region_prefix": "case3",
+      "paired_trials": 8,
+      "paired_reduction_percent_range": [
+        41.7656770242698,
+        41.76572174215287
+      ],
+      "complete_output_sha256": "875f1306a8709d4d1b04caae463174aadd422c84068632e232e2ae67108fa8eb"
+    },
+    {
+      "input": "@corpus/inventory_refusal/13975.step.gz",
+      "sha256": "c3936be1348c5b4b3a0f10eade3b2ec443d65673eee474fc81ef62b021de8ce2",
+      "framed": true,
+      "complete_outputs_equal": true,
+      "median_instructions": {
+        "separate": 937900373.5,
+        "shared": 526663264.5
+      },
+      "reduction_percent": 43.84656628991096,
+      "region_prefix": "case4",
+      "paired_trials": 8,
+      "paired_reduction_percent_range": [
+        43.84653536292892,
+        43.8465967394894
+      ],
+      "complete_output_sha256": "b084c03bcab7897a4cff0d9569fe70e2f36f38d8fafd0c4e0b018208fa623c7f"
+    }
+  ],
+  "paired_trials_with_reduction": 40,
+  "paired_trials": 40,
+  "paired_reduction_percent_range": [
+    38.19810090811219,
+    43.8465967394894
+  ],
+  "engine_build_commit": "54d2b7a3e4e97e91f4705453ae6f0fef4f6ecc00",
+  "base_commit": "92ad8c6b3a630c77293d8decb9a976741f13063c",
+  "corpus_commit": "3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f",
+  "windows-msvc-counts.jsonl_sha256": "f8792353776dfc5e40a066e8a15a2004c7f4e95aa0306e62eee369de17f309a3",
+  "windows-msvc-calibration.jsonl_sha256": "77a083171b8b860c8ec7c19d27f7dc91407b998dc2a141cb27609747ef204a8f"
+}
