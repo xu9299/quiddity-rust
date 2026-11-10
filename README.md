@@ -53,8 +53,9 @@ for feature in document["records"]:
     print(feature["family"], feature["parameters"], feature["faces"])
 ```
 
-同时需要完整识别与面证据时，可使用 [`recognise_with_evidence`](docs/shared-analysis.md)
-共享分析；两份文档保留各自的类别、坐标与错误语义。
+When both complete recognition and face evidence are needed,
+[`recognise_with_evidence`](docs/shared-analysis.md) shares their analysis while
+preserving each document's categories, coordinates and error semantics.
 
 ```rust
 let part = quiddity::read_step_file(std::path::Path::new("part.step"))?;
