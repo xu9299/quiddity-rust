@@ -4,6 +4,14 @@ An exact B-rep geometry kernel in pure Rust, with no OpenCascade or other native
 It is the kernel under [quiddity](https://crates.io/crates/quiddity), which recognises
 manufacturing features. Use haecceity directly when you need the geometry itself.
 
+Face moments are computed on first use and retained with the immutable part, including an
+unmeasurable result. Transforming a part creates fresh geometry caches. Boundary quadrature
+only locates a candidate corner when its adaptive panel can still use the split; the initial
+boundary cuts, integration nodes, numerical tolerances, complete moment components and
+refusal rules are unchanged. Once an accepted panel's unresolved error exceeds the face's
+fixed floor, integration stops with the same missing result: later panels cannot decrease
+the maximum error that already requires the face to be refused.
+
 - **STEP:** reads AP203, AP214 and AP242 files (plain or gzipped) into a B-rep `Part`:
   solids, faces, edges and their exact surfaces and curves. A malformed or unsupported file is
   refused with a typed error, never a panic.
