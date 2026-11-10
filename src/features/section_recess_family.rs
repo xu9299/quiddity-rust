@@ -14,10 +14,9 @@
 //! [`SectionRecessRefusal`]; and the accepted pockets' derived patterns are re-expressed over
 //! the kept records' section midpoints where they reconstruct them.
 //!
-//! A value that cannot be published (Python's `LegacySectionProjectionError`) drops only that
-//! candidate, which then appears as a refusal; any other Python `ValueError` (a lost body, an
-//! inconsistent record) refuses the whole projection with Python's message
-//! ([`SectionRecessFamilyError`]), as it refuses the whole recognition there.
+//! A value that cannot be published drops only that candidate, which then appears as a
+//! refusal. Other projection errors return [`SectionRecessFamilyError`]; aggregate recognition
+//! and evidence record this family failure while retaining independent families.
 //! A source candidate without common body authority is instead a bodyless discovery
 //! refusal: retaining an unproved physical candidate does not authorize a material recess.
 
@@ -63,9 +62,8 @@ use crate::kernel::py;
 use crate::kernel::sampling::sample_edge;
 use crate::kernel::sweep::extrude_face;
 
-/// The projection's refusal, with Python's `ValueError` message: the reconciliation's, a native
-/// discovery's, or the projection's own (an accepted record that lost its body, a value Python
-/// builds outside its publication guard that fails its checks).
+/// Failure of the unified projection. Standalone projection APIs return it; aggregate
+/// recognition and evidence report it in the family failure ledger.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SectionRecessFamilyError(pub String);
 
@@ -280,59 +278,6 @@ impl<'i> Accepted<'i> {
 
 fn sorted(faces: &BTreeSet<usize>) -> Vec<usize> {
     faces.iter().copied().collect()
-}
-
-#[cfg(test)]
-mod authority_tests {
-    use super::*;
-
-    #[test]
-    fn unowned_recess_eligibility_checks_consulted_faces_in_every_source_family() {
-        let part = crate::read_step_file(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/unowned_recess_mixed.step.gz"),
-        )
-        .unwrap();
-        let owned = part.faces.iter().position(|f| f.solid.is_some()).unwrap();
-        let free = part.faces.iter().position(|f| f.solid.is_none()).unwrap();
-        let original = super::super::inventory(&part).unwrap();
-        for field in [
-            "channels",
-            "rectangular_blind_slots",
-            "round_bottom_blind_slots",
-            "pockets",
-            "prismatic_pockets",
-            "edge_open_circular_pockets",
-            "edge_open_prismatic_recesses",
-            "section_passages",
-        ] {
-            let mut inventory = original.clone();
-            inventory.dispositions.clear();
-            inventory
-                .physical
-                .defining
-                .insert(field, vec![vec![owned], vec![owned]]);
-            inventory
-                .constituent
-                .insert(field, vec![vec![owned], vec![owned, free]]);
-            let accepted = Accepted::new(&part, &inventory);
-            let records = ["healthy", "free consulted face"];
-            let kept = accepted.of(field, &records);
-            assert_eq!(kept.len(), 1, "{field}");
-            assert_eq!(*kept[0].0, "healthy");
-            assert_eq!(kept[0].1.source, (field, 0));
-            assert!(
-                accepted
-                    .source_refusals
-                    .iter()
-                    .any(|r| r.reason == "missing_common_valid_solid"
-                        && r.faces.contains(&owned)
-                        && r.faces.contains(&free)),
-                "{field}"
-            );
-            assert_eq!(inventory.constituent[field][1], vec![owned, free]);
-        }
-    }
 }
 
 fn owner_of(part: &Part, faces: &BTreeSet<usize>) -> Option<usize> {
@@ -2268,4 +2213,57 @@ fn section_patterns(
         }
     }
     Ok(allocated)
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+
+    #[test]
+    fn unowned_recess_eligibility_checks_consulted_faces_in_every_source_family() {
+        let part = crate::read_step_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/unowned_recess_mixed.step.gz"),
+        )
+        .unwrap();
+        let owned = part.faces.iter().position(|f| f.solid.is_some()).unwrap();
+        let free = part.faces.iter().position(|f| f.solid.is_none()).unwrap();
+        let original = super::super::inventory(&part).unwrap();
+        for field in [
+            "channels",
+            "rectangular_blind_slots",
+            "round_bottom_blind_slots",
+            "pockets",
+            "prismatic_pockets",
+            "edge_open_circular_pockets",
+            "edge_open_prismatic_recesses",
+            "section_passages",
+        ] {
+            let mut inventory = original.clone();
+            inventory.dispositions.clear();
+            inventory
+                .physical
+                .defining
+                .insert(field, vec![vec![owned], vec![owned]]);
+            inventory
+                .constituent
+                .insert(field, vec![vec![owned], vec![owned, free]]);
+            let accepted = Accepted::new(&part, &inventory);
+            let records = ["healthy", "free consulted face"];
+            let kept = accepted.of(field, &records);
+            assert_eq!(kept.len(), 1, "{field}");
+            assert_eq!(*kept[0].0, "healthy");
+            assert_eq!(kept[0].1.source, (field, 0));
+            assert!(
+                accepted
+                    .source_refusals
+                    .iter()
+                    .any(|r| r.reason == "missing_common_valid_solid"
+                        && r.faces.contains(&owned)
+                        && r.faces.contains(&free)),
+                "{field}"
+            );
+            assert_eq!(inventory.constituent[field][1], vec![owned, free]);
+        }
+    }
 }
