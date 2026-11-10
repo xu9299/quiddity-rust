@@ -37,6 +37,9 @@ fn shared_analysis_matches_complete_documents() {
         "golden_blind_pockets_and_pocket_patterns.step",
         "golden_gusset_rib_patterns.step",
         "golden_oriented_chamfer.step",
+        "pocket_floor_fillet.step",
+        "pocket_partial_floor_fillet.step",
+        "pocket_floor_island.step.gz",
         "open_shell.step",
         "broken/unresolved_surface.step",
     ] {

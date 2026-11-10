@@ -298,6 +298,7 @@ mod tests {
             ("pockets", "discover"),
             ("section_recesses", "section_recess_projection"),
             ("slots", "claim_rectangular_end_walls"),
+            ("pockets", "claim_floor_spheres"),
             ("cylindrical_profiles", "append"),
         ] {
             let rec = injected(family, stage, || correspondence::recognise(&part));

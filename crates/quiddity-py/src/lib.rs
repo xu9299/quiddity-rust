@@ -70,6 +70,14 @@ fn recognise(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
         .map_err(PyValueError::new_err)
 }
 
+/// Return complete recognition and evidence as JSON from shared analysis.
+///
+/// Evidence uses part coordinates whenever a frame is inferred, and file coordinates
+/// otherwise. This choice is automatic; there is no independent ``framed`` argument.
+/// Use ``evidence(step, framed=False)`` for fixed file coordinates, or the existing
+/// ``evidence`` API with its explicit ``framed`` option for caller-selected framing.
+/// Recognition document parameters remain in file coordinates. An evidence refusal
+/// preserves recognition and is reported in ``evidence_error`` with ``evidence: null``.
 #[pyfunction]
 fn recognise_with_evidence(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
     let input = Input::extract(step)?;
