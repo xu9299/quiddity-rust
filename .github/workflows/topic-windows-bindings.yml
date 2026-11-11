@@ -1,0 +1,147 @@
+name: Rebased topic Windows binding validation 20261112
+permissions:
+  contents: read
+env:
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  CARGO_BUILD_JOBS: '4'
+  RUST_TEST_THREADS: '4'
+  RUST_MIN_STACK: '67108864'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: utf-8
+  UV_CACHE_DIR: ${{ github.workspace }}/uv-cache
+jobs:
+  bindings:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - topic: '234'
+          source: 097fb8014dabb72bc2c27b8c7853da836ba6a193
+          filter: unowned_recess
+        - topic: '227'
+          source: 3e0bf9d7b544c825de57d865e0d89d7eddd6435b
+          filter: shared_analysis
+        - topic: combined
+          source: c3b97e2af9020052c216ed9b807fcfc16ea296e2
+          filter: shared_analysis
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: source
+    steps:
+    - name: Preserve Git blob line endings
+      working-directory: ${{ github.workspace }}
+      run: 'git config --global core.autocrlf false
+
+        git config --global core.eol lf
+
+        '
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: xu9299/quiddity-rust
+        ref: ${{ matrix.source }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: pzfreo/quiddity-corpus
+        ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+        path: quiddity-corpus
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+    - name: Prepare the pinned interpreter and record the environment
+      run: "$ErrorActionPreference = 'Stop'\n$report = Join-Path $env:GITHUB_WORKSPACE\
+        \ 'windows-logs'\nNew-Item -ItemType Directory -Force -Path $report | Out-Null\n\
+        rustup toolchain install 1.99.1 --profile minimal\nif ($LASTEXITCODE -ne 0)\
+        \ { throw 'Rust installation failed' }\n$bindingEnvironment = Join-Path $env:RUNNER_TEMP\
+        \ 'binding-environment'\nuv venv --python 3.14.6 $bindingEnvironment\nif ($LASTEXITCODE\
+        \ -ne 0) { throw 'Python environment creation failed' }\n$python = Join-Path\
+        \ $bindingEnvironment 'Scripts/python.exe'\nuv pip install --python $python\
+        \ pytest==9.1.1\nif ($LASTEXITCODE -ne 0) { throw 'Pytest installation failed'\
+        \ }\n\"VALIDATION_PYTHON=$python\" >> $env:GITHUB_ENV\n\"PYO3_PYTHON=$python\"\
+        \ >> $env:GITHUB_ENV\n$source = (git rev-parse HEAD).Trim()\nif ($source -ne\
+        \ '${{ matrix.source }}') { throw 'Unexpected source commit' }\nif ($env:RUNNER_ARCH\
+        \ -ne 'X64') { throw 'Expected a Windows x64 runner' }\nif (git status --porcelain)\
+        \ { throw 'Source checkout is not clean' }\n$corpus = (git -C $env:QUIDDITY_CORPUS\
+        \ rev-parse HEAD).Trim()\nif ($corpus -ne '3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f')\
+        \ { throw 'Unexpected corpus' }\n[ordered]@{\n  source = $source\n  corpus\
+        \ = $corpus\n  runner_os = $env:RUNNER_OS\n  runner_arch = $env:RUNNER_ARCH\n\
+        \  image_os = $env:ImageOS\n  image_version = $env:ImageVersion\n  os = [Environment]::OSVersion.VersionString\n\
+        \  rust = (& rustc -vV | Out-String)\n  cargo = (& cargo -V)\n  python = (&\
+        \ uv run --no-project --python $python python -VV | Out-String)\n  pytest\
+        \ = (& uv run --no-project --python $python python -m pytest --version | Out-String)\n\
+        \  uv = (& uv --version)\n  build_jobs = $env:CARGO_BUILD_JOBS\n  test_threads\
+        \ = $env:RUST_TEST_THREADS\n  rust_min_stack = $env:RUST_MIN_STACK\n} | ConvertTo-Json\
+        \ -Depth 4 | Set-Content (Join-Path $report 'environment.json') -Encoding\
+        \ utf8\nuv pip freeze --python $python > (Join-Path $report 'python-packages.txt')\n\
+        if ($LASTEXITCODE -ne 0) { throw 'Dependency recording failed' }\n"
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        workspaces: source -> ../target
+        key: topic-windows-${{ matrix.topic }}
+    - name: Run the directed Rust regression
+      run: 'cargo test --workspace --release --locked --lib ''${{ matrix.filter }}''
+        -- --nocapture 2>&1 | Tee-Object ../windows-logs/directed.log
+
+        if ($LASTEXITCODE -ne 0) { throw ''Directed Rust regression failed'' }
+
+        '
+    - name: Build and stage the native binding without a package build
+      run: "cargo build -p quiddity-py --release --locked 2>&1 | Tee-Object ../windows-logs/python-build.log\n\
+        if ($LASTEXITCODE -ne 0) { throw 'Native binding build failed' }\n$stage =\
+        \ Join-Path $env:RUNNER_TEMP 'binding-stage'\n$package = Join-Path $stage\
+        \ 'quiddity'\nNew-Item -ItemType Directory -Force -Path $package | Out-Null\n\
+        Get-ChildItem crates/quiddity-py/python/quiddity -File |\n  Where-Object {\
+        \ $_.Extension -in '.py', '.pyi' -or $_.Name -eq 'py.typed' } |\n  Copy-Item\
+        \ -Destination $package\nCopy-Item -LiteralPath crates/quiddity-py/python/quiddity/schema\
+        \ -Destination $package -Recurse\n$binary = Join-Path $package '_native.pyd'\n\
+        Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release/_native.dll')\
+        \ -Destination $binary\n[ordered]@{\n  source = '${{ matrix.source }}'\n \
+        \ module = $package\n  binary = $binary\n  binary_sha256 = (Get-FileHash -LiteralPath\
+        \ $binary -Algorithm SHA256).Hash.ToLowerInvariant()\n} | ConvertTo-Json |\
+        \ Set-Content ../windows-logs/binding.json -Encoding utf8\n\"PYTHONPATH=$stage\"\
+        \ >> $env:GITHUB_ENV\n"
+    - name: Verify the staged binding API
+      run: "$report = Join-Path $env:GITHUB_WORKSPACE 'windows-logs'\n$binding = Get-Content\
+        \ (Join-Path $report 'binding.json') -Raw | ConvertFrom-Json\n$env:EXPECTED_BINDING\
+        \ = $binding.binary\nuv run --no-project --python $env:VALIDATION_PYTHON python\
+        \ -c 'import os,pathlib,quiddity,quiddity._native; assert pathlib.Path(quiddity._native.__file__).resolve()\
+        \ == pathlib.Path(os.environ[\"EXPECTED_BINDING\"]).resolve(); assert pathlib.Path(quiddity.__file__).resolve().parent\
+        \ == pathlib.Path(os.environ[\"EXPECTED_BINDING\"]).resolve().parent; print(quiddity.__version__,\
+        \ quiddity._native.__file__)' > (Join-Path $report 'import.log')\nif ($LASTEXITCODE\
+        \ -ne 0) { throw 'A different binding was imported' }\n'[pytest]' | Set-Content\
+        \ (Join-Path $report 'pytest.ini') -Encoding utf8\n# The installed-distribution\
+        \ metadata/launcher test belongs to upstream package CI.\n$selection = 'not\
+        \ test_capabilities_version_and_console_script'\n[ordered]@{\n  expression\
+        \ = $selection\n  excluded = @('test_capabilities_version_and_console_script')\n\
+        \  reason = 'No wheel, distribution metadata or installed console launcher\
+        \ is created in this source-binding check.'\n} | ConvertTo-Json | Set-Content\
+        \ (Join-Path $report 'selection.json') -Encoding utf8\nuv run --no-project\
+        \ --python $env:VALIDATION_PYTHON python -m pytest tests/python -c (Join-Path\
+        \ $report 'pytest.ini') --confcutdir (Get-Location).Path -k $selection -q\
+        \ --basetemp (Join-Path $env:RUNNER_TEMP 'binding-pytest') --junitxml (Join-Path\
+        \ $report 'python-junit.xml') -o \"cache_dir=$(Join-Path $env:RUNNER_TEMP\
+        \ 'binding-pytest-cache')\" 2>&1 | Tee-Object (Join-Path $report 'python.log')\n\
+        $pytestCode = $LASTEXITCODE\n$actualHash = (Get-FileHash -LiteralPath $binding.binary\
+        \ -Algorithm SHA256).Hash.ToLowerInvariant()\nif ($actualHash -ne $binding.binary_sha256)\
+        \ { throw 'Native binding changed during validation' }\nif ($pytestCode -ne\
+        \ 0) { throw \"Binding API tests failed: $pytestCode\" }\nif ((git rev-parse\
+        \ HEAD).Trim() -ne '${{ matrix.source }}' -or (git status --porcelain)) {\
+        \ throw 'Source changed during validation' }\n"
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: windows-${{ matrix.topic }}-binding-evidence
+        path: windows-logs/
+        retention-days: 30
+'on':
+  push:
+    branches:
+    - validation/topics-rebased-20261112
+  workflow_dispatch: null
