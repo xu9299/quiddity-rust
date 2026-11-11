@@ -141,6 +141,7 @@ impl Record {
         matches!(
             self.record_type.as_str(),
             "SectionRecessRefusal"
+                | "SectionRecessSourceRefusal"
                 | "ModelledThreadRefusal"
                 | "InteriorVoidRefusal"
                 | "PadRefusal"
@@ -234,6 +235,10 @@ const DISCOVERY_REFUSAL_TYPES: &[(&str, &[&str])] = &[
     ("pad_refusals", &["PadRefusal"]),
     ("prismatic_pocket_refusals", &["PrismaticPocketRefusal"]),
     ("section_passage_refusals", &["SectionPassageRefusal"]),
+    (
+        "section_recess_source_refusals",
+        &["SectionRecessSourceRefusal"],
+    ),
     ("oriented_slot_refusals", &["OrientedSlotRefusal"]),
     ("reconciliation_refusals", &["ReconciliationRefusal"]),
     ("polygonal_boss_refusals", &["PolygonalBossRefusal"]),
