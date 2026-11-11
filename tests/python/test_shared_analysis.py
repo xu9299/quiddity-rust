@@ -85,7 +85,13 @@ def test_shared_analysis_keeps_local_refusal_and_independent_evidence(tmp_path, 
     for refusal in refusals:
         assert refusal["record"]["reason"] == "missing_common_valid_solid"
         assert "body" not in refusal["record"]
-    assert any(feature["family"] == "prismatic_pockets" for feature in evidence["features"])
+    raw_candidates = [
+        record for record in recognition["document"]["records"]
+        if record["family"] == "prismatic_pockets"
+    ]
+    assert raw_candidates
+    assert all(record["evidence_status"] == "unproved" for record in raw_candidates)
+    assert any(feature["family"] == "step_levels" for feature in evidence["features"])
 
 
 @pytest.mark.parametrize("payload", [b"", b"not STEP", str(FIXTURES / "missing-shared-analysis.step")])
