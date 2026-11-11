@@ -675,17 +675,10 @@ fn one_obround_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
         };
         obround_prism(depth, first.2, second.2, radius, lo, hi)
     };
-    // A floor must first have material beneath it. All three original predicates
-    // remain necessary; an unsupported floor need not measure its void or mouth.
-    if fraction(
-        ctx,
-        owner,
-        probe(
-            floor_at + floor_sign * INSET,
-            floor_at + floor_sign * thickness,
-        ),
-    )? < 1.0 - EMPTY
-        || !probe_is_empty(ctx, owner, probe(low + INSET, high - INSET))?
+    // Reject material in the cavity or mouth before measuring floor support.
+    // The existing empty predicates can stop at a proved excess of material;
+    // all three original conditions are still required for an accepted floor.
+    if !probe_is_empty(ctx, owner, probe(low + INSET, high - INSET))?
         || !probe_is_empty(
             ctx,
             owner,
@@ -694,6 +687,14 @@ fn one_obround_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
                 mouth_at - floor_sign * thickness,
             ),
         )?
+        || fraction(
+            ctx,
+            owner,
+            probe(
+                floor_at + floor_sign * INSET,
+                floor_at + floor_sign * thickness,
+            ),
+        )? < 1.0 - EMPTY
     {
         return None;
     }
@@ -750,9 +751,9 @@ fn probes_prove(
     under: Option<Part>,
 ) -> Option<bool> {
     Some(
-        fraction(ctx, owner, under)? >= 1.0 - EMPTY
-            && probe_is_empty(ctx, owner, void)?
-            && probe_is_empty(ctx, owner, mouth)?,
+        probe_is_empty(ctx, owner, void)?
+            && probe_is_empty(ctx, owner, mouth)?
+            && fraction(ctx, owner, under)? >= 1.0 - EMPTY,
     )
 }
 
