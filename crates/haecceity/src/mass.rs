@@ -1637,7 +1637,7 @@ mod tests {
         let part = Part::new(
             vec![crate::brep::Face {
                 surface: Surface::Other {
-                    kind: "unresolved".into(),
+                    kind: "unresolved",
                 },
                 reversed: false,
                 loops: Vec::new(),
