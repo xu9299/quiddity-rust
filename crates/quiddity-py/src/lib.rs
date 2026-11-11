@@ -54,6 +54,13 @@ impl Input {
         }
     }
 
+    fn recognise_document(self) -> Result<String, String> {
+        match self {
+            Self::Path(path) => file_api::recognise_document_file(&path),
+            Self::Bytes(bytes) => file_api::recognise_document_bytes(bytes),
+        }
+    }
+
     fn fingerprints(self) -> Result<quiddity::Fingerprints, String> {
         let output = match self {
             Self::Path(path) => serve::recognise_file(&path),
@@ -76,6 +83,22 @@ fn recognise(
         let _session = timing::start(on_timing);
         let _stage = quiddity::kernel::timing::stage("recognition");
         input.recognise()
+    })
+    .map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+#[pyo3(signature = (step, *, on_timing=None))]
+fn recognise_document(
+    py: Python<'_>,
+    step: &Bound<'_, PyAny>,
+    on_timing: Option<Py<PyAny>>,
+) -> PyResult<String> {
+    let input = Input::extract(step)?;
+    py.detach(move || {
+        let _session = timing::start(on_timing);
+        let _stage = quiddity::kernel::timing::stage("recognition");
+        input.recognise_document()
     })
     .map_err(PyValueError::new_err)
 }
@@ -162,6 +185,7 @@ fn cli(py: Python<'_>, argv: Vec<String>) -> PyResult<u8> {
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(recognise, m)?)?;
+    m.add_function(wrap_pyfunction!(recognise_document, m)?)?;
     m.add_function(wrap_pyfunction!(evidence, m)?)?;
     m.add_function(wrap_pyfunction!(anchor, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprints, m)?)?;

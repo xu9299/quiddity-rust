@@ -523,12 +523,14 @@ fn obround_prism(
 /// The share of *probe* *owner*'s material fills; an unbuilt or unanswered probe proves
 /// nothing.
 fn fraction(ctx: &Context<'_>, owner: usize, probe: Option<Part>) -> Option<f64> {
+    let _timing = crate::kernel::timing::operation("section_recess.material_fraction");
     material_fraction(ctx, owner, &probe?)
 }
 
 /// An intact native obround pocket on *floor*: two semicircular caps and two flats, all
 /// concave to it, one mouth plane, proved by probes (`_one_obround_candidate`).
 fn one_obround_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
+    let _timing = crate::kernel::timing::operation("section_recess.obround");
     let part = ctx.part;
     let depth = canonical(normal(part, floor)?)?;
     let concave: Vec<usize> = part
@@ -742,6 +744,7 @@ fn probes_prove(
 /// An intact native straight-edged pocket on *floor*: planar walls concave to it along its
 /// normal, mouth planes every wall meets, proved by probes (`_one_polygonal_candidate`).
 fn one_polygonal_candidate(ctx: &Context<'_>, floor: usize) -> Checked<Option<Candidate>> {
+    let _timing = crate::kernel::timing::operation("section_recess.polygonal");
     let part = ctx.part;
     let Some(depth) = normal(part, floor).and_then(canonical) else {
         return Ok(None);
@@ -891,6 +894,7 @@ fn mixed_floor_section(
     floor: usize,
     depth: V3,
 ) -> Option<(LocalFrame, PlanarSection)> {
+    let _timing = crate::kernel::timing::operation("section_recess.mixed_section");
     let loops = &part.faces[floor].loops;
     if loops.len() != 1 {
         return None;
@@ -948,6 +952,7 @@ fn mixed_floor_section(
 /// (`_one_mixed_candidate`): the swept floor's every face covered by the walls, the floor and
 /// its copy at the mouth, and the probes.
 fn one_mixed_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
+    let _timing = crate::kernel::timing::operation("section_recess.mixed");
     let part = ctx.part;
     let depth = canonical(normal(part, floor)?)?;
     let (frame, section) = mixed_floor_section(part, floor, depth)?;
@@ -1006,17 +1011,25 @@ fn one_mixed_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
     members.extend(&walls);
     members.extend(&mouths);
     let owner = common_valid_solid(part, &members)?;
-    let swept = extrude_face(part, floor, [0.0; 3], scale(depth, mouth_at - floor_at))?;
+    let swept = {
+        let _timing = crate::kernel::timing::operation("section_recess.extrude_floor");
+        extrude_face(part, floor, [0.0; 3], scale(depth, mouth_at - floor_at))?
+    };
     // The swept floor's caps are the source floor and its copy at the mouth; the mouth cap is
     // face 1 because haecceity's `extrude_face` pushes the far cap there.
     let mut supports: Vec<(&Part, usize)> = walls.iter().map(|&w| (part, w)).collect();
     supports.push((part, floor));
     supports.push((&swept, 1));
-    if (0..swept.faces.len()).any(|patch| !covered_patch((&swept, patch), &supports)) {
+    let uncovered = {
+        let _timing = crate::kernel::timing::operation("section_recess.covered_patches");
+        (0..swept.faces.len()).any(|patch| !covered_patch((&swept, patch), &supports))
+    };
+    if uncovered {
         return None;
     }
     let thickness = 2e-5f64.max(1.0f64.max(high - low).max(moments.area.sqrt()) * 1e-4);
     let probe = |start: f64, end: f64| {
+        let _timing = crate::kernel::timing::operation("section_recess.swept_fraction");
         ctx.swept_face_fraction(
             owner,
             floor,
@@ -1807,6 +1820,53 @@ fn candidates_reading(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Read the original complete input, but inspect only explicitly selected floors.
+    #[test]
+    #[ignore = "manual bounded floor-reader diagnosis"]
+    fn selected_floor_probe() {
+        let input = std::env::var_os("QUIDDITY_FLOOR_PROBE_INPUT").expect("input path");
+        let output = std::env::var_os("QUIDDITY_FLOOR_PROBE_OUTPUT").expect("output path");
+        let floors: Vec<usize> = std::env::var("QUIDDITY_FLOOR_PROBE_FACES")
+            .expect("selected floor indices")
+            .split(',')
+            .map(|v| v.parse().unwrap())
+            .collect();
+        assert!(!floors.is_empty() && floors.len() <= 4);
+        let output = std::path::PathBuf::from(output);
+        let _session = crate::kernel::timing::Session::start(move |event| {
+            use std::io::Write;
+            let row = serde_json::json!({
+                "event": event.event,
+                "seconds": event.elapsed_seconds,
+                "stack": event.stack.iter().map(|s| serde_json::json!({
+                    "name": s.name, "face": s.index, "seconds": s.elapsed_seconds
+                })).collect::<Vec<_>>(),
+                "totals": event.totals.iter().map(|t| serde_json::json!({
+                    "name": t.name, "calls": t.calls, "seconds": t.elapsed_seconds
+                })).collect::<Vec<_>>()
+            });
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(output.join("events.jsonl"))
+                .unwrap();
+            writeln!(file, "{row}").unwrap();
+        })
+        .unwrap();
+        let part = crate::kernel::step::read_step_file(std::path::Path::new(&input)).unwrap();
+        let ctx = Context::new(&part);
+        for floor in floors {
+            assert!(floor < part.faces.len() && is_planar(&part, floor));
+            let _span = crate::kernel::timing::face("section_recess.floor", floor, None);
+            let started = std::time::Instant::now();
+            let result = floor_readings(&ctx, floor);
+            println!(
+                "floor={floor} seconds={} result={result:?}",
+                started.elapsed().as_secs_f64()
+            );
+        }
+    }
 
     #[test]
     fn shapes_are_named_by_their_corners() {

@@ -179,6 +179,25 @@ fn recognise_bytes_placed(
     bytes: Vec<u8>,
     placement: &Placement,
 ) -> Result<StepRecognition, Failure> {
+    let (part, source_sha256, fusion) = read_snapshot(path, bytes, placement)?;
+    let mut recognition = correspondence::recognise(&part);
+    recognition.source_sha256 = Some(source_sha256);
+    let document = {
+        let _timing = crate::kernel::timing::stage("recognition.document");
+        recognition::document(&recognition, part.faces.len())
+    };
+    let mut warnings = recognition_warnings(path, &part, &recognition, &document);
+    if fusion {
+        warnings.insert(0, part_input::fusion_warning(path));
+    }
+    Ok((part, recognition, document, warnings))
+}
+
+fn read_snapshot(
+    path: &str,
+    bytes: Vec<u8>,
+    placement: &Placement,
+) -> Result<(Part, String, bool), Failure> {
     let source_sha256 = Sha256::digest(&bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -192,17 +211,26 @@ fn recognise_bytes_placed(
             .map_err(|e| read_failure(path, &e))?
     };
     let part = read_step_placed(&step_bytes, placement).map_err(|e| read_failure(path, &e))?;
-    let mut recognition = correspondence::recognise(&part);
-    recognition.source_sha256 = Some(source_sha256);
-    let document = {
-        let _timing = crate::kernel::timing::stage("recognition.document");
-        recognition::document(&recognition, part.faces.len())
+    Ok((part, source_sha256, fusion))
+}
+
+/// All published records and face accounting, without the correspondence product.
+pub(crate) fn recognise_document_bytes(
+    path: &str,
+    bytes: Vec<u8>,
+) -> Result<RecognitionDocument, Failure> {
+    let (part, source_sha256, _) = read_snapshot(path, bytes, &IDENTITY)?;
+    let mut document = correspondence::recognise_document(&part);
+    document.source_sha256 = Some(source_sha256);
+    Ok(document)
+}
+
+pub(crate) fn recognise_document_file(path: &str) -> Result<RecognitionDocument, Failure> {
+    let bytes = {
+        let _timing = crate::kernel::timing::stage("step.read_file_bytes");
+        std::fs::read(path).map_err(|e| read_failure(path, &e))?
     };
-    let mut warnings = recognition_warnings(path, &part, &recognition, &document);
-    if fusion {
-        warnings.insert(0, part_input::fusion_warning(path));
-    }
-    Ok((part, recognition, document, warnings))
+    recognise_document_bytes(path, bytes)
 }
 
 /// Diagnose the completed recognition, including a refusal of the whole recess projection.
