@@ -2,7 +2,7 @@
 //! A separate observer reports active work even while the calling thread is inside a
 //! long native computation. Repeated face spans are aggregated rather than streamed.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -83,6 +83,36 @@ fn locked(trace: &Trace) -> MutexGuard<'_, State> {
 
 thread_local! {
     static CURRENT: RefCell<Option<Arc<Trace>>> = const { RefCell::new(None) };
+    static PARALLEL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Scoped workers contribute to their caller's totals without creating observer threads.
+/// Parallel face spans are siblings; their inclusive times can exceed elapsed wall time.
+#[derive(Clone)]
+pub(crate) struct ParallelContext(Option<Arc<Trace>>);
+
+pub(crate) fn parallel_context() -> ParallelContext {
+    ParallelContext(CURRENT.with(|current| current.borrow().clone()))
+}
+
+impl ParallelContext {
+    pub(crate) fn run<R>(&self, work: impl FnOnce() -> R) -> R {
+        struct Binding {
+            previous: Option<Arc<Trace>>,
+            parallel: bool,
+        }
+        impl Drop for Binding {
+            fn drop(&mut self) {
+                CURRENT.with(|current| current.replace(self.previous.take()));
+                PARALLEL.with(|parallel| parallel.set(self.parallel));
+            }
+        }
+        let _binding = Binding {
+            previous: CURRENT.with(|current| current.replace(self.0.clone())),
+            parallel: PARALLEL.with(|parallel| parallel.replace(true)),
+        };
+        work()
+    }
 }
 
 /// The caller owns the session and drops it before leaving the detached native call.
@@ -222,7 +252,8 @@ pub fn family(name: &'static str, operation: &'static str) -> Span {
 
 /// A face is visible in heartbeats; only slow completions get their own event.
 pub fn face(name: &'static str, index: usize, entity: Option<u64>) -> Span {
-    begin(name, None, Some(index), entity, false)
+    let operation = PARALLEL.with(|parallel| parallel.get().then_some("parallel"));
+    begin(name, operation, Some(index), entity, false)
 }
 
 impl Drop for Span {
@@ -235,9 +266,22 @@ impl Drop for Span {
         let Some(position) = state.stack.iter().rposition(|span| span.id == self.id) else {
             return;
         };
-        let stack = state.snapshot(now);
+        // A completion reports its own face last, never a concurrently active sibling.
+        let mut stack: Vec<_> = state
+            .stack
+            .iter()
+            .filter(|span| span.id != self.id && span.frame.operation != Some("parallel"))
+            .map(|span| Frame {
+                elapsed_seconds: now.duration_since(span.started).as_secs_f64(),
+                ..span.frame.clone()
+            })
+            .collect();
         let span = state.stack.remove(position);
         let elapsed = now.duration_since(span.started).as_secs_f64();
+        stack.push(Frame {
+            elapsed_seconds: elapsed,
+            ..span.frame.clone()
+        });
         let total = state
             .totals
             .entry((span.frame.name, span.frame.operation))
@@ -327,5 +371,86 @@ mod tests {
         for handle in handles {
             handle.join().unwrap();
         }
+    }
+
+    #[test]
+    fn parallel_faces_are_siblings_and_totals_remain_in_the_callers_session() {
+        let (send, receive) = mpsc::channel();
+        let session = Session::with_interval(
+            move |event| {
+                let _ = send.send(event);
+            },
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        let parent = stage("mass.parallel_shell");
+        let context = parallel_context();
+        let barrier = std::sync::Barrier::new(3);
+        thread::scope(|scope| {
+            for index in 0..2 {
+                let context = &context;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    context.run(|| {
+                        let face = face("mass.face_mass", index, Some(index as u64));
+                        // Emit the short completion too, so the test needs no slow sleep.
+                        locked(face.trace.as_ref().unwrap())
+                            .stack
+                            .iter_mut()
+                            .find(|span| span.id == face.id)
+                            .unwrap()
+                            .verbose = true;
+                        barrier.wait();
+                        barrier.wait();
+                        drop(face);
+                        assert!(PARALLEL.with(Cell::get));
+                    })
+                });
+            }
+            barrier.wait();
+            let heartbeat = loop {
+                let event = receive.recv_timeout(Duration::from_secs(2)).unwrap();
+                if event.event == "heartbeat" {
+                    break event;
+                }
+            };
+            assert_eq!(heartbeat.stack.len(), 3);
+            assert!(
+                heartbeat.stack[1..]
+                    .iter()
+                    .all(|frame| frame.operation == Some("parallel"))
+            );
+            barrier.wait();
+        });
+        assert!(!PARALLEL.with(Cell::get));
+        drop(parent);
+        drop(session);
+        let events: Vec<_> = receive.try_iter().collect();
+        let summary = events.last().unwrap();
+        let completed: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.event == "end"
+                    && event
+                        .stack
+                        .last()
+                        .is_some_and(|frame| frame.operation == Some("parallel"))
+            })
+            .collect();
+        assert_eq!(completed.len(), 2);
+        for event in completed {
+            assert_eq!(event.stack.len(), 2);
+            assert_eq!(event.stack[0].name, "mass.parallel_shell");
+            assert_eq!(
+                event.stack[1].entity,
+                event.stack[1].index.map(|index| index as u64)
+            );
+        }
+        assert!(summary.totals.iter().any(|total| {
+            total.name == "mass.face_mass"
+                && total.operation == Some("parallel")
+                && total.calls == 2
+        }));
+        assert!(CURRENT.with(|current| current.borrow().is_none()));
     }
 }
