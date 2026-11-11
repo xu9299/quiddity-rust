@@ -28,7 +28,7 @@ use super::cylindrical_passages::{CylindricalPassageProof, cylindrical_passage_p
 use super::cylindrical_pockets::{CylindricalPocketProof, cylindrical_pocket_proofs};
 use super::cylindrical_seats::{CylindricalSeatProof, cylindrical_seat_proofs};
 use super::effective_surfaces::EffectiveFaces;
-use super::entry_treatments::material_fraction;
+use super::entry_treatments::{material_at_most, material_fraction};
 use super::evidence::common_valid_solid;
 use super::graph::{face_vertices, is_planar, normal, shared_occurrences, span};
 use super::passages::{PassageFrame, PassageSectionVertex};
@@ -524,7 +524,20 @@ fn obround_prism(
 /// nothing.
 fn fraction(ctx: &Context<'_>, owner: usize, probe: Option<Part>) -> Option<f64> {
     let _timing = crate::kernel::timing::operation("section_recess.material_fraction");
-    material_fraction(ctx, owner, &probe?)
+    let value = material_fraction(ctx, owner, &probe?);
+    #[cfg(test)]
+    if std::env::var_os("QUIDDITY_FLOOR_PROBE_OUTPUT").is_some() {
+        println!("probe_fraction={value:?}");
+    }
+    value
+}
+
+/// The existing empty-material predicate, with its original refusal semantics:
+/// an unanswered volume cannot accept a floor. The kernel may stop a rejected
+/// probe once its measured material already exceeds the unchanged threshold.
+fn probe_is_empty(ctx: &Context<'_>, owner: usize, probe: Option<Part>) -> Option<bool> {
+    let _timing = crate::kernel::timing::operation("section_recess.material_at_most");
+    Some(material_at_most(ctx, owner, &probe?, EMPTY))
 }
 
 /// An intact native obround pocket on *floor*: two semicircular caps and two flats, all
@@ -662,23 +675,25 @@ fn one_obround_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
         };
         obround_prism(depth, first.2, second.2, radius, lo, hi)
     };
-    if fraction(ctx, owner, probe(low + INSET, high - INSET))? > EMPTY
-        || fraction(
+    // A floor must first have material beneath it. All three original predicates
+    // remain necessary; an unsupported floor need not measure its void or mouth.
+    if fraction(
+        ctx,
+        owner,
+        probe(
+            floor_at + floor_sign * INSET,
+            floor_at + floor_sign * thickness,
+        ),
+    )? < 1.0 - EMPTY
+        || !probe_is_empty(ctx, owner, probe(low + INSET, high - INSET))?
+        || !probe_is_empty(
             ctx,
             owner,
             probe(
                 mouth_at - floor_sign * INSET,
                 mouth_at - floor_sign * thickness,
             ),
-        )? > EMPTY
-        || fraction(
-            ctx,
-            owner,
-            probe(
-                floor_at + floor_sign * INSET,
-                floor_at + floor_sign * thickness,
-            ),
-        )? < 1.0 - EMPTY
+        )?
     {
         return None;
     }
@@ -735,9 +750,9 @@ fn probes_prove(
     under: Option<Part>,
 ) -> Option<bool> {
     Some(
-        fraction(ctx, owner, void)? <= EMPTY
-            && fraction(ctx, owner, mouth)? <= EMPTY
-            && fraction(ctx, owner, under)? >= 1.0 - EMPTY,
+        fraction(ctx, owner, under)? >= 1.0 - EMPTY
+            && probe_is_empty(ctx, owner, void)?
+            && probe_is_empty(ctx, owner, mouth)?,
     )
 }
 
