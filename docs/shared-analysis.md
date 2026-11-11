@@ -75,3 +75,11 @@ the public binding, type declaration, path/bytes inputs, digests and error seman
 These tests supplement the existing Rust snapshots and independent geometry, label,
 motion-invariance, inventory-floor and NIST checks. They do not replace those checks,
 change snapshot expectations or loosen comparison tolerances.
+
+## Instruction-count benchmark
+
+The [Windows benchmark report](https://github.com/xu9299/quiddity-rust/blob/aa309fcb473629fe799f7915fb5503162214763e/tools/shared_analysis/benchmark-windows-msvc.md)
+records calibrated DynamoRIO software instruction counts for separate and joint
+calls, with complete-output equality checks. The optional harness and raw results
+remain in that fixed fork revision. No benchmark tooling or runtime dependency is
+added to this repository.
