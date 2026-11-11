@@ -1,0 +1,458 @@
+{
+  "baseline": "b590592035733d8ac9fa5b3144bb5d969bda89a0",
+  "candidate": "29497fc9887761b27365991c72362116234536c3",
+  "units": "mm",
+  "geometry_translated_or_scaled": false,
+  "geometric_source": "Extracted original STEP entity dependencies; not synthetic",
+  "samples": [
+    {
+      "file": "slow_face_a.step",
+      "sha256": "7fc320e9b15678150abb80c4842fc822555dab89734d048cc5d51077b44e97bc",
+      "bytes": 55134,
+      "face_entities": [
+        18820
+      ],
+      "entity_count": 606,
+      "support_surface_count": 1,
+      "geometry_definition_bytes_preserved": true,
+      "occt_valid": true,
+      "occt_area_mm2": 10.759968490101977,
+      "occt_original_comparison": true,
+      "candidate_first_calls": [
+        {
+          "source": 18820,
+          "kind": "mass",
+          "seconds": 0.6008513,
+          "bits": null
+        },
+        {
+          "source": 18820,
+          "kind": "moments",
+          "seconds": 0.9883223,
+          "bits": null
+        }
+      ]
+    },
+    {
+      "file": "slow_face_b.step",
+      "sha256": "7e016d5169c7d49b3180b82aac2c8384c01b888e05d134dad516fe3c67efc64b",
+      "bytes": 55173,
+      "face_entities": [
+        19406
+      ],
+      "entity_count": 606,
+      "support_surface_count": 1,
+      "geometry_definition_bytes_preserved": true,
+      "occt_valid": true,
+      "occt_area_mm2": 10.75950079907782,
+      "occt_original_comparison": true,
+      "candidate_first_calls": [
+        {
+          "source": 19406,
+          "kind": "mass",
+          "seconds": 1.1682892,
+          "bits": null
+        },
+        {
+          "source": 19406,
+          "kind": "moments",
+          "seconds": 0.8722174,
+          "bits": null
+        }
+      ]
+    },
+    {
+      "file": "slow_face_c.step",
+      "sha256": "4b5832606be5db5e7070d6ac878dd4c1910f9793f5ae26a8c2d7388e94f33576",
+      "bytes": 64052,
+      "face_entities": [
+        19992
+      ],
+      "entity_count": 692,
+      "support_surface_count": 1,
+      "geometry_definition_bytes_preserved": true,
+      "occt_valid": true,
+      "occt_area_mm2": 10.763360456014112,
+      "occt_original_comparison": true,
+      "candidate_first_calls": [
+        {
+          "source": 19992,
+          "kind": "mass",
+          "seconds": 1.5831322,
+          "bits": null
+        },
+        {
+          "source": 19992,
+          "kind": "moments",
+          "seconds": 0.8550266,
+          "bits": null
+        }
+      ]
+    },
+    {
+      "file": "slow_face_abc.step",
+      "sha256": "5b79a59b275076b829877517c24dbf615985dc3bc2de4a6fce72df9e7078c568",
+      "bytes": 170995,
+      "face_entities": [
+        18820,
+        19406,
+        19992
+      ],
+      "entity_count": 1864,
+      "support_surface_count": 3,
+      "geometry_definition_bytes_preserved": true,
+      "occt_valid": true,
+      "occt_area_mm2": 32.28282974519391,
+      "occt_original_comparison": true,
+      "candidate_first_calls": [
+        {
+          "source": 18820,
+          "kind": "mass",
+          "seconds": 0.5202597,
+          "bits": null
+        },
+        {
+          "source": 18820,
+          "kind": "moments",
+          "seconds": 0.4697505,
+          "bits": null
+        },
+        {
+          "source": 19406,
+          "kind": "mass",
+          "seconds": 0.8159732,
+          "bits": null
+        },
+        {
+          "source": 19406,
+          "kind": "moments",
+          "seconds": 0.7846961,
+          "bits": null
+        },
+        {
+          "source": 19992,
+          "kind": "mass",
+          "seconds": 0.7064168,
+          "bits": null
+        },
+        {
+          "source": 19992,
+          "kind": "moments",
+          "seconds": 0.7352041,
+          "bits": null
+        }
+      ]
+    }
+  ],
+  "witnesses": [
+    {
+      "label": "a",
+      "base": "stable049",
+      "operation": "mass",
+      "certificate": {
+        "a_bits": 4602696798044071160,
+        "b_bits": 4602696819085996751,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4464246929690519469,
+        "excess_bits": 4464246929690519469,
+        "floor_bits": 4457963473120432557,
+        "kinks_left": 0,
+        "pending_panels": 15,
+        "relative_bits": 4329724600224678286,
+        "size_bits": 4464402053154011869
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 0.9664563000042108,
+      "exit_code": 0,
+      "source_sha256": "7fc320e9b15678150abb80c4842fc822555dab89734d048cc5d51077b44e97bc",
+      "binary_sha256": "1baabb2b4aebfdeeccec776eac60163c50d1b08a04ca3652fc7ee130a5bf29c8",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "a",
+      "base": "stable049",
+      "operation": "moments",
+      "certificate": {
+        "a_bits": 4602696798044071160,
+        "b_bits": 4602696819085996751,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4464246929690519469,
+        "excess_bits": 4464246929690519469,
+        "floor_bits": 4457963473120432557,
+        "kinks_left": 0,
+        "pending_panels": 15,
+        "relative_bits": 4329724600224678286,
+        "size_bits": 4464402053154011869
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 1.2401481000051717,
+      "exit_code": 0,
+      "source_sha256": "7fc320e9b15678150abb80c4842fc822555dab89734d048cc5d51077b44e97bc",
+      "binary_sha256": "1baabb2b4aebfdeeccec776eac60163c50d1b08a04ca3652fc7ee130a5bf29c8",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "b",
+      "base": "stable049",
+      "operation": "mass",
+      "certificate": {
+        "a_bits": 4602713227110007724,
+        "b_bits": 4602713263537438739,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4458932480065666497,
+        "excess_bits": 4458932480065666497,
+        "floor_bits": 4457765752419089063,
+        "kinks_left": 0,
+        "pending_panels": 11,
+        "relative_bits": 4324347873743634573,
+        "size_bits": 4459085290777312521
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 2.6578668000001926,
+      "exit_code": 0,
+      "source_sha256": "7e016d5169c7d49b3180b82aac2c8384c01b888e05d134dad516fe3c67efc64b",
+      "binary_sha256": "1baabb2b4aebfdeeccec776eac60163c50d1b08a04ca3652fc7ee130a5bf29c8",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "b",
+      "base": "stable049",
+      "operation": "moments",
+      "certificate": {
+        "a_bits": 4602694645929140858,
+        "b_bits": 4602694664440649126,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4459490286201073510,
+        "excess_bits": 4459490286201073510,
+        "floor_bits": 4457765752419089063,
+        "kinks_left": 0,
+        "pending_panels": 11,
+        "relative_bits": 4324926764410884140,
+        "size_bits": 4459624424723956260
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 1.337373899994418,
+      "exit_code": 0,
+      "source_sha256": "7e016d5169c7d49b3180b82aac2c8384c01b888e05d134dad516fe3c67efc64b",
+      "binary_sha256": "1baabb2b4aebfdeeccec776eac60163c50d1b08a04ca3652fc7ee130a5bf29c8",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "c",
+      "base": "stable049",
+      "operation": "mass",
+      "certificate": {
+        "a_bits": 4617109773837529490,
+        "b_bits": 4617109813764855550,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4461487180782164888,
+        "excess_bits": 4461487180782164888,
+        "floor_bits": 4457884896773020670,
+        "kinks_left": 61,
+        "pending_panels": 3,
+        "relative_bits": 4377967554478155831,
+        "size_bits": 4512734057417492783
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 1.03095050000411,
+      "exit_code": 0,
+      "source_sha256": "4b5832606be5db5e7070d6ac878dd4c1910f9793f5ae26a8c2d7388e94f33576",
+      "binary_sha256": "1baabb2b4aebfdeeccec776eac60163c50d1b08a04ca3652fc7ee130a5bf29c8",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "c",
+      "base": "stable049",
+      "operation": "moments",
+      "certificate": {
+        "a_bits": 4617109773837529490,
+        "b_bits": 4617109813764855550,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4461487048001654784,
+        "excess_bits": 4461487048001654784,
+        "floor_bits": 4457884896773020670,
+        "kinks_left": 61,
+        "pending_panels": 3,
+        "relative_bits": 4377967554478155831,
+        "size_bits": 4512734057417492783
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 1.3590256000024965,
+      "exit_code": 0,
+      "source_sha256": "4b5832606be5db5e7070d6ac878dd4c1910f9793f5ae26a8c2d7388e94f33576",
+      "binary_sha256": "1baabb2b4aebfdeeccec776eac60163c50d1b08a04ca3652fc7ee130a5bf29c8",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "a",
+      "base": "main",
+      "operation": "mass",
+      "certificate": {
+        "a_bits": 4602696798044071160,
+        "b_bits": 4602696819085996751,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4464246929690519469,
+        "excess_bits": 4464246929690519469,
+        "floor_bits": 4457963473120432557,
+        "kinks_left": 0,
+        "pending_panels": 15,
+        "relative_bits": 4329724600224678286,
+        "size_bits": 4464402053154011869
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 1.4589371000038227,
+      "exit_code": 0,
+      "source_sha256": "7fc320e9b15678150abb80c4842fc822555dab89734d048cc5d51077b44e97bc",
+      "binary_sha256": "d825122ef7ff7eddd883c96116837f60ca5d4297e62e23218eda23ebc1da92a9",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "a",
+      "base": "main",
+      "operation": "moments",
+      "certificate": {
+        "a_bits": 4602696798044071160,
+        "b_bits": 4602696819085996751,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4464246929690519469,
+        "excess_bits": 4464246929690519469,
+        "floor_bits": 4457963473120432557,
+        "kinks_left": 0,
+        "pending_panels": 15,
+        "relative_bits": 4329724600224678286,
+        "size_bits": 4464402053154011869
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 1.2216377000004286,
+      "exit_code": 0,
+      "source_sha256": "7fc320e9b15678150abb80c4842fc822555dab89734d048cc5d51077b44e97bc",
+      "binary_sha256": "d825122ef7ff7eddd883c96116837f60ca5d4297e62e23218eda23ebc1da92a9",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "b",
+      "base": "main",
+      "operation": "mass",
+      "certificate": {
+        "a_bits": 4602713227110007724,
+        "b_bits": 4602713263537438739,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4458932480065666497,
+        "excess_bits": 4458932480065666497,
+        "floor_bits": 4457765752419089063,
+        "kinks_left": 0,
+        "pending_panels": 11,
+        "relative_bits": 4324347873743634573,
+        "size_bits": 4459085290777312521
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 2.0407568000009633,
+      "exit_code": 0,
+      "source_sha256": "7e016d5169c7d49b3180b82aac2c8384c01b888e05d134dad516fe3c67efc64b",
+      "binary_sha256": "d825122ef7ff7eddd883c96116837f60ca5d4297e62e23218eda23ebc1da92a9",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "b",
+      "base": "main",
+      "operation": "moments",
+      "certificate": {
+        "a_bits": 4602713227110007724,
+        "b_bits": 4602713263537438739,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4458932480065666497,
+        "excess_bits": 4458932480065666497,
+        "floor_bits": 4457765752419089063,
+        "kinks_left": 0,
+        "pending_panels": 11,
+        "relative_bits": 4324347873743634573,
+        "size_bits": 4459085290777312521
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 2.449321800006146,
+      "exit_code": 0,
+      "source_sha256": "7e016d5169c7d49b3180b82aac2c8384c01b888e05d134dad516fe3c67efc64b",
+      "binary_sha256": "d825122ef7ff7eddd883c96116837f60ca5d4297e62e23218eda23ebc1da92a9",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "c",
+      "base": "main",
+      "operation": "mass",
+      "certificate": {
+        "a_bits": 4617109773837529490,
+        "b_bits": 4617109813764855550,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4461487180782164888,
+        "excess_bits": 4461487180782164888,
+        "floor_bits": 4457884896773020670,
+        "kinks_left": 61,
+        "pending_panels": 3,
+        "relative_bits": 4377967554478155831,
+        "size_bits": 4512734057417492783
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 0.9853917000000365,
+      "exit_code": 0,
+      "source_sha256": "4b5832606be5db5e7070d6ac878dd4c1910f9793f5ae26a8c2d7388e94f33576",
+      "binary_sha256": "d825122ef7ff7eddd883c96116837f60ca5d4297e62e23218eda23ebc1da92a9",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    },
+    {
+      "label": "c",
+      "base": "main",
+      "operation": "moments",
+      "certificate": {
+        "a_bits": 4617109773837529490,
+        "b_bits": 4617109813764855550,
+        "depth": 12,
+        "depth_limit": 12,
+        "error_bits": 4461487180782164888,
+        "excess_bits": 4461487180782164888,
+        "floor_bits": 4457884896773020670,
+        "kinks_left": 61,
+        "pending_panels": 3,
+        "relative_bits": 4377967554478155831,
+        "size_bits": 4512734057417492783
+      },
+      "original_certificate_identical": true,
+      "process_seconds": 0.980610999999044,
+      "exit_code": 0,
+      "source_sha256": "4b5832606be5db5e7070d6ac878dd4c1910f9793f5ae26a8c2d7388e94f33576",
+      "binary_sha256": "d825122ef7ff7eddd883c96116837f60ca5d4297e62e23218eda23ebc1da92a9",
+      "status": "original-prefix-certificate; exhaustive-return-not-observed"
+    }
+  ],
+  "unmodified_mass_observations": [
+    {
+      "label": "a",
+      "status": "timeout",
+      "process_seconds": 60.4771980000005,
+      "timeout_seconds": 60
+    },
+    {
+      "label": "b",
+      "status": "timeout",
+      "process_seconds": 60.46166629999789,
+      "timeout_seconds": 60
+    },
+    {
+      "label": "c",
+      "status": "timeout",
+      "process_seconds": 60.461915499996394,
+      "timeout_seconds": 60
+    }
+  ],
+  "limits": "Timings are observations under concurrent load. Prefix witnesses are not completed original calls. The candidate still returns None for the selected faces."
+}
