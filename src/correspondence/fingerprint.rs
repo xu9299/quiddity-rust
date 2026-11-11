@@ -1169,6 +1169,7 @@ fn fingerprint_with_axes(
     motion: Option<&crate::framed_records::Rigid>,
     axis: impl Fn(&str, &str, &Value) -> Option<V3>,
 ) -> Fingerprints {
+    part.prepare_face_measures();
     let faces: Vec<FaceFingerprint> = (0..part.faces.len())
         .map(|i| {
             // Axial cone-strip projection already integrated these same surface moments.

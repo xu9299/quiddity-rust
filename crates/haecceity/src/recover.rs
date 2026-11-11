@@ -26,7 +26,6 @@ impl Part {
     /// Prepare the same independent recovery queries that the caller will visit in order.
     /// Only unqueried freeform faces participate; each existing cache also preserves None.
     pub fn prepare_recovered(&self, faces: &[usize]) {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         let pending: Vec<_> = faces
             .iter()
             .copied()
@@ -35,6 +34,19 @@ impl Part {
                     && self.cache[face].recovered.get().is_none()
             })
             .collect();
+        self.prepare_face_queries(pending, "geometry.parallel_recovery", |face| {
+            self.recovered(face);
+        });
+    }
+
+    /// Schedule independent queries only; callers retain their original ordered reduction.
+    pub(crate) fn prepare_face_queries(
+        &self,
+        pending: Vec<usize>,
+        stage: &'static str,
+        query: impl Fn(usize) + Sync,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
         if pending.len() < 64 {
             return;
         }
@@ -49,21 +61,21 @@ impl Part {
         if workers <= 1 {
             return;
         }
-        let _timing = crate::timing::stage("geometry.parallel_recovery");
+        let _timing = crate::timing::stage(stage);
         let context = crate::timing::parallel_context();
         let next = AtomicUsize::new(0);
         // The caller visits every queried face even when another one refuses, so all
         // queries belong to the original workload. Dynamic assignment balances slow faces.
         let work = || {
             while let Some(&face) = pending.get(next.fetch_add(1, Ordering::Relaxed)) {
-                self.recovered(face);
+                query(face);
             }
         };
         std::thread::scope(|scope| {
             let handles: Vec<_> = (1..workers)
                 .filter_map(|_| {
                     std::thread::Builder::new()
-                        .name("quiddity-recovery".into())
+                        .name("quiddity-face-query".into())
                         .spawn_scoped(scope, || context.run(work))
                         .ok()
                 })

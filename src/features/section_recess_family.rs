@@ -157,10 +157,14 @@ pub(crate) fn section_recess_projection_in(
     inventory: &Inventory,
 ) -> Result<SectionRecessProjection, SectionRecessFamilyError> {
     let surfaces = EffectiveFaces::new(ctx);
-    let native = discover_section_recesses(ctx, &surfaces)?
-        .into_iter()
-        .map(|o| o.record)
-        .collect();
+    let native = {
+        let _timing = crate::kernel::timing::stage("section_recess.native_discovery");
+        discover_section_recesses(ctx, &surfaces)?
+            .into_iter()
+            .map(|o| o.record)
+            .collect()
+    };
+    let _timing = crate::kernel::timing::stage("section_recess.project_inventory");
     project(ctx, &surfaces, inventory, native)
 }
 

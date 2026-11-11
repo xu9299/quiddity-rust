@@ -1353,6 +1353,23 @@ impl Part {
             .get_or_init(|| self.compute_face_moments(face))
     }
 
+    /// Prepare the freeform recovery and moments queried for every face by a full
+    /// fingerprint. Existing immutable caches preserve exact values and refusals.
+    /// Analytic faces stay on the caller's inexpensive ordered path.
+    pub fn prepare_face_measures(&self) {
+        let pending = (0..self.faces.len())
+            .filter(|&face| {
+                matches!(self.faces[face].surface, Surface::Freeform { .. })
+                    && (self.cache[face].recovered.get().is_none()
+                        || self.cache[face].moments.get().is_none())
+            })
+            .collect();
+        self.prepare_face_queries(pending, "geometry.parallel_face_measures", |face| {
+            self.recovered(face);
+            self.face_moments(face);
+        });
+    }
+
     fn compute_face_moments(&self, face: usize) -> Option<FaceMoments> {
         let _timing = crate::timing::face(
             "mass.face_moments",

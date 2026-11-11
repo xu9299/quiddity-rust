@@ -1750,6 +1750,11 @@ fn candidates_reading(
         if !is_planar(part, node) {
             continue;
         }
+        let _timing = crate::kernel::timing::face(
+            "section_recess.floor",
+            node,
+            part.face_source(node).map(|source| source.entity),
+        );
         if let Some(c) = floor(node)? {
             add(c);
         }

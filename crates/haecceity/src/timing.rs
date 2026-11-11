@@ -250,6 +250,11 @@ pub fn family(name: &'static str, operation: &'static str) -> Span {
     begin(name, Some(operation), None, None, true)
 }
 
+/// A repeated operation contributes totals without emitting every boundary.
+pub fn operation(name: &'static str) -> Span {
+    begin(name, None, None, None, false)
+}
+
 /// A face is visible in heartbeats; only slow completions get their own event.
 pub fn face(name: &'static str, index: usize, entity: Option<u64>) -> Span {
     let operation = PARALLEL.with(|parallel| parallel.get().then_some("parallel"));
