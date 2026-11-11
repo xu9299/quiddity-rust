@@ -494,6 +494,13 @@ fn shared(
     // the whole answer refused.
     let unresolved = std::cell::Cell::new(false);
     let length = |h: f64, s: f64| {
+        // One unanswered line already refuses this whole pass. Later samples
+        // cannot restore an answer, and the accumulated numbers will be discarded.
+        if unresolved.get() {
+            return [0.0, 0.0];
+        }
+        #[cfg(test)]
+        tests::SHARED_LINES.with(|count| count.set(count.get() + 1));
         let origin = geom::add(
             geom::add(geom::scale(frame.z, h), geom::scale(frame.x, s)),
             geom::scale(frame.y, start),
@@ -549,6 +556,9 @@ fn shared(
     // a sliver of material between such a curve and the nearest edge can be narrower than the
     // spacing of the Gauss points and be missed by both rules.
     let area = |h: f64| {
+        if unresolved.get() {
+            return [0.0, 0.0];
+        }
         let mut ss: Vec<f64> = Vec::new();
         for e in mine.edges.iter().chain(&theirs.edges) {
             ss.extend(crossings(e, frame.z, h, frame.x));
@@ -567,7 +577,9 @@ fn shared(
         }
         integrate(&|s| length(h, s), across, ss, rule.per(h1 - h0))
     };
-    let total = integrate_until(&area, (h0, h1), hs, rule, stop);
+    let total = integrate_until(&area, (h0, h1), hs, rule, &|total| {
+        unresolved.get() || stop(total)
+    });
     (!unresolved.get()).then_some(total)
 }
 
@@ -892,6 +904,42 @@ fn adapt(f: &dyn Fn(f64) -> Pair, x0: f64, x1: f64, whole: Pair, tol: f64, depth
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        pub(super) static SHARED_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn an_unanswered_line_refuses_the_probe_without_sampling_later_lines() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/rejected_bored_box.step");
+        let mut part = crate::read_step_file(&path).unwrap();
+        // The probe edges stay outside the block. Its interior integration lines,
+        // along x, reach the side whose surface will become unanswerable.
+        let probe = Probe::Box(Bounds {
+            min: [-16.0, -16.0, 2.0],
+            max: [16.0, 16.0, 3.0],
+        });
+        assert!(common_volume(&Classifier::new(&part), &probe).is_some_and(|v| v > 0.0));
+        let side = RayCaster::for_faces(&part, (0..part.faces.len()).collect())
+            .hits([20.0, 10.0, 2.5], [-1.0, 0.0, 0.0], 10.0)
+            .unwrap()[0];
+        assert!((side.t - 5.0).abs() < 1e-9);
+        part.faces[side.face].surface = Surface::Other { kind: "TEST" };
+        let solid = Classifier::new(&part);
+        SHARED_LINES.set(0);
+        assert_eq!(common_volume(&solid, &probe), None);
+        assert_eq!(
+            SHARED_LINES.get(),
+            1,
+            "the first unanswered line settles refusal"
+        );
+        for limit in [0.0, 0.5, 1.0] {
+            SHARED_LINES.set(0);
+            assert!(!fills_at_most(&solid, &probe, limit));
+            assert_eq!(SHARED_LINES.get(), 1);
+        }
+    }
 
     #[test]
     fn a_sliver_where_a_probe_face_cuts_a_curved_face_is_measured() {
