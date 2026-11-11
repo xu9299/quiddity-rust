@@ -61,39 +61,27 @@ jobs:
     - name: Require the successful clean baseline on the same macOS build
       env:
         GH_TOKEN: ${{ github.token }}
-      run: 'baseline_api=repos/xu9299/quiddity-rust/actions
-
-        baseline_log=../validation-logs/baseline.log
-
-        gh api "$baseline_api/jobs/130496910966" > ../validation-logs/baseline-job.json
-
-        test "$(jq -r .conclusion ../validation-logs/baseline-job.json)" = success
-
-        test "$(jq -r .run_id ../validation-logs/baseline-job.json)" = 43012973333
-
-        baseline_control=$(gh api "$baseline_api/runs/43012973333" --jq .head_sha)
-
-        test "$baseline_control" = b5955c73aa3e85144866871aaa4e5e6cd247ce2f
-
-        gh api "$baseline_api/jobs/130496910966/logs" > "$baseline_log"
-
-        grep -F ''HEAD reproduces all 2701 snapshots byte for byte'' "$baseline_log"
-
-        grep -F ''6eee6318866ea186d5bc3f7ef81e4b6b063bdc42'' "$baseline_log"
-
-        grep -F ''release: 1.99.1'' "$baseline_log"
-
-        baseline_product=$(awk ''/ProductVersion:/ {print $NF}'' "$baseline_log" |
-        tr -d ''\r'')
-
-        baseline_build=$(awk ''/BuildVersion:/ {print $NF}'' "$baseline_log" | tr
-        -d ''\r'')
-
-        test "$(sw_vers -productVersion)" = "$baseline_product"
-
-        test "$(sw_vers -buildVersion)" = "$baseline_build"
-
-        '
+      run: "baseline_api=repos/xu9299/quiddity-rust/actions\nbaseline_log=../validation-logs/baseline.log\n\
+        gh api \"$baseline_api/jobs/130496910966\" > ../validation-logs/baseline-job.json\n\
+        test \"$(jq -r .conclusion ../validation-logs/baseline-job.json)\" = success\n\
+        test \"$(jq -r .run_id ../validation-logs/baseline-job.json)\" = 43012973333\n\
+        baseline_control=$(gh api \"$baseline_api/runs/43012973333\" --jq .head_sha)\n\
+        test \"$baseline_control\" = b5955c73aa3e85144866871aaa4e5e6cd247ce2f\nbaseline_request=(curl\
+        \ --fail --silent --show-error --output /dev/null)\nbaseline_request+=(--write-out\
+        \ '%{redirect_url}')\nbaseline_request+=(--header \"Authorization: Bearer\
+        \ $GH_TOKEN\")\nbaseline_request+=(\"https://api.github.com/$baseline_api/jobs/130496910966/logs\"\
+        )\nbaseline_log_url=$(\"${baseline_request[@]}\")\ncase \"$baseline_log_url\"\
+        \ in\n  https://*) ;;\n  *) echo 'Missing HTTPS log redirect' >&2; exit 1\
+        \ ;;\nesac\ncurl -fsSL --proto '=https' --proto-redir '=https' \"$baseline_log_url\"\
+        \ -o \"$baseline_log.raw\"\nbaseline_controls='\\000-\\010\\013\\014\\016-\\\
+        037\\177'\nLC_ALL=C tr -d \"$baseline_controls\" < \"$baseline_log.raw\" >\
+        \ \"$baseline_log\"\ngrep -F 'HEAD reproduces all 2701 snapshots byte for\
+        \ byte' \"$baseline_log\"\ngrep -F '6eee6318866ea186d5bc3f7ef81e4b6b063bdc42'\
+        \ \"$baseline_log\"\ngrep -F 'release: 1.99.1' \"$baseline_log\"\nbaseline_product=$(awk\
+        \ '/ProductVersion:/ {print $NF}' \"$baseline_log\" | tr -d '\\r')\nbaseline_build=$(awk\
+        \ '/BuildVersion:/ {print $NF}' \"$baseline_log\" | tr -d '\\r')\ntest \"\
+        $(sw_vers -productVersion)\" = \"$baseline_product\"\ntest \"$(sw_vers -buildVersion)\"\
+        \ = \"$baseline_build\"\n"
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         workspaces: source -> ../target
