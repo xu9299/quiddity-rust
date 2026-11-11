@@ -1709,12 +1709,38 @@ internal_entry! {
 /// cylindrical pockets and passages and plane-envelope passages. A proof whose projection
 /// refuses is dropped; a refusal outside the projections refuses the whole discovery.
 pub fn candidates(ctx: &Context<'_>, surfaces: &EffectiveFaces<'_, '_>) -> Checked<Vec<Candidate>> {
-    candidates_reading(ctx, surfaces, |floor| {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let read = |floor| {
         preferred(
             one_obround_candidate(ctx, floor),
             || one_polygonal_candidate(ctx, floor),
             || one_mixed_candidate(ctx, floor),
         )
+    };
+    let part = ctx.part;
+    let pending = (0..part.faces.len()).filter(|&i| is_planar(part, i)).collect();
+    let mut readings: Vec<OnceLock<FloorReading>> =
+        (0..part.faces.len()).map(|_| OnceLock::new()).collect();
+    let first_refusal = AtomicUsize::new(usize::MAX);
+    part.prepare_face_queries(pending, "section_recess.parallel_floors", |floor| {
+        if floor > first_refusal.load(Ordering::Relaxed) {
+            return;
+        }
+        let _timing = crate::kernel::timing::face(
+            "section_recess.floor", floor, part.face_source(floor).map(|s| s.entity),
+        );
+        let result = read(floor);
+        if result.is_err() {
+            first_refusal.fetch_min(floor, Ordering::Relaxed);
+        }
+        readings[floor].set(result).expect("one reading per floor");
+    });
+    // Replay the original face order, including its first refusal and duplicate
+    // handling. Small inputs and a single-worker cap use the original lazy path.
+    candidates_reading(ctx, surfaces, |floor| {
+        readings[floor].take().unwrap_or_else(|| read(floor))
     })
 }
 }

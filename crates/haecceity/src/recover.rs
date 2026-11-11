@@ -40,7 +40,9 @@ impl Part {
     }
 
     /// Schedule independent queries only; callers retain their original ordered reduction.
-    pub(crate) fn prepare_face_queries(
+    /// Below the size threshold or with one worker this does nothing, so callers
+    /// must still answer any unprepared query through their original path.
+    pub fn prepare_face_queries(
         &self,
         pending: Vec<usize>,
         stage: &'static str,
@@ -64,8 +66,8 @@ impl Part {
         let _timing = crate::timing::stage(stage);
         let context = crate::timing::parallel_context();
         let next = AtomicUsize::new(0);
-        // The caller visits every queried face even when another one refuses, so all
-        // queries belong to the original workload. Dynamic assignment balances slow faces.
+        // Dynamic assignment balances slow faces. A caller with an ordered early
+        // refusal may skip later queries in its callback and replay results in order.
         let work = || {
             while let Some(&face) = pending.get(next.fetch_add(1, Ordering::Relaxed)) {
                 query(face);
