@@ -76,7 +76,9 @@ A STEP file may contain both solids and open surface shells. A prismatic candida
 on such a shell can be retained as `unproved` in recognition/6, but cannot authorize
 a material section recess. All eight recess source families check the union of their
 defining and consulted faces before projection. A candidate without a common valid
-solid produces a `section_recess_source_refusals` record:
+solid produces a `section_recess_source_refusals` record. This intentionally also
+refuses a solid-owned candidate that consults a face on another solid, or a face
+excluded by local degradation, even when its defining faces alone have valid ownership:
 
 ```json
 {"reason": "missing_common_valid_solid", "faces": [10, 11, 12, 13]}
@@ -93,6 +95,8 @@ family and does not set `complete: false`.
 
 If the section projection itself returns an error, both recognition and evidence
 instead record `section_recesses / section_recess_projection` in `failures` and mark
-the result incomplete. Independent families survive. Input parsing, source identity
+the result incomplete, including `complete: false` in recognition/6. This is a
+deliberate partial-result contract, not a successful empty evaluation. Independent
+families survive. Input parsing, source identity
 and document validation errors still fail the call. No sewing, solidification, input
 repair or change to the recognition/6, evidence/1 or section-recess/4 schema is involved.
