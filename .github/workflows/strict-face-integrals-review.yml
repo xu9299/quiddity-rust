@@ -1,0 +1,126 @@
+# Validation only: the reviewed performance commits remain unchanged.
+# This workflow belongs to a separate fork branch, not the upstream patch.
+name: Face integrals strict review
+
+on:
+  push:
+    branches: [validation/face-integrals-strict-20261111]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: face-integrals-strict-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  clean-baseline:
+    runs-on: macos-15
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: b590592035733d8ac9fa5b3144bb5d969bda89a0
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record and verify environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = b590592035733d8ac9fa5b3144bb5d969bda89a0
+          test "$(uname -m)" = arm64
+          rustc -vV | grep -Fx 'host: aarch64-apple-darwin'
+          rustc -vV | grep -Fx 'release: 1.99.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+      - name: Strict replay of unchanged upstream expectations
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/baseline-strict.log
+          grep -Fx 'HEAD reproduces all 2701 snapshots byte for byte' ../validation-logs/baseline-strict.log
+          test -z "$(git status --porcelain -- tests/fixtures/rust-snapshot/)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: face-integrals-baseline-evidence
+          path: validation-logs/
+          retention-days: 14
+
+  candidate:
+    needs: clean-baseline
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: 29497fc9887761b27365991c72362116234536c3
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record and verify environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = 29497fc9887761b27365991c72362116234536c3
+          test "$(uname -m)" = arm64
+          rustc -vV | grep -Fx 'host: aarch64-apple-darwin'
+          rustc -vV | grep -Fx 'release: 1.99.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+      - name: Verify unchanged expectations and public fixtures
+        run: |
+          git diff --exit-code b590592035733d8ac9fa5b3144bb5d969bda89a0 HEAD -- tests/ Cargo.lock
+          git diff --stat b590592035733d8ac9fa5b3144bb5d969bda89a0 HEAD | tee ../validation-logs/reviewed-scope.log
+      - name: Format and lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Strict replay of the performance candidate
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/candidate-strict.log
+          grep -Fx 'HEAD reproduces all 2701 snapshots byte for byte' ../validation-logs/candidate-strict.log
+          test -z "$(git status --porcelain -- tests/fixtures/rust-snapshot/)"
+      - name: Complete required workspace tests
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace-tests.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: face-integrals-candidate-evidence
+          path: validation-logs/
+          retention-days: 14
