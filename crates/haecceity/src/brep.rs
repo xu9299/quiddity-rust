@@ -394,6 +394,7 @@ impl Part {
         &self,
         placement: &super::step::Placement,
     ) -> Result<Self, super::step::StepError> {
+        let _timing = crate::timing::stage("geometry.transform");
         super::step::validate_placement(placement)?;
         let direction = |at: &super::step::Placement, p: V3| {
             at.map(|r| r[0] * p[0] + r[1] * p[1] + r[2] * p[2])

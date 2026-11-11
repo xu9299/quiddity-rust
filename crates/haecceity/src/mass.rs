@@ -627,6 +627,11 @@ impl Part {
     }
 
     fn compute_face_mass(&self, face: usize) -> Option<[f64; 5]> {
+        let _timing = crate::timing::face(
+            "mass.face_mass",
+            face,
+            self.face_source(face).map(|s| s.entity),
+        );
         let surface = &self.faces[face].surface;
         // A whole sphere has no boundary to integrate along; its area and flux (3V) are exact,
         // and its area vector vanishes.
@@ -1264,6 +1269,11 @@ impl Part {
     }
 
     fn compute_face_moments(&self, face: usize) -> Option<FaceMoments> {
+        let _timing = crate::timing::face(
+            "mass.face_moments",
+            face,
+            self.face_source(face).map(|s| s.entity),
+        );
         let fc = &self.faces[face];
         let surface = &fc.surface;
         if let Surface::Sphere { frame, radius } = surface

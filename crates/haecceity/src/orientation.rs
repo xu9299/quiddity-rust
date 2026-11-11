@@ -27,6 +27,7 @@ impl Part {
     /// sampled box and the flux integrals over every face) runs only for a boundary where that
     /// proof is not found.
     pub fn repair_inverted_shells(mut self) -> Self {
+        let _timing = crate::timing::stage("step.orient_shells");
         for solid in 0..self.solids.len() {
             if !self.solid_is_valid(solid) || outward_proved(&self, solid) {
                 continue;

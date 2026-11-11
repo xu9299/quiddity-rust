@@ -152,7 +152,10 @@ type StepRecognition = (Part, Recognition, RecognitionDocument, Vec<String>);
 /// Read, recognise, document and diagnose once for both public entry points.
 fn recognise_step_document(path: &str, placement: &Placement) -> Result<StepRecognition, Failure> {
     // Hash and parse one snapshot: a file changed during frame inference cannot mix sources.
-    let bytes = std::fs::read(path).map_err(|e| read_failure(path, &e))?;
+    let bytes = {
+        let _timing = crate::kernel::timing::stage("step.read_file_bytes");
+        std::fs::read(path).map_err(|e| read_failure(path, &e))?
+    };
     recognise_bytes_placed(path, bytes, placement)
 }
 
@@ -191,7 +194,10 @@ fn recognise_bytes_placed(
     let part = read_step_placed(&step_bytes, placement).map_err(|e| read_failure(path, &e))?;
     let mut recognition = correspondence::recognise(&part);
     recognition.source_sha256 = Some(source_sha256);
-    let document = recognition::document(&recognition, part.faces.len());
+    let document = {
+        let _timing = crate::kernel::timing::stage("recognition.document");
+        recognition::document(&recognition, part.faces.len())
+    };
     let mut warnings = recognition_warnings(path, &part, &recognition, &document);
     if fusion {
         warnings.insert(0, part_input::fusion_warning(path));

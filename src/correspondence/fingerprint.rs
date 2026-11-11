@@ -1102,6 +1102,7 @@ pub(crate) fn published_fingerprint_in(
     features: &crate::published_records::PublishedFeatures,
     ctx: &crate::features::Context<'_>,
 ) -> Fingerprints {
+    let _timing = crate::kernel::timing::stage("recognition.fingerprints");
     let (source, motion) = features.measurement_source();
     published_fingerprint_impl(ctx, part, features, source, Some(motion))
 }

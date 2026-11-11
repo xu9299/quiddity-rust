@@ -5,6 +5,7 @@ use pyo3::types::{PyBytes, PyString};
 use quiddity::{Part, file_api, kernel::step, serve};
 
 mod pmi;
+mod timing;
 
 #[derive(Clone)]
 enum Input {
@@ -64,18 +65,36 @@ impl Input {
 }
 
 #[pyfunction]
-fn recognise(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
+#[pyo3(signature = (step, *, on_timing=None))]
+fn recognise(
+    py: Python<'_>,
+    step: &Bound<'_, PyAny>,
+    on_timing: Option<Py<PyAny>>,
+) -> PyResult<String> {
     let input = Input::extract(step)?;
-    py.detach(|| input.recognise())
-        .map_err(PyValueError::new_err)
+    py.detach(move || {
+        let _session = timing::start(on_timing);
+        let _stage = quiddity::kernel::timing::stage("recognition");
+        input.recognise()
+    })
+    .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
-#[pyo3(signature = (step, framed=false))]
-fn evidence(py: Python<'_>, step: &Bound<'_, PyAny>, framed: bool) -> PyResult<String> {
+#[pyo3(signature = (step, framed=false, *, on_timing=None))]
+fn evidence(
+    py: Python<'_>,
+    step: &Bound<'_, PyAny>,
+    framed: bool,
+    on_timing: Option<Py<PyAny>>,
+) -> PyResult<String> {
     let input = Input::extract(step)?;
-    py.detach(|| file_api::evidence(&input.load()?, framed))
-        .map_err(PyValueError::new_err)
+    py.detach(move || {
+        let _session = timing::start(on_timing);
+        let _stage = quiddity::kernel::timing::stage("evidence");
+        file_api::evidence(&input.load()?, framed)
+    })
+    .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]

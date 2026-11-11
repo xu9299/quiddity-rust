@@ -1917,6 +1917,7 @@ struct Read {
 }
 
 fn read_placed(bytes: &[u8], outer: &Placement) -> Result<Read, StepError> {
+    let _timing = crate::timing::stage("step.read");
     validate_placement(outer)?;
     build(&Parsed::new(bytes)?, Scope::Placed(*outer))
 }
@@ -1935,11 +1936,18 @@ thread_local! {
 
 impl Parsed {
     fn new(bytes: &[u8]) -> Result<Parsed, StepError> {
+        let _timing = crate::timing::stage("step.parse");
         #[cfg(test)]
         GEOMETRY_PARSES.with(|n| n.set(n.get() + 1));
         let parse_error = |e| StepError::Parse(crate::p21::parse_message(bytes, &e));
-        let (model, report) = step_io::read(bytes).map_err(parse_error)?;
-        let graph = step_io::parser::parse(bytes).map_err(parse_error)?;
+        let (model, report) = {
+            let _timing = crate::timing::stage("step.model_parse");
+            step_io::read(bytes).map_err(parse_error)?
+        };
+        let graph = {
+            let _timing = crate::timing::stage("step.reference_graph");
+            step_io::parser::parse(bytes).map_err(parse_error)?
+        };
         refuse_dropped_shapes(&graph, &report)?;
         check_curve_wrappers(&model)?;
         Ok(Parsed {
@@ -1963,6 +1971,7 @@ enum Scope<'a> {
 }
 
 fn build(parsed: &Parsed, scope: Scope<'_>) -> Result<Read, StepError> {
+    let _timing = crate::timing::stage("step.build_geometry");
     let Parsed {
         model,
         report,

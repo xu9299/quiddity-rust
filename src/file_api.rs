@@ -13,6 +13,7 @@ use crate::{
 
 /// Pretty JSON with the CLI's terminating newline.
 pub fn json<T: Serialize>(value: &T) -> Result<String, String> {
+    let _timing = crate::kernel::timing::stage("output.serialize_json");
     serde_json::to_string_pretty(value)
         .map(|text| format!("{text}\n"))
         .map_err(|e| e.to_string())

@@ -286,6 +286,7 @@ fn material_origin(part: &Part) -> Result<V3, FrameRefusal> {
 /// Thus a rigid motion carries the intrinsic frame unless the moved file axes win this vote.
 /// An axial part retains its explicit roll gauge; no unsupported second material axis is added.
 pub fn infer_part_frame(part: &Part) -> Result<PartFrame, FrameRefusal> {
+    let _timing = crate::kernel::timing::stage("frame.infer");
     let origin = material_origin(part)?;
     let mut classes: Vec<DirectionClass> = Vec::new();
     for (index, face) in part.faces.iter().enumerate() {

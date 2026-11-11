@@ -45,6 +45,7 @@ pub mod recover;
 pub mod sampling;
 pub mod step;
 pub mod sweep;
+pub mod timing;
 pub mod uv;
 pub mod validity;
 pub mod volume;

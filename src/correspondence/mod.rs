@@ -61,6 +61,7 @@ pub struct Recognition {
 /// If frame inference is refused, records are caller-space and `frame` carries the reason.
 /// This performs no STEP reads and preserves face and edge indices.
 pub fn recognise(part: &Part) -> Recognition {
+    let _timing = crate::kernel::timing::stage("recognition.correspondence");
     let frame = match frames::infer_part_frame(part) {
         Ok(frame) => frame,
         Err(reason) => {
@@ -82,6 +83,7 @@ pub fn recognise(part: &Part) -> Recognition {
 }
 
 fn recognise_in_frame(part: &Part, frame: PartFrame) -> Recognition {
+    let _timing = crate::kernel::timing::stage("recognition.normalized");
     let working = match part.transformed(&frame.normalisation()) {
         Ok(working) => working,
         Err(_) => {
