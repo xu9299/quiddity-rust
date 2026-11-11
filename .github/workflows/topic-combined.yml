@@ -1,0 +1,133 @@
+name: Corrected joint-analysis validation
+'on':
+  push:
+    branches:
+    - validation/topics-combined-followup-20261111
+  workflow_dispatch: null
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: topics-combined-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  RUSTUP_TOOLCHAIN: 1.99.1
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+jobs:
+  combined:
+    runs-on: macos-26
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: xu9299/quiddity-rust
+        ref: 7d2a91afd0249cfb5c785cf09a2a982a1c3ba4f0
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: pzfreo/quiddity-corpus
+        ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+        path: quiddity-corpus
+        persist-credentials: false
+    - name: Record environment and scope
+      run: 'mkdir -p ../validation-logs/verified
+
+        rustup toolchain install 1.99.1 --profile minimal --component clippy --component
+        rustfmt
+
+        { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+
+        test "$(uname -m)" = arm64
+
+        test "$(git rev-parse HEAD)" = ''7d2a91afd0249cfb5c785cf09a2a982a1c3ba4f0''
+
+        git diff --stat 6eee6318866ea186d5bc3f7ef81e4b6b063bdc42 HEAD | tee ../validation-logs/scope.log
+
+        git diff --exit-code 6eee6318866ea186d5bc3f7ef81e4b6b063bdc42 HEAD -- Cargo.toml
+        Cargo.lock
+
+        '
+    - name: Require the successful clean baseline on the same macOS build
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: 'baseline_api=repos/xu9299/quiddity-rust/actions
+
+        baseline_log=../validation-logs/baseline.log
+
+        gh api "$baseline_api/jobs/130496910966" > ../validation-logs/baseline-job.json
+
+        test "$(jq -r .conclusion ../validation-logs/baseline-job.json)" = success
+
+        test "$(jq -r .run_id ../validation-logs/baseline-job.json)" = 43012973333
+
+        baseline_control=$(gh api "$baseline_api/runs/43012973333" --jq .head_sha)
+
+        test "$baseline_control" = b5955c73aa3e85144866871aaa4e5e6cd247ce2f
+
+        gh api "$baseline_api/jobs/130496910966/logs" > "$baseline_log"
+
+        grep -F ''HEAD reproduces all 2701 snapshots byte for byte'' "$baseline_log"
+
+        grep -F ''6eee6318866ea186d5bc3f7ef81e4b6b063bdc42'' "$baseline_log"
+
+        grep -F ''release: 1.99.1'' "$baseline_log"
+
+        baseline_product=$(awk ''/ProductVersion:/ {print $NF}'' "$baseline_log" |
+        tr -d ''\r'')
+
+        baseline_build=$(awk ''/BuildVersion:/ {print $NF}'' "$baseline_log" | tr
+        -d ''\r'')
+
+        test "$(sw_vers -productVersion)" = "$baseline_product"
+
+        test "$(sw_vers -buildVersion)" = "$baseline_build"
+
+        '
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        workspaces: source -> ../target
+        key: topic-combined-final
+    - name: Format and lint
+      run: 'cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+
+        cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1
+        | tee ../validation-logs/clippy.log
+
+        '
+    - name: Strict candidate replay
+      run: 'cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+
+        grep -Fx ''HEAD reproduces all 2702 snapshots byte for byte'' ../validation-logs/strict.log
+
+        test -z "$(git status --porcelain)"
+
+        '
+    - name: Complete workspace regression
+      env:
+        QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+        RUST_BACKTRACE: full
+      run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+    - name: Audit produced coverage and provenance
+      run: 'cargo run -p snapshot-tool --release --locked -- --check --coverage-only
+        --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+
+        test -z "$(git status --porcelain)"
+
+        '
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: topics-combined-final-evidence
+        path: validation-logs/
+        retention-days: 30
