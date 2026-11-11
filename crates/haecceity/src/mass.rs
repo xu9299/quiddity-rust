@@ -56,7 +56,7 @@ fn gauss_nodes() -> &'static [(f64, f64)] {
 
 /// ∫ f over the interval running through `cuts` in order, one Gauss panel between each
 /// consecutive pair, for every component of f at once.
-fn integrate<const N: usize>(cuts: &[f64], f: impl Fn(f64) -> [f64; N]) -> [f64; N] {
+fn integrate<const N: usize>(cuts: &[f64], mut f: impl FnMut(f64) -> [f64; N]) -> [f64; N] {
     let mut total = [0.0; N];
     for w in cuts.windows(2) {
         let (half, centre) = (0.5 * (w[1] - w[0]), 0.5 * (w[1] + w[0]));
@@ -68,6 +68,69 @@ fn integrate<const N: usize>(cuts: &[f64], f: impl Fn(f64) -> [f64; N]) -> [f64;
         }
     }
     total
+}
+
+/// Reuse exact integrand samples only while consecutive inner integrals hold the
+/// other parameter fixed. Panel weights and every addition remain in walking order.
+/// The first visit does not allocate a table for a parameter that may never repeat.
+#[derive(Default)]
+struct IntegralSamples<const N: usize> {
+    fixed: Option<u64>,
+    values: std::collections::HashMap<u64, [f64; N]>,
+    #[cfg(test)]
+    counts: [u64; 2],
+}
+
+const MAX_INTEGRAL_SAMPLES: usize = 16_384;
+
+impl<const N: usize> IntegralSamples<N> {
+    fn integrate(&mut self, fixed: f64, cuts: &[f64], f: impl Fn(f64) -> [f64; N]) -> [f64; N] {
+        #[cfg(test)]
+        {
+            self.counts[0] += (cuts.len().saturating_sub(1) * gauss_nodes().len()) as u64;
+        }
+        let fixed = fixed.is_finite().then(|| fixed.to_bits());
+        if fixed.is_none() || self.fixed != fixed {
+            self.fixed = fixed;
+            self.values.clear();
+            return integrate(cuts, f);
+        }
+        integrate(cuts, |x| {
+            if x.is_finite()
+                && let Some(&value) = self.values.get(&x.to_bits())
+            {
+                #[cfg(test)]
+                {
+                    self.counts[1] += 1;
+                }
+                return value;
+            }
+            let value = f(x);
+            if x.is_finite()
+                && value.iter().all(|v| v.is_finite())
+                && self.values.len() < MAX_INTEGRAL_SAMPLES
+            {
+                self.values.insert(x.to_bits(), value);
+            }
+            value
+        })
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SAMPLE_REUSE_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static SAMPLE_REUSE_COUNTS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+#[cfg(test)]
+impl<const N: usize> Drop for IntegralSamples<N> {
+    fn drop(&mut self) {
+        SAMPLE_REUSE_COUNTS.with(|counts| {
+            let old = counts.get();
+            counts.set([old[0] + self.counts[0], old[1] + self.counts[1]]);
+        });
+    }
 }
 
 /// Most panels or periods an integral is cut into. An angular range is a few turns and a conic's
@@ -725,13 +788,27 @@ impl Part {
         // (The swept area, read only where the loops do not run round u, is measured from the
         // same reference.)
         let u_ref = if along_v { 0.0 } else { reference };
+        let reuse_samples = matches!(surface, Surface::Freeform { .. });
+        #[cfg(test)]
+        let reuse_samples = reuse_samples && SAMPLE_REUSE_ENABLED.get();
+        let samples = reuse_samples.then(|| std::cell::RefCell::new(IntegralSamples::default()));
         let term = |u: f64, v: f64, du: f64, dv: f64| {
             let (weight, y) = if along_v {
                 let cuts = surface_cuts(surface, spans.1, true, reference, v)?;
-                (-du, integrate(&cuts, |s| f(u, s)))
+                let inner = |s| f(u, s);
+                let y = samples.as_ref().map_or_else(
+                    || integrate(&cuts, inner),
+                    |samples| samples.borrow_mut().integrate(u, &cuts, inner),
+                );
+                (-du, y)
             } else {
                 let cuts = surface_cuts(surface, spans.0, false, reference, u)?;
-                (dv, integrate(&cuts, |s| f(s, v)))
+                let inner = |s| f(s, v);
+                let y = samples.as_ref().map_or_else(
+                    || integrate(&cuts, inner),
+                    |samples| samples.borrow_mut().integrate(v, &cuts, inner),
+                );
+                (dv, y)
             };
             Some(y.map(|y| weight * y))
         };
@@ -1469,6 +1546,151 @@ impl Part {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn without_sample_reuse<T>(f: impl FnOnce() -> T) -> T {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                SAMPLE_REUSE_ENABLED.set(self.0);
+            }
+        }
+        let _restore = Restore(SAMPLE_REUSE_ENABLED.replace(false));
+        f()
+    }
+
+    #[test]
+    fn exact_samples_preserve_node_weights_and_addition_order() {
+        let mut samples = IntegralSamples::<5>::default();
+        let mut hits = 0;
+        for fixed in [0.0, 0.0, -0.0, 0.25, f64::from_bits(0.25f64.to_bits() + 1)] {
+            let f = |x: f64| [x.sin(), fixed * x, 1e20 * x, x.cos(), fixed.signum()];
+            for endpoint in [1.0, 1.0, 0.625, 1.125, 0.875] {
+                for direction in [1.0, -1.0] {
+                    let cuts =
+                        cuts(0.0, direction * endpoint, 1, &[0.125, 0.25, 0.5, 0.75]).unwrap();
+                    assert_eq!(
+                        samples.integrate(fixed, &cuts, f).map(f64::to_bits),
+                        integrate(&cuts, f).map(f64::to_bits)
+                    );
+                }
+            }
+            hits += samples.counts[1];
+        }
+        assert!(hits > 0, "the equality check must exercise actual reuse");
+    }
+
+    #[test]
+    fn exact_sample_storage_is_bounded_and_nonfinite_values_are_not_reused() {
+        let mut samples = IntegralSamples::<2>::default();
+        let panels = cuts(0.0, 1.0, MAX_INTEGRAL_SAMPLES / 8, &[]).unwrap();
+        for _ in 0..3 {
+            let f = |x: f64| [x.sin(), x * x];
+            assert_eq!(
+                samples.integrate(0.0, &panels, f).map(f64::to_bits),
+                integrate(&panels, f).map(f64::to_bits)
+            );
+        }
+        assert_eq!(samples.values.len(), MAX_INTEGRAL_SAMPLES);
+        assert!(samples.counts[1] > 0);
+        for fixed in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let f = |x: f64| [fixed, x];
+            assert_eq!(
+                samples.integrate(fixed, &[0.0, 1.0], f).map(f64::to_bits),
+                integrate(&[0.0, 1.0], f).map(f64::to_bits)
+            );
+            assert!(samples.values.is_empty());
+        }
+        for _ in 0..3 {
+            let f = |x: f64| [f64::INFINITY, x];
+            assert_eq!(
+                samples.integrate(1.0, &[0.0, 1.0], f).map(f64::to_bits),
+                integrate(&[0.0, 1.0], f).map(f64::to_bits)
+            );
+            assert!(samples.values.is_empty());
+        }
+    }
+
+    #[test]
+    fn exact_samples_preserve_trimmed_freeform_mass_and_moments() {
+        for name in [
+            "held_side_knot.step",
+            "late_turn.step",
+            "rotated_seam_band.step",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures")
+                .join(name);
+            let part = crate::step::read_step_file(&path).unwrap();
+            SAMPLE_REUSE_COUNTS.set([0; 2]);
+            for face in 0..part.faces.len() {
+                let original = without_sample_reuse(|| {
+                    (
+                        part.compute_face_mass(face).map(|v| v.map(f64::to_bits)),
+                        part.compute_face_moments(face).map(moment_bits),
+                    )
+                });
+                assert_eq!(
+                    original,
+                    (
+                        part.compute_face_mass(face).map(|v| v.map(f64::to_bits)),
+                        part.compute_face_moments(face).map(moment_bits),
+                    ),
+                    "{name}, face {face}"
+                );
+            }
+            assert!(SAMPLE_REUSE_COUNTS.get()[0] > 0, "{name}");
+        }
+    }
+
+    /// Read a complete caller-provided STEP but measure only explicitly selected faces.
+    /// Keep private inputs and diagnostics outside the source checkout.
+    #[test]
+    #[ignore = "manual bounded exact-sample probe on selected real faces"]
+    fn selected_exact_sample_probe() {
+        let input = std::env::var_os("QUIDDITY_SAMPLE_PROBE_INPUT").expect("input path");
+        let output = std::env::var_os("QUIDDITY_SAMPLE_PROBE_OUTPUT").expect("output path");
+        let faces: Vec<usize> = std::env::var("QUIDDITY_SAMPLE_PROBE_FACES")
+            .expect("face indices")
+            .split(',')
+            .map(|v| v.parse().expect("face index"))
+            .collect();
+        assert!(!faces.is_empty() && faces.len() <= 8);
+        let part = crate::step::read_step_file(std::path::Path::new(&input)).unwrap();
+        let output = std::path::Path::new(&output);
+        std::fs::create_dir_all(output).unwrap();
+        let mut rows = Vec::new();
+        for face in faces {
+            let mut expected = None;
+            for (round, enabled) in [false, true, true, false].into_iter().enumerate() {
+                SAMPLE_REUSE_ENABLED.set(enabled);
+                SAMPLE_REUSE_COUNTS.set([0; 2]);
+                let started = std::time::Instant::now();
+                let value = part.compute_face_mass(face).map(|v| v.map(f64::to_bits));
+                let seconds = started.elapsed().as_secs_f64();
+                if let Some(expected) = expected {
+                    assert_eq!(value, expected, "face {face}, round {round}");
+                } else {
+                    expected = Some(value);
+                }
+                let row = serde_json::json!({
+                    "face": face,
+                    "round": round,
+                    "enabled": enabled,
+                    "seconds": seconds,
+                    "bits": value,
+                    "node_requests_and_hits": SAMPLE_REUSE_COUNTS.get(),
+                });
+                println!("{row}");
+                rows.push(row);
+                std::fs::write(
+                    output.join("samples.json"),
+                    serde_json::to_vec_pretty(&rows).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        SAMPLE_REUSE_ENABLED.set(true);
+    }
 
     #[test]
     fn gauss_rule_is_exact_for_polynomials() {
