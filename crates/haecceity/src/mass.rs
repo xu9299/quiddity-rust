@@ -1636,9 +1636,7 @@ mod tests {
     fn unmeasurable_moments_are_cached_as_missing() {
         let part = Part::new(
             vec![crate::brep::Face {
-                surface: Surface::Other {
-                    kind: "unresolved",
-                },
+                surface: Surface::Other { kind: "unresolved" },
                 reversed: false,
                 loops: Vec::new(),
                 solid: None,
