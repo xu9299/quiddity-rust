@@ -13,7 +13,7 @@ on:
         required: true
         default: strict
         type: choice
-        options: [strict, linux]
+        options: [strict, linux, pmi]
 
 permissions:
   contents: read
@@ -120,7 +120,7 @@ jobs:
           retention-days: 7
 
   ordinary-linux:
-    if: github.event_name == 'push' || inputs.suite == 'linux'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'linux'
     name: Complete Linux regression (comparison bands and coverage)
     runs-on: ubuntu-latest
     timeout-minutes: 240
@@ -171,4 +171,87 @@ jobs:
             validation-logs/
             verified-linux/
             source/tests/fixtures/rust-snapshot/provenance.json
+          retention-days: 7
+
+  arm-pmi-diagnostic:
+    if: github.event_name == 'push' || inputs.suite == 'pmi'
+    name: ARM PMI diagnosis (${{ matrix.case }})
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: clean-baseline
+            revision: b590592035733d8ac9fa5b3144bb5d969bda89a0
+          - case: reviewed-fix
+            revision: f4941f1b3f0ee67654858d58389d7fa0781cf6ac
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ${{ matrix.revision }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record source and runtime limits
+        run: |
+          mkdir -p ../diagnostic-logs
+          rustup toolchain install
+          {
+            git rev-parse HEAD
+            git rev-parse HEAD:crates/haecceity
+            uname -a
+            sw_vers
+            rustc -vV
+            cargo -V
+            sysctl hw.memsize hw.logicalcpu
+            ulimit -a
+            printf 'RUST_MIN_STACK=%s\n' "${RUST_MIN_STACK:-unset}"
+            printf 'RUST_TEST_THREADS=%s\n' "$RUST_TEST_THREADS"
+          } | tee ../diagnostic-logs/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+      - name: Reproduce PMI writer with uncaptured diagnostics
+        env:
+          RUST_BACKTRACE: full
+        run: |
+          (
+            while true; do
+              date -u
+              vm_stat
+              ps -axo pid,ppid,rss,vsz,pcpu,comm | awk 'NR == 1 || /pmi_write-/'
+              sleep 10
+            done
+          ) > ../diagnostic-logs/resources.log 2>&1 &
+          sampler_pid=$!
+          trap 'kill "$sampler_pid" 2>/dev/null || true' EXIT
+          cargo test --workspace --release --test pmi_write -- --nocapture 2>&1 | tee ../diagnostic-logs/pmi-write.log
+      - name: Collect runtime and crash diagnostics
+        if: always()
+        run: |
+          mkdir -p ../diagnostic-logs/crash-reports
+          sleep 5
+          for report_dir in "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports; do
+            if [ -d "$report_dir" ]; then
+              find "$report_dir" -maxdepth 1 -type f -name '*pmi_write*' -exec cp '{}' ../diagnostic-logs/crash-reports/ ';' || true
+            fi
+          done
+          { date -u; vm_stat; df -h .; } > ../diagnostic-logs/final-resources.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: arm-pmi-diagnostic-${{ matrix.case }}
+          path: diagnostic-logs/
           retention-days: 7
