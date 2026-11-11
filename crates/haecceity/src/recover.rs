@@ -23,6 +23,60 @@ const ROUNDING: f64 = 16.0 * f64::EPSILON;
 const GRID: usize = 16;
 
 impl Part {
+    /// Prepare the same independent recovery queries that the caller will visit in order.
+    /// Only unqueried freeform faces participate; each existing cache also preserves None.
+    pub fn prepare_recovered(&self, faces: &[usize]) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pending: Vec<_> = faces
+            .iter()
+            .copied()
+            .filter(|&face| {
+                matches!(self.faces[face].surface, Surface::Freeform { .. })
+                    && self.cache[face].recovered.get().is_none()
+            })
+            .collect();
+        if pending.len() < 64 {
+            return;
+        }
+        let cap = std::env::var("HAECCEITY_THREADS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(4);
+        let workers = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(cap)
+            .min(4);
+        if workers <= 1 {
+            return;
+        }
+        let _timing = crate::timing::stage("geometry.parallel_recovery");
+        let context = crate::timing::parallel_context();
+        let next = AtomicUsize::new(0);
+        // The caller visits every queried face even when another one refuses, so all
+        // queries belong to the original workload. Dynamic assignment balances slow faces.
+        let work = || {
+            while let Some(&face) = pending.get(next.fetch_add(1, Ordering::Relaxed)) {
+                self.recovered(face);
+            }
+        };
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (1..workers)
+                .filter_map(|_| {
+                    std::thread::Builder::new()
+                        .name("quiddity-recovery".into())
+                        .spawn_scoped(scope, || context.run(work))
+                        .ok()
+                })
+                .collect();
+            context.run(work);
+            for handle in handles {
+                handle
+                    .join()
+                    .unwrap_or_else(|error| std::panic::resume_unwind(error));
+            }
+        });
+    }
+
     /// The analytic surface a freeform face is, if exactly one kind fits it within the
     /// recovery tolerance (computed once per face).
     pub fn recovered(&self, face: usize) -> Option<&Surface> {

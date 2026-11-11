@@ -602,29 +602,6 @@ impl Part {
             }
         }
         let centre = geom::scale(centre, 1.0 / uses.max(1) as f64);
-        // Populate independent immutable face terms, then retain the original reduction order.
-        // Small or already measured shells keep their original calling-thread path.
-        let pending = faces
-            .iter()
-            .filter(|&&face| {
-                self.cache[face].mass.get().is_none()
-                    && matches!(self.faces[face].surface, Surface::Freeform { .. })
-            })
-            .take(64)
-            .count();
-        if pending == 64 {
-            let cap = std::env::var("HAECCEITY_THREADS")
-                .ok()
-                .and_then(|n| n.parse().ok())
-                .unwrap_or(4);
-            let workers = std::thread::available_parallelism()
-                .map_or(1, |n| n.get())
-                .min(cap)
-                .min(4);
-            if workers > 1 {
-                self.populate_face_terms(faces, workers);
-            }
-        }
         let (mut flux, mut area) = (0.0, 0.0);
         for &face in faces {
             let [a, f, nx, ny, nz] = self.face_terms(face)?;
@@ -633,49 +610,6 @@ impl Part {
             flux += if self.faces[face].reversed { -f } else { f };
         }
         Some((flux / 3.0, area))
-    }
-
-    fn populate_face_terms(&self, faces: &[usize], workers: usize) {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let _timing = crate::timing::stage("mass.parallel_shell");
-        let context = crate::timing::parallel_context();
-        // Bound speculative work if an earlier face eventually refuses. No later batch
-        // starts after a missing term, and the shell still returns None in its original loop.
-        for batch in faces.chunks(256) {
-            let next = AtomicUsize::new(0);
-            let stop = AtomicUsize::new(batch.len());
-            let work = || {
-                loop {
-                    let index = next.fetch_add(1, Ordering::Relaxed);
-                    if index >= stop.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if self.face_terms(batch[index]).is_none() {
-                        stop.fetch_min(index, Ordering::Relaxed);
-                        break;
-                    }
-                }
-            };
-            std::thread::scope(|scope| {
-                let handles: Vec<_> = (1..workers.min(batch.len()))
-                    .filter_map(|_| {
-                        std::thread::Builder::new()
-                            .name("quiddity-face-mass".into())
-                            .spawn_scoped(scope, || context.run(work))
-                            .ok()
-                    })
-                    .collect();
-                context.run(work);
-                for handle in handles {
-                    handle
-                        .join()
-                        .unwrap_or_else(|error| std::panic::resume_unwind(error));
-                }
-            });
-            if stop.load(Ordering::Relaxed) < batch.len() {
-                break;
-            }
-        }
     }
 
     /// The face's area and the flux of the position vector through it along the surface's
@@ -1731,77 +1665,5 @@ mod tests {
         assert_eq!(part.face_moments(0), None);
         assert_eq!(part.cache[0].moments.get(), Some(&None));
         assert_eq!(part.face_moments(0), None);
-    }
-
-    #[test]
-    fn parallel_face_terms_keep_exact_values_and_shell_reduction_order() {
-        for fixture in [
-            "rejected_cylinder.step",
-            "torus_elbow_seamless.step",
-            "two_solids.step",
-        ] {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../tests/fixtures")
-                .join(fixture);
-            let serial = crate::step::read_step_file(&path).unwrap();
-            let parallel = crate::step::read_step_file(&path).unwrap();
-            let faces: Vec<_> = (0..serial.faces.len()).collect();
-            let expected: Vec<_> = faces
-                .iter()
-                .map(|&face| serial.face_terms(face).map(|v| v.map(f64::to_bits)))
-                .collect();
-            parallel.populate_face_terms(&faces, 4);
-            let observed: Vec<_> = faces
-                .iter()
-                .map(|&face| parallel.face_terms(face).map(|v| v.map(f64::to_bits)))
-                .collect();
-            assert_eq!(observed, expected, "{fixture}");
-            let bits = |value: (f64, f64)| [value.0.to_bits(), value.1.to_bits()];
-            assert_eq!(
-                parallel.shell_mass(&faces).map(bits),
-                serial.shell_mass(&faces).map(bits)
-            );
-            let duplicate: Vec<_> = faces
-                .iter()
-                .copied()
-                .chain(faces.iter().rev().copied())
-                .collect();
-            parallel.populate_face_terms(&duplicate, 4);
-            assert_eq!(
-                parallel.shell_mass(&duplicate).map(bits),
-                serial.shell_mass(&duplicate).map(bits)
-            );
-        }
-    }
-
-    #[test]
-    fn parallel_cached_refusal_does_not_start_later_batches() {
-        let part = Part::new(
-            (0..768)
-                .map(|_| crate::brep::Face {
-                    surface: Surface::Other { kind: "unresolved" },
-                    reversed: false,
-                    loops: Vec::new(),
-                    solid: None,
-                    pcurves: Vec::new(),
-                })
-                .collect(),
-            Vec::new(),
-            Vec::new(),
-        );
-        // Isolate scheduling from geometry: an already refused first batch must leave
-        // later caches untouched, regardless of which worker reaches the refusal first.
-        for cache in &part.cache[..256] {
-            cache.mass.set(None).unwrap();
-        }
-        let faces: Vec<_> = (0..part.faces.len()).collect();
-        part.populate_face_terms(&faces, 4);
-        assert_eq!(part.cache[0].mass.get(), Some(&None));
-        assert!(
-            part.cache[256..]
-                .iter()
-                .all(|cache| cache.mass.get().is_none())
-        );
-        assert_eq!(part.shell_mass(&faces), None);
     }
 }
