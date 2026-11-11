@@ -158,7 +158,6 @@ pub fn recognise_with_evidence(
     Result<crate::evidence_view::EvidenceDocument, crate::evidence_view::EvidenceViewError>,
 ) {
     use crate::evidence_view::{self, EvidenceViewError};
-    use crate::features::section_recess_family::SectionRecessProjection;
 
     let (frame, working) = match frames::infer_part_frame(part) {
         Ok(frame) => match part.transformed(&frame.normalisation()) {
@@ -184,9 +183,7 @@ pub fn recognise_with_evidence(
         let evidence = evidence_view::project(
             geometry,
             inventory,
-            projection
-                .and_then(Result::ok)
-                .unwrap_or_else(SectionRecessProjection::default),
+            projection.and_then(Result::ok).unwrap_or_default(),
         )
         .map(|view| {
             let evidence_frame = match &frame {
