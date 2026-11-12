@@ -6,6 +6,16 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+### Changed
+
+- Evidence documents serialize the physical inventory once and clone each record's
+  unchanged JSON value, instead of serializing every family for each record.
+- Ray casters for different solids share immutable whole-part face boxes, edge
+  boxes and polyline-run bounds. Custom face bounds and each caster's membership,
+  hierarchy and tolerances remain separate; geometry queries are unchanged.
+- Reconciliation and publication reuse native section-recess discovery within the
+  same context and ownership mode. Inventory projection, ordering and refusals are
+  still evaluated for each caller's current inventory.
 ## 0.4.9 (2026-11-07)
 
 Upgrading from 0.4.8: recognition schema `/6`, fingerprints `/3`, `quiddity-rust/evidence/1` (one additive key), the `haecceity.pmi/1` schema and the PMI reader string `/19` are unchanged. **Rust API:** `EvidenceDocument` is not `#[non_exhaustive]` and gains `edge_sources`, so code that builds it with a struct literal must add the field (#202). `quiddity::cli` and the `quiddity` binary now need the default `cli` feature: a build with `default-features = false` (for example, to leave out `presentation`) must add `features = ["cli"]` to keep them, or leave it out to keep clap out (#201). The command line is now parsed by clap (#199); see Changed for the usage cases that now exit differently. Recognition output changes where a circular blind step cut by a second feature is now recognised in place of a `cylindrical_profiles` record (#215).

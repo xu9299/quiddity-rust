@@ -798,6 +798,10 @@ pub fn document(part: &Part, framed: bool) -> Result<EvidenceDocument, EvidenceV
         .transpose()
         .map_err(|e| EvidenceViewError(e.to_string()))?;
     let view = build_recognition_evidence(working.as_ref().unwrap_or(part))?;
+    // A physical record previously serialized every family for each feature. Keep
+    // that exact JSON tree once for this document; recess records have their own
+    // projection and continue through the existing record accessor.
+    let physical_records = std::sync::OnceLock::new();
     let features = view
         .features
         .iter()
@@ -805,7 +809,15 @@ pub fn document(part: &Part, framed: bool) -> Result<EvidenceDocument, EvidenceV
         .map(|(position, feature)| EvidenceRecord {
             index: feature.index,
             family: feature.family,
-            record: view.record(position),
+            record: match feature.family {
+                "section_recesses" | "section_recess_source_refusals" => view.record(position),
+                family => {
+                    let records = physical_records.get_or_init(|| {
+                        serde_json::to_value(&view.result).expect("records serialise")
+                    });
+                    records[field(family)][feature.index].clone()
+                }
+            },
             defining_faces: feature.defining.clone(),
             constituent_faces: feature.constituent.clone(),
             instance_faces: feature.groups.clone(),

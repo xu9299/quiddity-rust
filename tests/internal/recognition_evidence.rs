@@ -14,6 +14,35 @@ use serde_json::{Value, json};
 const CAPTURE: &str = "captured/recognition_evidence/capture.json.gz";
 const KNOWN: &str = "references/recognition_evidence_motion.json";
 
+#[test]
+fn document_record_serialization_matches_the_individual_accessor_bytes() {
+    let mut compared = 0;
+    let mut recesses = 0;
+    for file in [
+        "golden_blind_pockets_and_pocket_patterns.step",
+        "golden_counterbored_and_countersunk_holes.step",
+        "golden_open_channels.step",
+        "held_side_knot.step",
+    ] {
+        let part = read_step_file(&common::fixtures().join(file)).unwrap();
+        let view = build_recognition_evidence(&part).unwrap();
+        let document = quiddity::evidence_view::document(&part, false).unwrap();
+        assert_eq!(document.features.len(), view.features.len(), "{file}");
+        for (position, record) in document.features.iter().enumerate() {
+            assert_eq!(
+                serde_json::to_vec(&record.record).unwrap(),
+                serde_json::to_vec(&view.record(position)).unwrap(),
+                "{file} {position}"
+            );
+            assert_eq!(record.family, view.features[position].family);
+            assert_eq!(record.index, view.features[position].index);
+            compared += 1;
+            recesses += usize::from(record.family == "section_recesses");
+        }
+    }
+    assert!(compared > 0 && recesses > 0);
+}
+
 fn corpus() -> Option<PathBuf> {
     let corpus = common::corpus_dir();
     if corpus.is_none() {
