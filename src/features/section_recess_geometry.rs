@@ -48,6 +48,7 @@ use super::sections::{
 };
 use super::support_patches::covered_patch;
 use crate::kernel::brep::{Arc, Edge, Face, Loop, Part};
+use crate::kernel::classify::State;
 use crate::kernel::geom::{Curve, Frame, Surface, V3};
 use crate::kernel::py;
 use crate::kernel::sampling::{edge_interval, sample_edge};
@@ -750,11 +751,35 @@ fn probes_prove(
     mouth: Option<Part>,
     under: Option<Part>,
 ) -> Option<bool> {
-    Some(
-        probe_is_empty(ctx, owner, void)?
-            && probe_is_empty(ctx, owner, mouth)?
-            && fraction(ctx, owner, under)? >= 1.0 - EMPTY,
-    )
+    // A point chooses only the order of the original volume predicates. It is
+    // never evidence for an empty cavity or a supported floor: every accepting
+    // path still proves all three volumes, including their refusal semantics.
+    let cavity_first = {
+        let _timing = crate::kernel::timing::operation("section_recess.probe_order_hint");
+        void.as_ref().is_some_and(|probe| {
+            let state = ctx
+                .solid_classifier(owner)
+                .classify(probe.bounds().centre());
+            #[cfg(test)]
+            if std::env::var_os("QUIDDITY_FLOOR_PROBE_OUTPUT").is_some() {
+                println!("probe_order_cavity_centre={state:?}");
+            }
+            state == State::In
+        })
+    };
+    if cavity_first {
+        Some(
+            probe_is_empty(ctx, owner, void)?
+                && probe_is_empty(ctx, owner, mouth)?
+                && fraction(ctx, owner, under)? >= 1.0 - EMPTY,
+        )
+    } else {
+        Some(
+            fraction(ctx, owner, under)? >= 1.0 - EMPTY
+                && probe_is_empty(ctx, owner, void)?
+                && probe_is_empty(ctx, owner, mouth)?,
+        )
+    }
 }
 
 /// An intact native straight-edged pocket on *floor*: planar walls concave to it along its
@@ -1862,6 +1887,77 @@ fn candidates_reading(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn box_probe(min: V3, max: V3) -> Part {
+        let low = [
+            min,
+            [max[0], min[1], min[2]],
+            [max[0], max[1], min[2]],
+            [min[0], max[1], min[2]],
+        ];
+        let high = low.map(|p| [p[0], p[1], max[2]]);
+        super::super::support_patches::ruled_prism(&low, &high).unwrap()
+    }
+
+    #[test]
+    fn a_probe_order_hint_does_not_replace_any_volume_evidence() {
+        let part = box_probe([0.0; 3], [10.0; 3]);
+        let ctx = Context::new(&part);
+        let empty = ([12.0, 2.0, 2.0], [13.0, 3.0, 3.0]);
+        let full = ([2.0; 3], [3.0; 3]);
+        // Its centre is outside, but a third of its volume is material.
+        let crossing = ([9.0, 2.0, 2.0], [12.0, 3.0, 3.0]);
+        assert_eq!(
+            ctx.solid_classifier(0)
+                .classify(box_probe(crossing.0, crossing.1).bounds().centre()),
+            State::Out
+        );
+        for (void, mouth, under, want) in [
+            (empty, empty, full, true),
+            (crossing, empty, full, false),
+            (full, empty, full, false),
+            (empty, full, full, false),
+            (empty, empty, crossing, false),
+            (empty, empty, empty, false),
+        ] {
+            assert_eq!(
+                probes_prove(
+                    &ctx,
+                    0,
+                    Some(box_probe(void.0, void.1)),
+                    Some(box_probe(mouth.0, mouth.1)),
+                    Some(box_probe(under.0, under.1)),
+                ),
+                Some(want)
+            );
+        }
+        for missing in 0..3 {
+            let mut probes = [empty, empty, full].map(|(min, max)| Some(box_probe(min, max)));
+            probes[missing] = None;
+            let [void, mouth, under] = probes;
+            assert_ne!(probes_prove(&ctx, 0, void, mouth, under), Some(true));
+        }
+    }
+
+    #[test]
+    fn an_unknown_order_hint_cannot_accept_an_unanswered_support() {
+        let mut part = box_probe([0.0; 3], [10.0; 3]);
+        for face in &mut part.faces {
+            face.surface = Surface::Other { kind: "TEST" };
+        }
+        let ctx = Context::new(&part);
+        assert_eq!(ctx.solid_classifier(0).classify([2.5; 3]), State::Unknown);
+        assert_ne!(
+            probes_prove(
+                &ctx,
+                0,
+                Some(box_probe([2.0; 3], [3.0; 3])),
+                Some(box_probe([12.0; 3], [13.0; 3])),
+                Some(box_probe([2.0; 3], [3.0; 3])),
+            ),
+            Some(true)
+        );
+    }
 
     /// Read the original complete input, but inspect only explicitly selected floors.
     #[test]
