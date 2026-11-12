@@ -4,6 +4,12 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### Changed
+
+- Share immutable ray-query geometry within a part; existing output and refusal contracts are retained.
+
 ## 0.5.0 (2026-11-12)
 
 Upgrading from 0.4.9:
