@@ -467,6 +467,18 @@ mod tests {
                 );
                 if event.event == "summary" {
                     eprintln!("totals={:?}", event.totals);
+                } else {
+                    let volume: Vec<_> = event
+                        .totals
+                        .iter()
+                        .filter(|total| {
+                            total.name.starts_with("volume.")
+                                || total.name.starts_with("material_at_most.")
+                        })
+                        .collect();
+                    if !volume.is_empty() {
+                        eprintln!("volume totals={volume:?}");
+                    }
                 }
             }
         })
@@ -479,7 +491,9 @@ mod tests {
                 original
             }
         };
-        if std::env::var_os("QUIDDITY_PRISMATIC_COMPONENTS_ONLY").is_none() {
+        if std::env::var_os("QUIDDITY_PRISMATIC_COMPONENTS_ONLY").is_none()
+            && std::env::var_os("QUIDDITY_PRISMATIC_SKIP_RECOVERY_WARMUP").is_none()
+        {
             part.prepare_recovered(&(0..part.faces.len()).collect::<Vec<_>>());
         }
         let ctx = Context::new(&part);

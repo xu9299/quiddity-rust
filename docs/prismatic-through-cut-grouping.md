@@ -33,6 +33,9 @@ family's proofs, optionally under `QUIDDITY_PRISMATIC_DEGRADED`. It deliberately
 does not reconstruct other families' publication ownership and is a diagnostic,
 not complete recognition or an acceptance result. These environment hooks are
 absent from production builds; the manual test is ignored by normal regressions.
+`QUIDDITY_PRISMATIC_SKIP_RECOVERY_WARMUP` leaves the recovery cache cold for a
+focused proof diagnosis. Geometry is still read and queried normally; this mode
+does not measure the whole-part pipeline or its warmed cache performance.
 
 Volume observations distinguish classifier construction, probe mass, finite-side
 preparation, height break generation, source/probe edge piercing, slice breaks
@@ -40,3 +43,8 @@ and the two nested integrals. Timers do not add a geometry query, reorder sample
 alter the quadrature rule or change early refusal. A long component air span can
 therefore be attributed to setup, ray intersections or integration before any
 algorithm is changed.
+
+Periodic observations use a wall-clock deadline independent of completed-span
+events. A steady stream of slow slice completions must not hide the active
+integral or its accumulated subtotals. The manual family diagnostic includes
+volume subtotals in each heartbeat, preserving observations if it is stopped.

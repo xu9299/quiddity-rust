@@ -143,8 +143,26 @@ impl Session {
         let worker = thread::Builder::new()
             .name("quiddity-timing".into())
             .spawn(move || {
+                let mut next_heartbeat = Instant::now() + interval;
                 loop {
-                    let event = match receive.recv_timeout(interval) {
+                    let now = Instant::now();
+                    if now >= next_heartbeat {
+                        let state = locked(&observed);
+                        let stack = state.snapshot(Instant::now());
+                        let totals = state.totals.values().cloned().collect();
+                        drop(state);
+                        sink(Event {
+                            event: "heartbeat",
+                            elapsed_seconds: observed.started.elapsed().as_secs_f64(),
+                            stack,
+                            totals,
+                        });
+                        next_heartbeat = Instant::now() + interval;
+                    }
+                    // Completed spans must not postpone the next periodic observation.
+                    // Check the deadline before receiving too, even with a nonempty queue.
+                    let wait = next_heartbeat.saturating_duration_since(Instant::now());
+                    let event = match receive.recv_timeout(wait) {
                         Ok(Message::Event(event)) => event,
                         Ok(Message::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                             let totals = locked(&observed).totals.values().cloned().collect();
@@ -156,18 +174,7 @@ impl Session {
                             });
                             break;
                         }
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            let state = locked(&observed);
-                            let stack = state.snapshot(Instant::now());
-                            let totals = state.totals.values().cloned().collect();
-                            drop(state);
-                            Event {
-                                event: "heartbeat",
-                                elapsed_seconds: observed.started.elapsed().as_secs_f64(),
-                                stack,
-                                totals,
-                            }
-                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
                     };
                     sink(event);
                 }
@@ -315,6 +322,44 @@ impl Drop for Span {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_boundaries_do_not_starve_periodic_heartbeats() {
+        let (send, receive) = mpsc::channel();
+        let session = Session::with_interval(
+            move |event| {
+                let _ = send.send(event);
+                // A busy sink ensures the pending boundaries outlast the interval.
+                thread::sleep(Duration::from_millis(2));
+            },
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        let ongoing = operation("ongoing");
+        for _ in 0..30 {
+            drop(stage("short"));
+        }
+        drop(ongoing);
+        drop(session);
+        let events: Vec<_> = receive.try_iter().collect();
+        let heartbeat = events
+            .iter()
+            .position(|event| event.event == "heartbeat")
+            .expect("boundaries queued before Stop must not suppress heartbeats");
+        assert!(
+            events[heartbeat + 1..]
+                .iter()
+                .any(|event| event.event == "end")
+        );
+        let summary = events.last().unwrap();
+        assert_eq!(summary.event, "summary");
+        assert!(
+            summary
+                .totals
+                .iter()
+                .any(|total| total.name == "short" && total.calls == 30)
+        );
+    }
 
     #[test]
     fn heartbeat_observes_an_unfinished_face_and_totals_are_drained() {
