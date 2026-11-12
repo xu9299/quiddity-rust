@@ -199,9 +199,18 @@ pub fn fills_at_most(solid: &Classifier<'_>, probe: &Probe<'_>, limit: f64) -> b
         return false;
     };
     let at_most = |volume: Option<f64>| volume.is_some_and(|v| v / whole <= limit);
-    let Some(([material, air], short)) = shared(solid, probe, COORD_FLOOR, &|[m, a]| {
-        m > 0.0 && (limit < 1.0 || a > 0.0)
-    }) else {
+    // These two passes may reject from any original slab. Material in the inset
+    // pass rules out its empty convention; a raw slab beyond the limit already
+    // rules out the whole nonnegative integral. Acceptance still completes both
+    // required passes, with their original ordered sums and refusal checks.
+    let witness = (0.0..1.0).contains(&limit);
+    let Some(([material, air], short)) = shared_with_witness(
+        solid,
+        probe,
+        COORD_FLOOR,
+        &|[m, a]| m > 0.0 && (limit < 1.0 || a > 0.0),
+        witness,
+    ) else {
         return false;
     };
     if material == 0.0 {
@@ -210,7 +219,7 @@ pub fn fills_at_most(solid: &Classifier<'_>, probe: &Probe<'_>, limit: f64) -> b
     if air == 0.0 && !short {
         return at_most(probe_volume(probe));
     }
-    match shared(solid, probe, 0.0, &|[m, _]| m / whole > limit) {
+    match shared_with_witness(solid, probe, 0.0, &|[m, _]| m / whole > limit, witness) {
         Some(([m, _], false)) => {
             if !at_most(Some(m)) {
                 return false;
@@ -463,6 +472,18 @@ fn shared(
     inset: f64,
     stop: &dyn Fn(Pair) -> bool,
 ) -> Option<(Pair, bool)> {
+    shared_with_witness(solid, probe, inset, stop, false)
+}
+
+/// An optional individual-slab witness is only for at-most rejection passes:
+/// neither that partial value nor a speculative refusal may establish acceptance.
+fn shared_with_witness(
+    solid: &Classifier<'_>,
+    probe: &Probe<'_>,
+    inset: f64,
+    stop: &dyn Fn(Pair) -> bool,
+    witness: bool,
+) -> Option<(Pair, bool)> {
     let _timing = crate::timing::operation("volume.shared");
     let setup_timing = crate::timing::operation("volume.setup");
     let rays = solid.rays();
@@ -622,7 +643,12 @@ fn shared(
         + mine.curved_faces.len()
         + theirs.planes.len()
         + theirs.curved_faces.len();
-    integrate_slabs(&slab, (h0, h1), hs, stop, volume_workers(complexity))
+    let workers = volume_workers(complexity);
+    if witness && (complexity >= 64 || workers > 1) {
+        integrate_witness_slabs(&slab, (h0, h1), hs, stop, workers)
+    } else {
+        integrate_slabs(&slab, (h0, h1), hs, stop, workers)
+    }
 }
 
 /// Where a plane of *flat* meets a curved face of *curved* in the slice `z · p = h`: the line
@@ -956,7 +982,6 @@ fn integrate_slabs(
     }
     let breaks = integration_breaks(range, breaks);
     let count = breaks.len() - 1;
-    let context = crate::timing::parallel_context();
     let work = |index: usize| {
         let _timing = crate::timing::face("volume.slab", index, None);
         slab(breaks[index], breaks[index + 1])
@@ -965,34 +990,7 @@ fn integrate_slabs(
     let mut at = 0;
     while at < count {
         let end = (at + workers.max(1)).min(count);
-        let values = if end == at + 1 {
-            vec![work(at)]
-        } else {
-            std::thread::scope(|scope| {
-                let handles: Vec<_> = (at + 1..end)
-                    .map(|index| {
-                        std::thread::Builder::new()
-                            .name("quiddity-volume-slab".into())
-                            .spawn_scoped(scope, {
-                                let work = &work;
-                                let context = &context;
-                                move || context.run(|| work(index))
-                            })
-                            .ok()
-                    })
-                    .collect();
-                let mut values = vec![context.run(|| work(at))];
-                for (index, handle) in (at + 1..end).zip(handles) {
-                    values.push(match handle {
-                        Some(handle) => handle
-                            .join()
-                            .unwrap_or_else(|error| std::panic::resume_unwind(error)),
-                        None => context.run(|| work(index)),
-                    });
-                }
-                values
-            })
-        };
+        let values = slab_batch(&work, &(at..end).collect::<Vec<_>>());
         for value in values {
             total = add(total, value?);
             at += 1;
@@ -1002,6 +1000,113 @@ fn integrate_slabs(
         }
     }
     Some((total, false))
+}
+
+/// Search a spread of original slabs for a sufficient monotone witness. Every
+/// slab retains the same quadrature, intervals, tolerances and local refusal state.
+/// A witness value is explicitly partial; otherwise cached values are added in
+/// the original order, bit for bit. Only at-most rejection passes use this path.
+fn integrate_witness_slabs(
+    slab: &(impl Fn(f64, f64) -> Option<Pair> + Sync),
+    range: (f64, f64),
+    breaks: Vec<f64>,
+    stop: &dyn Fn(Pair) -> bool,
+    workers: usize,
+) -> Option<(Pair, bool)> {
+    let _timing = crate::timing::operation("volume.rejection_witness");
+    if range.1 <= range.0 {
+        return Some(([0.0, 0.0], false));
+    }
+    let breaks = integration_breaks(range, breaks);
+    let count = breaks.len() - 1;
+    let work = |index: usize| {
+        let _timing = crate::timing::face("volume.slab", index, None);
+        slab(breaks[index], breaks[index + 1])
+    };
+    let mut cache = vec![None; count];
+    let mut seeds = Vec::new();
+    for index in [
+        count / 2,
+        0,
+        count - 1,
+        count / 4,
+        3 * count / 4,
+        count / 8,
+        3 * count / 8,
+        5 * count / 8,
+        7 * count / 8,
+    ] {
+        if index < count && !seeds.contains(&index) && seeds.len() < 8 {
+            seeds.push(index);
+        }
+    }
+    for indices in seeds.chunks(workers.max(1)) {
+        for (&index, value) in indices.iter().zip(slab_batch(&work, indices)) {
+            let value = value?;
+            if stop(value) {
+                return Some((value, true));
+            }
+            cache[index] = Some(value);
+        }
+    }
+    let mut total = [0.0, 0.0];
+    let mut at = 0;
+    while at < count {
+        if let Some(value) = cache[at].take() {
+            total = add(total, value);
+            at += 1;
+            if at < count && stop(total) {
+                return Some((total, true));
+            }
+            continue;
+        }
+        let indices: Vec<_> = (at..count)
+            .filter(|&index| cache[index].is_none())
+            .take(workers.max(1))
+            .collect();
+        for (&index, value) in indices.iter().zip(slab_batch(&work, &indices)) {
+            let value = value?;
+            if stop(value) {
+                return Some((value, true));
+            }
+            cache[index] = Some(value);
+        }
+    }
+    Some((total, false))
+}
+
+fn slab_batch(
+    work: &(impl Fn(usize) -> Option<Pair> + Sync),
+    indices: &[usize],
+) -> Vec<Option<Pair>> {
+    if indices.len() == 1 {
+        return vec![work(indices[0])];
+    }
+    let context = crate::timing::parallel_context();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = indices[1..]
+            .iter()
+            .map(|&index| {
+                std::thread::Builder::new()
+                    .name("quiddity-volume-slab".into())
+                    .spawn_scoped(scope, {
+                        let context = &context;
+                        move || context.run(|| work(index))
+                    })
+                    .ok()
+            })
+            .collect();
+        let mut values = vec![context.run(|| work(indices[0]))];
+        for (&index, handle) in indices[1..].iter().zip(handles) {
+            values.push(match handle {
+                Some(handle) => handle
+                    .join()
+                    .unwrap_or_else(|error| std::panic::resume_unwind(error)),
+                None => context.run(|| work(index)),
+            });
+        }
+        values
+    })
 }
 
 /// Material and air, integrated together from the same lines.
@@ -1046,6 +1151,38 @@ fn adapt(f: &dyn Fn(f64) -> Pair, x0: f64, x1: f64, whole: Pair, tol: f64, depth
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejection_witnesses_find_late_material_without_reordering_complete_sums() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = AtomicUsize::new(0);
+        let breaks = || (1..64).map(|i| i as f64).collect();
+        let late = |lo: f64, _: f64| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            Some([if lo == 63.0 { 1.0 } else { 0.0 }, 1.0])
+        };
+        let hit =
+            integrate_witness_slabs(&late, (0.0, 64.0), breaks(), &|v| v[0] > 0.0, 4).unwrap();
+        assert!(hit.1 && hit.0[0] > 0.0);
+        assert!(calls.load(Ordering::Relaxed) <= 8);
+
+        let unanswered = |lo: f64, _: f64| (lo != 63.0).then_some([0.0, 1.0]);
+        assert_eq!(
+            integrate_witness_slabs(&unanswered, (0.0, 64.0), breaks(), &|v| v[0] > 0.0, 4),
+            None,
+            "a required unanswered slab can never establish acceptance"
+        );
+
+        let rounded = |lo: f64, _: f64| Some([0.0, if lo == 0.0 { 1e16 } else { 1.0 }]);
+        let ordered = integrate_slabs(&rounded, (0.0, 64.0), breaks(), &|_| false, 4).unwrap();
+        let spread =
+            integrate_witness_slabs(&rounded, (0.0, 64.0), breaks(), &|v| v[0] > 0.0, 4).unwrap();
+        assert_eq!(
+            spread, ordered,
+            "complete values keep the original rounding"
+        );
+        assert!(!spread.1);
+    }
 
     thread_local! {
         pub(super) static SHARED_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

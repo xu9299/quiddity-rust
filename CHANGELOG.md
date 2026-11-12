@@ -28,6 +28,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- At-most material queries can reject from a sufficient original integration slab
+  before walking every preceding slab. Successful answers retain complete required
+  proofs, original ordered sums, and the existing empty/full conventions.
 - Complex material-volume proofs evaluate bounded batches of independent height
   slabs on at most eight workers. Ordered sums, quadrature and refusal rules are
   retained; existing face workers do not start nested volume pools.

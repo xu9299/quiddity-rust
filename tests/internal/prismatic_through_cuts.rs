@@ -240,6 +240,59 @@ fn cut_geometry_claims_and_fingerprint_follow_a_generic_rigid_motion() {
 }
 
 #[test]
+fn many_sided_material_limits_match_complete_volumes_under_motion() {
+    use quiddity::kernel::classify::Classifier;
+    use quiddity::kernel::rays::RayCaster;
+    use quiddity::kernel::volume::{Probe, common_volume, fills_at_most, probe_volume};
+    let (s, c) = 0.37_f64.sin_cos();
+    let matrix = [
+        [c, 0., s, 123.456],
+        [s * s, c, -s * c, -78.9],
+        [-s * c, s, c * c, 41.3],
+    ];
+    for (sides, blind, lo) in [(80, false, -1.), (80, true, -1.), (6, true, 1. - 5e-7)] {
+        let (part, walls, _) = control(sides, blind);
+        let ring = |z| {
+            (0..sides)
+                .map(|i| {
+                    let t = std::f64::consts::TAU * i as f64 / sides as f64;
+                    [2. * t.cos(), 2. * t.sin(), z]
+                })
+                .collect::<Vec<_>>()
+        };
+        let tool = features::support_patches::ruled_prism(&ring(lo), &ring(11.)).unwrap();
+        for moved in [false, true] {
+            let (source, tool) = if moved {
+                (
+                    part.transformed(&matrix).unwrap(),
+                    tool.transformed(&matrix).unwrap(),
+                )
+            } else {
+                (
+                    Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone()),
+                    Part::new(tool.faces.clone(), tool.edges.clone(), tool.solids.clone()),
+                )
+            };
+            let probe = Probe::Solid(RayCaster::for_solid(&tool, 0));
+            let solid = Classifier::for_solid(&source, 0);
+            let fraction = common_volume(&solid, &probe).unwrap() / probe_volume(&probe).unwrap();
+            for limit in [0.0, 1e-9, fraction, fraction.next_down(), 0.5, 1.0] {
+                assert_eq!(
+                    fills_at_most(&solid, &probe, limit),
+                    fraction <= limit,
+                    "{sides} walls, blind={blind}, moved={moved}, lo={lo}, fraction={fraction}, limit={limit}"
+                );
+            }
+            if !blind {
+                let found = prismatic_through_cuts::discover(&Context::new(&source));
+                assert_eq!(found.len(), 1);
+                assert_eq!(found[0].defining, walls);
+            }
+        }
+    }
+}
+
+#[test]
 fn nearly_axis_aligned_walls_keep_their_axial_extent() {
     let (p, walls, _) = control_scaled(6, false, 1000.);
     let (s, c) = 1e-7_f64.sin_cos();
