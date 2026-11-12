@@ -1905,8 +1905,9 @@ mod tests {
         let ctx = Context::new(&part);
         let empty = ([12.0, 2.0, 2.0], [13.0, 3.0, 3.0]);
         let full = ([2.0; 3], [3.0; 3]);
-        // Its centre is outside, but a third of its volume is material.
-        let crossing = ([9.0, 2.0, 2.0], [12.0, 3.0, 3.0]);
+        // Its centre is outside, but a third of its volume is material. The
+        // longest dimension stays inside the owner, and rays span the crossing.
+        let crossing = ([9.0, 2.0, 2.0], [12.0, 8.0, 3.0]);
         assert_eq!(
             ctx.solid_classifier(0)
                 .classify(box_probe(crossing.0, crossing.1).bounds().centre()),
