@@ -256,10 +256,14 @@ pub fn planar_empty_along(solid: &Classifier<'_>, probe: &Probe<'_>, axis: V3) -
         y,
         z,
     };
-    matches!(
-        shared_in_frame(solid, probe, 0.0, &|m| m[0] > 0.0, Some(frame)),
-        Some(([0.0, _], false))
-    )
+    let result = shared_in_frame(solid, probe, 0.0, &|m| m[0] > 0.0, Some(frame));
+    let outcome = match result {
+        Some(([0.0, _], false)) => "volume.planar_along.empty",
+        Some(_) => "volume.planar_along.material",
+        None => "volume.planar_along.unresolved",
+    };
+    let _outcome = crate::timing::operation(outcome);
+    matches!(result, Some(([0.0, _], false)))
 }
 
 /// The probe's own volume; `None` for a solid probe whose mass cannot be integrated.

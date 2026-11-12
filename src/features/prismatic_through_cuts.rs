@@ -464,6 +464,11 @@ mod tests {
     #[ignore = "manual original STEP family diagnostics; requires QUIDDITY_PRISMATIC_PROFILE"]
     fn profile_original_step_prismatic_components() {
         let path = std::env::var_os("QUIDDITY_PRISMATIC_PROFILE").expect("explicit STEP input");
+        if std::env::var_os("QUIDDITY_PRISMATIC_PLANAR_ONLY").is_some() {
+            eprintln!(
+                "planar-only diagnostic: ordinary material-fraction fallback disabled; no recognition acceptance"
+            );
+        }
         let _session = crate::kernel::timing::Session::start(|event| {
             if event.event == "heartbeat" || event.event == "summary" {
                 let active: Vec<_> = event

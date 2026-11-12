@@ -32,3 +32,10 @@ constraints are prerequisites regardless of the material result. Moving these
 checks does not publish a candidate or weaken its subsequent air proof; it avoids
 that expensive proof when the record cannot be represented at all. A manual,
 test-only original-STEP diagnostic records the final air decision per component.
+
+Optional timing distinguishes a complete empty result, measured material and an
+unanswered planar arrangement. The ignored manual family diagnostic can set both
+`QUIDDITY_PRISMATIC_PROFILE` and `QUIDDITY_PRISMATIC_PLANAR_ONLY` to observe only
+the sufficient planar proof, without waiting for its general fallback. This hook
+is compiled only into tests and cannot change production recognition; the manual
+output explicitly excludes complete-family and whole-part acceptance.

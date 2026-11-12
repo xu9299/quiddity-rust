@@ -83,8 +83,16 @@ pub(super) fn swept_material_at_most(
 ) -> bool {
     let probe = Probe::Solid(RayCaster::for_solid(probe, 0));
     let solid = ctx.solid_classifier(owner);
-    (limit >= 0.0 && crate::kernel::volume::planar_empty_along(solid, &probe, axis))
-        || fills_at_most(solid, &probe, limit)
+    let planar = limit >= 0.0 && crate::kernel::volume::planar_empty_along(solid, &probe, axis);
+    #[cfg(test)]
+    if std::env::var_os("QUIDDITY_PRISMATIC_PROFILE").is_some()
+        && std::env::var_os("QUIDDITY_PRISMATIC_PLANAR_ONLY").is_some()
+    {
+        // This explicit manual probe observes only the sufficient planar proof;
+        // its results are not a complete family or whole-part recognition.
+        return planar;
+    }
+    planar || fills_at_most(solid, &probe, limit)
 }
 
 /// The removed cell under one bevel (`_cell_supports`): outside the base wall, inside the stock

@@ -8,6 +8,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Added
 
+- Optional planar-air timing distinguishes empty, material and unanswered results;
+  an explicit test-only manual probe can inspect the shortcut without its fallback.
 - Optional through-cut proof timing distinguishes ownership, cycle ordering,
   exact bounds, coverage and material-volume work without changing any proof.
   Volume substage timing separates classifier setup, break generation, edge
