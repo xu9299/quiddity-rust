@@ -1,0 +1,87 @@
+name: Exact surface operand validation
+
+on:
+  push:
+    branches: [validation/surface-operands-20261112-17]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surface-operands-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  candidate:
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: e6978eb5543686b8731440857601e77277e25be3
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record candidate environment and unchanged expectations
+        run: |
+          mkdir -p ../validation-logs/verified
+          # The unchanged baseline already passed on the pinned ARM environment.
+          printf '%s\n' '{"source":"11736f3d0a870f05d157ece806a217d10322e1cf","run_id":43104553479,"job_id":130804335936,"conclusion":"success","snapshots":2701,"runner":"macos-15","arch":"arm64","macos":"15.8.2","rust":"1.99.1","corpus_commit":"3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f","job_log_sha256":"deda8d832cd8dcb4db116bfa8ec8c7edffe96c18e03cf74f464fbfc1b845caa6","url":"https://github.com/xu9299/quiddity-rust/actions/runs/43104553479/job/130804335936"}' > ../validation-logs/baseline-reference.json
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = e6978eb5543686b8731440857601e77277e25be3
+          git diff --stat 11736f3d0a870f05d157ece806a217d10322e1cf HEAD | tee ../validation-logs/scope.log
+          git diff --exit-code 11736f3d0a870f05d157ece806a217d10322e1cf HEAD -- Cargo.toml Cargo.lock tests/fixtures
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          key: stable-surface-operands
+      - name: Format and lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Strict candidate replay
+        id: strict
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          grep -Fx 'HEAD reproduces all 2701 snapshots byte for byte' ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Complete workspace regression
+        if: ${{ !cancelled() }}
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+          RUST_BACKTRACE: full
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+      - name: Audit produced coverage and provenance
+        if: ${{ !cancelled() }}
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: surface-operands-candidate
+          path: validation-logs/
+          retention-days: 30
