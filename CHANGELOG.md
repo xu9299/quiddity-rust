@@ -13,6 +13,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Surface quadrature resumes an identical finite panel prefix from its original
+  running sum, avoiding repeated weighted additions without regrouping arithmetic.
 - Evidence documents serialize the physical inventory once and clone each record's
   unchanged JSON value, instead of serializing every family for each record.
 - Ray casters for different solids share immutable whole-part face boxes, edge

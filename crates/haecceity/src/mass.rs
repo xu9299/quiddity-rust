@@ -77,11 +77,71 @@ fn integrate<const N: usize>(cuts: &[f64], mut f: impl FnMut(f64) -> [f64; N]) -
 struct IntegralSamples<const N: usize> {
     fixed: Option<u64>,
     values: std::collections::HashMap<u64, [f64; N]>,
+    prefixes: IntegralPrefixes<N>,
     #[cfg(test)]
     counts: [u64; 2],
 }
 
 const MAX_INTEGRAL_SAMPLES: usize = 16_384;
+const MAX_INTEGRAL_PREFIXES: usize = MAX_INTEGRAL_SAMPLES / 16;
+
+/// Resume the exact running sum after an identical prefix of panel endpoints.
+/// No panel sum is regrouped, subtracted or appended to a different accumulator.
+#[derive(Default)]
+struct IntegralPrefixes<const N: usize> {
+    cuts: Vec<u64>,
+    totals: Vec<[f64; N]>,
+    #[cfg(test)]
+    counts: [u64; 2],
+}
+
+impl<const N: usize> IntegralPrefixes<N> {
+    fn clear(&mut self) {
+        self.cuts.clear();
+        self.totals.clear();
+    }
+
+    fn integrate(&mut self, cuts: &[f64], mut f: impl FnMut(f64) -> [f64; N]) -> [f64; N] {
+        let common = self
+            .cuts
+            .iter()
+            .zip(cuts)
+            .take_while(|(a, b)| **a == b.to_bits())
+            .count();
+        let panels = common.saturating_sub(1);
+        self.cuts.truncate(common);
+        self.totals.truncate(panels);
+        let mut total = self.totals.last().copied().unwrap_or([0.0; N]);
+        if common == 0
+            && let Some(&first) = cuts.first().filter(|x| x.is_finite())
+        {
+            self.cuts.push(first.to_bits());
+        }
+        #[cfg(test)]
+        {
+            self.counts[0] += cuts.len().saturating_sub(1) as u64;
+            self.counts[1] += panels as u64;
+        }
+        let mut retain = self.cuts.len() == panels + 1;
+        for (index, w) in cuts.windows(2).enumerate().skip(panels) {
+            let (half, centre) = (0.5 * (w[1] - w[0]), 0.5 * (w[1] + w[0]));
+            for &(x, weight) in gauss_nodes() {
+                let y = f(centre + half * x);
+                for k in 0..N {
+                    total[k] += weight * half * y[k];
+                }
+            }
+            retain &= index < MAX_INTEGRAL_PREFIXES
+                && w[1].is_finite()
+                && total.iter().all(|value| value.is_finite());
+            if retain {
+                self.cuts.push(w[1].to_bits());
+                self.totals.push(total);
+            }
+        }
+        total
+    }
+}
 
 impl<const N: usize> IntegralSamples<N> {
     fn integrate(&mut self, fixed: f64, cuts: &[f64], f: impl Fn(f64) -> [f64; N]) -> [f64; N] {
@@ -93,9 +153,10 @@ impl<const N: usize> IntegralSamples<N> {
         if fixed.is_none() || self.fixed != fixed {
             self.fixed = fixed;
             self.values.clear();
+            self.prefixes.clear();
             return integrate(cuts, f);
         }
-        integrate(cuts, |x| {
+        let sample = |x: f64| {
             if x.is_finite()
                 && let Some(&value) = self.values.get(&x.to_bits())
             {
@@ -113,7 +174,12 @@ impl<const N: usize> IntegralSamples<N> {
                 self.values.insert(x.to_bits(), value);
             }
             value
-        })
+        };
+        #[cfg(test)]
+        if !PREFIX_REUSE_ENABLED.get() {
+            return integrate(cuts, sample);
+        }
+        self.prefixes.integrate(cuts, sample)
     }
 }
 
@@ -121,6 +187,8 @@ impl<const N: usize> IntegralSamples<N> {
 thread_local! {
     static SAMPLE_REUSE_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     static SAMPLE_REUSE_COUNTS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    static PREFIX_REUSE_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static PREFIX_REUSE_COUNTS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
 }
 
 #[cfg(test)]
@@ -129,6 +197,13 @@ impl<const N: usize> Drop for IntegralSamples<N> {
         SAMPLE_REUSE_COUNTS.with(|counts| {
             let old = counts.get();
             counts.set([old[0] + self.counts[0], old[1] + self.counts[1]]);
+        });
+        PREFIX_REUSE_COUNTS.with(|counts| {
+            let old = counts.get();
+            counts.set([
+                old[0] + self.prefixes.counts[0],
+                old[1] + self.prefixes.counts[1],
+            ]);
         });
     }
 }
@@ -1576,6 +1651,104 @@ mod tests {
     }
 
     #[test]
+    fn exact_prefixes_resume_the_original_accumulator() {
+        let mut prefixes = IntegralPrefixes::<4>::default();
+        let f = |x: f64| [x.sin(), if x < 0.5 { 1e30 } else { -1e30 }, x * x, -0.0];
+        for endpoints in [
+            vec![0.0, 0.125, 0.25, 0.5, 0.75, 1.0],
+            vec![0.0, 0.125, 0.25, 0.5, 0.625],
+            vec![0.0, 0.125, 0.25, 0.5, 0.75, 1.125],
+            vec![0.0, 0.125],
+            vec![0.0, 0.125, 0.25, 0.5, 0.75, 1.0],
+            vec![0.0, 0.125, f64::from_bits(0.25f64.to_bits() + 1), 0.5, 1.0],
+            vec![1.0, 0.75, 0.5, 0.25, 0.125, 0.0],
+            vec![1.0, 0.75, 0.5, 0.25, 0.125, -0.5],
+            vec![1.0],
+            vec![],
+        ] {
+            for _ in 0..3 {
+                assert_eq!(
+                    prefixes.integrate(&endpoints, f).map(f64::to_bits),
+                    integrate(&endpoints, f).map(f64::to_bits),
+                    "{endpoints:?}"
+                );
+            }
+        }
+        assert!(prefixes.counts[1] > 0);
+    }
+
+    #[test]
+    fn exact_prefix_storage_is_bounded_and_start_bits_are_required() {
+        let mut prefixes = IntegralPrefixes::<2>::default();
+        let mut endpoints = cuts(0.0, 1.0, MAX_INTEGRAL_PREFIXES * 2, &[]).unwrap();
+        let f = |x: f64| [x.cos(), x];
+        prefixes.integrate(&endpoints, f);
+        let mut calls = 0;
+        let actual = prefixes.integrate(&endpoints, |x| {
+            calls += 1;
+            f(x)
+        });
+        assert_eq!(
+            actual.map(f64::to_bits),
+            integrate(&endpoints, f).map(f64::to_bits)
+        );
+        assert_eq!(calls, MAX_INTEGRAL_PREFIXES * gauss_nodes().len());
+        assert_eq!(prefixes.totals.len(), MAX_INTEGRAL_PREFIXES);
+        assert_eq!(prefixes.cuts.len(), MAX_INTEGRAL_PREFIXES + 1);
+        endpoints[0] = -0.0;
+        calls = 0;
+        let actual = prefixes.integrate(&endpoints, |x| {
+            calls += 1;
+            f(x)
+        });
+        assert_eq!(
+            actual.map(f64::to_bits),
+            integrate(&endpoints, f).map(f64::to_bits)
+        );
+        assert_eq!(calls, MAX_INTEGRAL_PREFIXES * 2 * gauss_nodes().len());
+    }
+
+    #[test]
+    fn exact_prefixes_do_not_reuse_nonfinite_accumulators() {
+        let endpoints = [0.0, 0.25, 0.5, 0.75, 1.0];
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut prefixes = IntegralPrefixes::<2>::default();
+            for _ in 0..3 {
+                let f = |x: f64| [bad, x];
+                assert_eq!(
+                    prefixes.integrate(&endpoints, f).map(f64::to_bits),
+                    integrate(&endpoints, f).map(f64::to_bits)
+                );
+                assert!(prefixes.totals.is_empty());
+                assert_eq!(prefixes.counts[1], 0);
+            }
+        }
+    }
+
+    #[test]
+    fn exact_prefixes_are_invalidated_when_the_fixed_parameter_changes() {
+        let mut samples = IntegralSamples::<2>::default();
+        let endpoints = cuts(0.0, 1.0, 8, &[]).unwrap();
+        for fixed in [0.0, -0.0, 0.25, f64::from_bits(0.25f64.to_bits() + 1)] {
+            let hits = samples.prefixes.counts[1];
+            for repeat in 0..3 {
+                let f = |x: f64| [fixed.signum() * x, fixed * x.sin()];
+                assert_eq!(
+                    samples.integrate(fixed, &endpoints, f).map(f64::to_bits),
+                    integrate(&endpoints, f).map(f64::to_bits)
+                );
+                if repeat < 2 {
+                    assert_eq!(samples.prefixes.counts[1], hits);
+                }
+            }
+            assert!(samples.prefixes.counts[1] > hits);
+        }
+        samples.integrate(f64::NAN, &endpoints, |x| [x, x]);
+        assert!(samples.prefixes.totals.is_empty());
+        assert!(samples.prefixes.cuts.is_empty());
+    }
+
+    #[test]
     fn exact_samples_preserve_node_weights_and_addition_order() {
         let mut samples = IntegralSamples::<5>::default();
         let mut hits = 0;
@@ -1601,6 +1774,8 @@ mod tests {
         let mut samples = IntegralSamples::<2>::default();
         let panels = cuts(0.0, 1.0, MAX_INTEGRAL_SAMPLES / 8, &[]).unwrap();
         for _ in 0..3 {
+            // Exercise the sample table independently of whole-prefix skipping.
+            samples.prefixes.clear();
             let f = |x: f64| [x.sin(), x * x];
             assert_eq!(
                 samples.integrate(0.0, &panels, f).map(f64::to_bits),
@@ -1664,6 +1839,16 @@ mod tests {
     #[test]
     #[ignore = "manual bounded exact-sample probe on selected real faces"]
     fn selected_exact_sample_probe() {
+        selected_sample_probe(false);
+    }
+
+    #[test]
+    #[ignore = "manual bounded exact-prefix probe on selected real faces"]
+    fn selected_exact_prefix_probe() {
+        selected_sample_probe(true);
+    }
+
+    fn selected_sample_probe(prefix_only: bool) {
         let input = std::env::var_os("QUIDDITY_SAMPLE_PROBE_INPUT").expect("input path");
         let output = std::env::var_os("QUIDDITY_SAMPLE_PROBE_OUTPUT").expect("output path");
         let faces: Vec<usize> = std::env::var("QUIDDITY_SAMPLE_PROBE_FACES")
@@ -1679,8 +1864,10 @@ mod tests {
         for face in faces {
             let mut expected = None;
             for (round, enabled) in [false, true, true, false].into_iter().enumerate() {
-                SAMPLE_REUSE_ENABLED.set(enabled);
+                SAMPLE_REUSE_ENABLED.set(prefix_only || enabled);
+                PREFIX_REUSE_ENABLED.set(!prefix_only || enabled);
                 SAMPLE_REUSE_COUNTS.set([0; 2]);
+                PREFIX_REUSE_COUNTS.set([0; 2]);
                 let started = std::time::Instant::now();
                 let value = part.compute_face_mass(face).map(|v| v.map(f64::to_bits));
                 let seconds = started.elapsed().as_secs_f64();
@@ -1696,6 +1883,8 @@ mod tests {
                     "seconds": seconds,
                     "bits": value,
                     "node_requests_and_hits": SAMPLE_REUSE_COUNTS.get(),
+                    "prefix_panels_and_hits": PREFIX_REUSE_COUNTS.get(),
+                    "prefix_only": prefix_only,
                 });
                 println!("{row}");
                 rows.push(row);
@@ -1707,6 +1896,7 @@ mod tests {
             }
         }
         SAMPLE_REUSE_ENABLED.set(true);
+        PREFIX_REUSE_ENABLED.set(true);
     }
 
     #[test]
