@@ -1,0 +1,352 @@
+{
+  "expected": {
+    "held_side_knot.step/0/mass": [
+      4629237276345504442,
+      4633641066610819087,
+      4606281698874543393,
+      13834157335356689695,
+      4628461927039343025
+    ],
+    "held_side_knot.step/0/moments": [
+      4629237276345504442,
+      4612811918334230527,
+      4618722892845154305,
+      4612811918334230528,
+      4606281698874543393,
+      13834157335356689695,
+      4628461927039343025,
+      4634096878417182253,
+      4629593278789811779,
+      0,
+      4629593278789811774,
+      4636384120490914389,
+      13843802778067984449,
+      0,
+      13843802778067984449,
+      4612434013949813375
+    ],
+    "late_turn.step/0/mass": [
+      4629137466139867228,
+      0,
+      0,
+      0,
+      4629137466139867228
+    ],
+    "late_turn.step/0/moments": [
+      4629137466139867228,
+      4612811918896543167,
+      4617315517624393182,
+      0,
+      0,
+      0,
+      4629137466139867228,
+      4633992907696218318,
+      4537250116966285310,
+      0,
+      4537250116985159679,
+      4636033602017328382,
+      0,
+      0,
+      0,
+      0
+    ],
+    "rotated_seam_band.step/0/mass": [
+      4639509694878261717,
+      4648516894133002709,
+      13617170439682463308,
+      4374076238774755552,
+      0
+    ],
+    "rotated_seam_band.step/0/moments": [
+      4639509694878261717,
+      4384254237245177856,
+      4386506037058863104,
+      4386506037058863104,
+      13617170439682463308,
+      4374076238774755552,
+      0,
+      4653020493760373210,
+      4427812489891151872,
+      4427812489891151872,
+      4428692099193372672,
+      4653020493760373213,
+      4427812489891151872,
+      4427812489891151872,
+      4427812489891151872,
+      4646666133662642895
+    ]
+  },
+  "rows": [
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 0,
+      "thread_cpu_seconds": 1.53125,
+      "wall_seconds": 1.6191062999999999
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 0,
+      "thread_cpu_seconds": 1.375,
+      "wall_seconds": 2.2335924
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 0,
+      "thread_cpu_seconds": 0.140625,
+      "wall_seconds": 0.2320278
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 0,
+      "thread_cpu_seconds": 0.15625,
+      "wall_seconds": 0.2537648
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 0,
+      "thread_cpu_seconds": 2.5625,
+      "wall_seconds": 3.281781
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 0,
+      "thread_cpu_seconds": 2.796875,
+      "wall_seconds": 3.5602796
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 1,
+      "thread_cpu_seconds": 0.15625,
+      "wall_seconds": 0.1961108
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 1,
+      "thread_cpu_seconds": 0.171875,
+      "wall_seconds": 0.2066831
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 1,
+      "thread_cpu_seconds": 2.53125,
+      "wall_seconds": 2.9873399000000003
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 1,
+      "thread_cpu_seconds": 2.734375,
+      "wall_seconds": 3.3806971
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 1,
+      "thread_cpu_seconds": 1.5625,
+      "wall_seconds": 2.0609813
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 1,
+      "thread_cpu_seconds": 1.453125,
+      "wall_seconds": 2.0846874
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 2,
+      "thread_cpu_seconds": 2.546875,
+      "wall_seconds": 3.5599969
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 2,
+      "thread_cpu_seconds": 2.75,
+      "wall_seconds": 3.9747905
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 2,
+      "thread_cpu_seconds": 1.453125,
+      "wall_seconds": 1.881534
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 2,
+      "thread_cpu_seconds": 1.53125,
+      "wall_seconds": 2.824706
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 2,
+      "thread_cpu_seconds": 0.1875,
+      "wall_seconds": 0.1886564
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 2,
+      "thread_cpu_seconds": 0.15625,
+      "wall_seconds": 0.1541979
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 3,
+      "thread_cpu_seconds": 1.390625,
+      "wall_seconds": 1.5821684999999999
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 3,
+      "thread_cpu_seconds": 1.375,
+      "wall_seconds": 1.9386136
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 3,
+      "thread_cpu_seconds": 0.15625,
+      "wall_seconds": 0.1883031
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 3,
+      "thread_cpu_seconds": 0.15625,
+      "wall_seconds": 0.223341
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 3,
+      "thread_cpu_seconds": 2.59375,
+      "wall_seconds": 3.3651208
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 3,
+      "thread_cpu_seconds": 2.578125,
+      "wall_seconds": 3.1343906
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 4,
+      "thread_cpu_seconds": 0.15625,
+      "wall_seconds": 0.1582593
+    },
+    {
+      "face": 0,
+      "fixture": "late_turn.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 4,
+      "thread_cpu_seconds": 0.125,
+      "wall_seconds": 0.1288734
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 4,
+      "thread_cpu_seconds": 2.1875,
+      "wall_seconds": 2.21836
+    },
+    {
+      "face": 0,
+      "fixture": "rotated_seam_band.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 4,
+      "thread_cpu_seconds": 2.21875,
+      "wall_seconds": 2.2949046
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "mass",
+      "repeats": 128,
+      "round": 4,
+      "thread_cpu_seconds": 1.28125,
+      "wall_seconds": 1.2985298
+    },
+    {
+      "face": 0,
+      "fixture": "held_side_knot.step",
+      "operation": "moments",
+      "repeats": 128,
+      "round": 4,
+      "thread_cpu_seconds": 1.171875,
+      "wall_seconds": 1.2010612
+    }
+  ],
+  "scope": "Three public trimmed-surface fixtures; warmed geometry caches and direct mass/moment computations; excludes STEP reads, builds and full recognition"
+}

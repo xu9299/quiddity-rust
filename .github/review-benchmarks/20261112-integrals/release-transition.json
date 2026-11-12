@@ -1,0 +1,100 @@
+{
+  "base": "18eefdc10c07dca3d1d0a3de19fe59e93713b9c6",
+  "previous_base": "4a284e08a2faee1041e14726d0d621ffc2427bb2",
+  "contributing_blob": "fa226394100421eaeb569bb6d11d962e9f19e095",
+  "all_rust_files_unchanged": true,
+  "snapshot_count": 2702,
+  "input_count": 3227,
+  "snapshot_changes": [
+    {
+      "snapshot": "pocket_floor_fillets",
+      "uncompressed_bytes_equal": false,
+      "changes": [
+        {
+          "path": "/golden_straight_and_obround_slots/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_ball_floor/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_deep_floor/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_floor_fillet/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_floor_hole/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_floor_island/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_floor_open_slot/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_mouth_rim/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_partial_floor_fillet/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_plain/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_sharp_corner_floor/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/pocket_sloped_floor/document/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        }
+      ]
+    },
+    {
+      "snapshot": "unowned_recesses",
+      "uncompressed_bytes_equal": false,
+      "changes": [
+        {
+          "path": "/0/recognition/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/1/recognition/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        },
+        {
+          "path": "/2/recognition/package/version",
+          "before": "0.4.9",
+          "after": "0.5.0"
+        }
+      ]
+    }
+  ],
+  "previous_local_windows_test_executions": 56,
+  "validation_scope": "Previous local Windows results retain their old commits. Every final release-based candidate receives fresh GitHub Windows directed checks and ARM strict/full checks.",
+  "recorded_at": "2026-11-12T10:49:17.203859+00:00"
+}

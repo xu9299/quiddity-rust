@@ -1,0 +1,104 @@
+{
+  "recorded_at": "2026-11-12T10:27:06.900842+00:00",
+  "base": "4a284e08a2faee1041e14726d0d621ffc2427bb2",
+  "includes": {
+    "264": "merged",
+    "227": "landed through #264",
+    "234": "landed through #264"
+  },
+  "official_stable_checked": "0.4.9",
+  "pypi_unyanked_files": 6,
+  "contributing_blob": "653397b50e98fce2dcf51606eb30848b27c537d5",
+  "snapshot_count": 2702,
+  "input_count": 3227,
+  "reference_source_commit": "9c2f6ad1669f36e857caca98b0cce11df994bb71",
+  "previous_benchmark_base": "ee428299b382c99f48695236a1c49c6d0b9504e0",
+  "unchanged_baseline_haecceity_tree": "0d3bcfa325f7a111b6bfc9cb580237a585dfb294",
+  "benchmark_scope": "Earlier Windows measurements used the same haecceity source tree. They are not relabelled as full recognition measurements on the new commits.",
+  "candidate_source_comparisons": [
+    {
+      "topic": "01-ray-geometry",
+      "path": "crates/haecceity/src/brep.rs",
+      "previous_blob": "8204f5d2de07c59c52468feb4528514b8f74667a",
+      "current_blob": "8204f5d2de07c59c52468feb4528514b8f74667a",
+      "identical": true
+    },
+    {
+      "topic": "01-ray-geometry",
+      "path": "crates/haecceity/src/rays.rs",
+      "previous_blob": "839faf22595589712f861567df02d0cfee0a8cf0",
+      "current_blob": "839faf22595589712f861567df02d0cfee0a8cf0",
+      "identical": true
+    },
+    {
+      "topic": "02-evidence-records",
+      "path": "src/evidence_view.rs",
+      "previous_blob": "246fa84207d1711c59c6d7becd92ecf8df1dc885",
+      "current_blob": "ba5f65c8c96148e93fbe49f29480bc27368c81d4",
+      "identical": false
+    },
+    {
+      "topic": "02-evidence-records",
+      "path": "tests/internal/recognition_evidence.rs",
+      "previous_blob": "341c4d1ee9c17466d46b53e8229cc835a1cfbcc1",
+      "current_blob": "9b7f9db43a961b6cf08520f01e81ba3ff87413ba",
+      "identical": false
+    },
+    {
+      "topic": "03-recess-discovery",
+      "path": "src/features/context.rs",
+      "previous_blob": "e0186810efbd8f881ee40e0fa1dea07995c62c69",
+      "current_blob": "e0186810efbd8f881ee40e0fa1dea07995c62c69",
+      "identical": true
+    },
+    {
+      "topic": "03-recess-discovery",
+      "path": "src/features/section_recess_family.rs",
+      "previous_blob": "5f32120853f22383203a4054baef4222516ded4d",
+      "current_blob": "d566e1f5de89ccfbfb171f0d62c3bab51fff7ab7",
+      "identical": false
+    },
+    {
+      "topic": "03-recess-discovery",
+      "path": "tests/internal/mod.rs",
+      "previous_blob": "adfb3f44df03d9d7c4b10b2b14598138f6cc053a",
+      "current_blob": "d71afa155818a2ac35cb3048c4ebe18b4d9c8b78",
+      "identical": false
+    },
+    {
+      "topic": "03-recess-discovery",
+      "path": "tests/internal/section_recess_cache.rs",
+      "previous_blob": "9af4ab4fcebb67dc615eeaf3295dffb7b51cd130",
+      "current_blob": "fbd8fe41d54d1998f19388c452ce36b6d5542eb3",
+      "identical": false
+    },
+    {
+      "topic": "04-integral-operands",
+      "path": "crates/haecceity/src/mass.rs",
+      "previous_blob": "e6b418d872586476a79335794a96cd1341423b6f",
+      "current_blob": "e6b418d872586476a79335794a96cd1341423b6f",
+      "identical": true
+    },
+    {
+      "topic": "04-integral-operands",
+      "path": "crates/haecceity/src/nurbs.rs",
+      "previous_blob": "929ab7ac43568d1f27ac78ee60f8f2fc53c00c7f",
+      "current_blob": "929ab7ac43568d1f27ac78ee60f8f2fc53c00c7f",
+      "identical": true
+    },
+    {
+      "topic": "06-thread-scan",
+      "path": "src/features/modelled_threads.rs",
+      "previous_blob": "8a7560baa894c6de82cffa83bac5f9d2fe01945e",
+      "current_blob": "8a7560baa894c6de82cffa83bac5f9d2fe01945e",
+      "identical": true
+    },
+    {
+      "topic": "07-volume-refusal",
+      "path": "crates/haecceity/src/volume.rs",
+      "previous_blob": "16a4136556aaf39c664f1bad2b41c7f94295352d",
+      "current_blob": "16a4136556aaf39c664f1bad2b41c7f94295352d",
+      "identical": true
+    }
+  ]
+}

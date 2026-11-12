@@ -1,0 +1,156 @@
+{
+  "scope": "Three public trimmed-surface fixtures; warmed geometry caches and direct mass/moment computations; excludes STEP reads, builds and full recognition",
+  "probe_sha256": "9e57edb3c4adb31ce61a0918346abf44df5f08174a45ae1ad1f2c81611426fa2",
+  "results": [
+    {
+      "label": "main-before",
+      "source": "ee428299b382c99f48695236a1c49c6d0b9504e0",
+      "rounds": [
+        {
+          "round": 0,
+          "cpu": 8.5625,
+          "wall": 11.1805519
+        },
+        {
+          "round": 1,
+          "cpu": 8.609375,
+          "wall": 10.9164996
+        },
+        {
+          "round": 2,
+          "cpu": 8.625,
+          "wall": 12.5838817
+        },
+        {
+          "round": 3,
+          "cpu": 8.25,
+          "wall": 10.4319376
+        },
+        {
+          "round": 4,
+          "cpu": 7.140625,
+          "wall": 7.299988300000001
+        }
+      ],
+      "unique_outputs": 6,
+      "successful_outputs": 6,
+      "evaluations": 3840,
+      "bits_equal": true,
+      "output_sha256": "313006583e5c96598985c0e2618da5ce9ecaaaa93b99e04026d7066763a3d67c"
+    },
+    {
+      "label": "operands",
+      "source": "2bf229a7005ce642d9435a29622b3cad607ce3c7",
+      "rounds": [
+        {
+          "round": 0,
+          "cpu": 6.890625,
+          "wall": 8.8032858
+        },
+        {
+          "round": 1,
+          "cpu": 6.75,
+          "wall": 8.1823772
+        },
+        {
+          "round": 2,
+          "cpu": 6.6875,
+          "wall": 8.1147487
+        },
+        {
+          "round": 3,
+          "cpu": 6.625,
+          "wall": 7.1802292
+        },
+        {
+          "round": 4,
+          "cpu": 6.59375,
+          "wall": 7.5872115
+        }
+      ],
+      "unique_outputs": 6,
+      "successful_outputs": 6,
+      "evaluations": 3840,
+      "bits_equal": true,
+      "output_sha256": "c9fd3140dab9591f27f3fa91505f5882ae60ed86e87c6a1810b2929f6d1d2a0f",
+      "mean_thread_cpu_seconds_per_round": 6.709375,
+      "mean_thread_cpu_reduction_against_bracketed_main": 0.14666136724960255
+    },
+    {
+      "label": "samples",
+      "source": "2fbf04f85af6431cbc58a15552d28f21647e97bd",
+      "rounds": [
+        {
+          "round": 0,
+          "cpu": 8.3125,
+          "wall": 14.8331065
+        },
+        {
+          "round": 1,
+          "cpu": 8.25,
+          "wall": 17.6150661
+        },
+        {
+          "round": 2,
+          "cpu": 8.0625,
+          "wall": 16.6156726
+        },
+        {
+          "round": 3,
+          "cpu": 7.84375,
+          "wall": 11.1313425
+        },
+        {
+          "round": 4,
+          "cpu": 7.703125,
+          "wall": 14.0354989
+        }
+      ],
+      "unique_outputs": 6,
+      "successful_outputs": 6,
+      "evaluations": 3840,
+      "bits_equal": true,
+      "output_sha256": "c33c916511e52460c6ad320c8ca3c3a5c45b07aa65e72987d80d8def560ae5b7",
+      "mean_thread_cpu_seconds_per_round": 8.034375,
+      "mean_thread_cpu_reduction_against_bracketed_main": -0.021860095389507173
+    },
+    {
+      "label": "main-after",
+      "source": "ee428299b382c99f48695236a1c49c6d0b9504e0",
+      "rounds": [
+        {
+          "round": 0,
+          "cpu": 7.578125,
+          "wall": 9.8412643
+        },
+        {
+          "round": 1,
+          "cpu": 7.8125,
+          "wall": 10.4061545
+        },
+        {
+          "round": 2,
+          "cpu": 7.265625,
+          "wall": 9.5918896
+        },
+        {
+          "round": 3,
+          "cpu": 7.171875,
+          "wall": 8.467030900000001
+        },
+        {
+          "round": 4,
+          "cpu": 7.609375,
+          "wall": 10.830541
+        }
+      ],
+      "unique_outputs": 6,
+      "successful_outputs": 6,
+      "evaluations": 3840,
+      "bits_equal": true,
+      "output_sha256": "6e04a27497ea7d0c58b5ba2181f0f298f09d298f09aabb65ff739814d8cca18d"
+    }
+  ],
+  "baseline_mean_thread_cpu_seconds_per_round": 7.8625,
+  "bracketed_control_relative_difference": 0.09538950715421315
+}
