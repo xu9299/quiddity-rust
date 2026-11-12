@@ -6,6 +6,11 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+### Fixed
+
+- Parallel floor readers retain the caller's strict or locally degraded ownership
+  mode on every worker, restoring previous thread state after each query.
+
 ### Changed
 
 - Evidence documents serialize the physical inventory once and clone each record's

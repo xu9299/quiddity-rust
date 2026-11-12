@@ -1738,13 +1738,13 @@ pub fn candidates(ctx: &Context<'_>, surfaces: &EffectiveFaces<'_, '_>) -> Check
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    let read = |floor| {
+    let read = super::evidence::bind_current_run_mode(|floor| {
         preferred(
             one_obround_candidate(ctx, floor),
             || one_polygonal_candidate(ctx, floor),
             || one_mixed_candidate(ctx, floor),
         )
-    };
+    });
     let part = ctx.part;
     let pending = (0..part.faces.len()).filter(|&i| is_planar(part, i)).collect();
     let mut readings: Vec<OnceLock<FloorReading>> =
