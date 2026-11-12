@@ -22,6 +22,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Prismatic through-cut grouping checks both planar wall normals and their run
+  direction before evaluating the exact shared-edge turn. Ineligible pairs avoid
+  unused curve and surface queries; candidate order and geometric proofs stay unchanged.
 - Independent face-query preparation can use up to eight available logical
   processors, still capped by `HAECCEITY_THREADS`. Geometry operations and ordered
   result consumption are unchanged.

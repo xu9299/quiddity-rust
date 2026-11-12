@@ -300,25 +300,33 @@ fn discover_uncovered(
     occupied: &BTreeSet<usize>,
 ) -> Vec<Occurrence<PrismaticThroughCut>> {
     let p = ctx.part;
-    let normals: Vec<_> = (0..p.faces.len())
-        .map(|f| if is_planar(p, f) { normal(p, f) } else { None })
-        .collect();
+    let normals: Vec<_> = {
+        let _timing = crate::kernel::timing::stage("prismatic_through_cuts.normals");
+        (0..p.faces.len())
+            .map(|f| if is_planar(p, f) { normal(p, f) } else { None })
+            .collect()
+    };
     let mut groups: Vec<RunGroup> = Vec::new();
     let mut bins = BTreeMap::new();
+    let grouping = crate::kernel::timing::stage("prismatic_through_cuts.group_pairs");
     for a in 0..p.faces.len() {
         let Some(na) = normals[a] else {
             continue;
         };
         for b in p.neighbours(a) {
-            if b <= a || p.arc(a, b) != Some(Arc::Concave) {
+            if b <= a {
                 continue;
             }
+            // Reject ineligible walls before evaluating their exact shared-edge turn.
             let Some(nb) = normals[b] else {
                 continue;
             };
             let Some(run) = geom::unit(geom::cross(na, nb)) else {
                 continue;
             };
+            if p.arc(a, b) != Some(Arc::Concave) {
+                continue;
+            }
             let Ok(frame) = LocalFrame::canonical(run, [0.; 3]) else {
                 continue;
             };
@@ -326,6 +334,8 @@ fn discover_uncovered(
             groups[i].pairs.push((a, b));
         }
     }
+    drop(grouping);
+    let _timing = crate::kernel::timing::stage("prismatic_through_cuts.prove_groups");
     groups.sort_by(|a, b| crate::kernel::py::tuple_order(&a.frame.run, &b.frame.run));
     let mut found = Vec::new();
     let mut seen = BTreeSet::new();
