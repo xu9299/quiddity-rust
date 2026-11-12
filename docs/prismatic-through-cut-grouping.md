@@ -33,3 +33,10 @@ family's proofs, optionally under `QUIDDITY_PRISMATIC_DEGRADED`. It deliberately
 does not reconstruct other families' publication ownership and is a diagnostic,
 not complete recognition or an acceptance result. These environment hooks are
 absent from production builds; the manual test is ignored by normal regressions.
+
+Volume observations distinguish classifier construction, probe mass, finite-side
+preparation, height break generation, source/probe edge piercing, slice breaks
+and the two nested integrals. Timers do not add a geometry query, reorder samples,
+alter the quadrature rule or change early refusal. A long component air span can
+therefore be attributed to setup, ray intersections or integration before any
+algorithm is changed.

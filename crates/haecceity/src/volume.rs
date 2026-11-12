@@ -194,6 +194,7 @@ pub fn common_volume(solid: &Classifier<'_>, probe: &Probe<'_>) -> Option<f64> {
 /// left the volume unanswered:
 /// the first pass is finished before an at-most answer stands on it.
 pub fn fills_at_most(solid: &Classifier<'_>, probe: &Probe<'_>, limit: f64) -> bool {
+    let _timing = crate::timing::operation("volume.fills_at_most");
     let Some(whole) = probe_volume(probe).filter(|&v| v > 0.0) else {
         return false;
     };
@@ -234,6 +235,7 @@ pub fn fills_at_most(solid: &Classifier<'_>, probe: &Probe<'_>, limit: f64) -> b
 
 /// The probe's own volume; `None` for a solid probe whose mass cannot be integrated.
 pub fn probe_volume(probe: &Probe<'_>) -> Option<f64> {
+    let _timing = crate::timing::operation("volume.probe_mass");
     match probe {
         Probe::Box(b) => {
             let s = geom::sub(b.max, b.min);
@@ -461,6 +463,8 @@ fn shared(
     inset: f64,
     stop: &dyn Fn(Pair) -> bool,
 ) -> Option<(Pair, bool)> {
+    let _timing = crate::timing::operation("volume.shared");
+    let setup_timing = crate::timing::operation("volume.setup");
     let rays = solid.rays();
     let (sb, pb) = (rays.bounds(), probe.bounds());
     let whole = probe_volume(probe)?;
@@ -476,12 +480,14 @@ fn shared(
             State::On | State::Unknown => None,
         };
     }
+    let sides_timing = crate::timing::operation("volume.sides");
     let mine = Side::of_solid(rays, &region);
     let theirs = match probe {
         Probe::Box(b) => Side::of_box(b),
         Probe::Solid(p) => Side::of_solid(p, &region),
         Probe::Prism(p) => Side::of_prism(p),
     };
+    drop(sides_timing);
     // Slices across the probe's longest side, lines along the next.
     let size = geom::sub(pb.max, pb.min);
     let z = (0..3)
@@ -505,6 +511,7 @@ fn shared(
     let y = (z + 2) % 3;
     let start = sb.min[y].min(pb.min[y]) - 1.0;
     let reach = sb.max[y].max(pb.max[y]) + 1.0 - start;
+    drop(setup_timing);
     // The integrators take plain lengths: a line either shape cannot resolve is noted here, and
     // the whole answer refused.
     let unresolved = std::cell::Cell::new(false);
@@ -547,14 +554,19 @@ fn shared(
     // edges piercing the other's faces.
     let at = |v: V3, axis: V3| geom::dot(v, axis);
     let mut hs: Vec<f64> = Vec::new();
+    let turns_timing = crate::timing::operation("volume.height_turns");
     for e in mine.edges.iter().chain(&theirs.edges) {
         hs.extend(turning_points(&e.points, frame.z));
     }
+    drop(turns_timing);
+    let source_edges_timing = crate::timing::operation("volume.source_edges_pierce_probe");
     for e in mine.edges.iter().filter(|e| e.straight) {
         for w in e.points.windows(2) {
             hs.extend(probe.pierce(w[0], w[1])?.iter().map(|v| at(*v, frame.z)));
         }
     }
+    drop(source_edges_timing);
+    let probe_edges_timing = crate::timing::operation("volume.probe_edges_pierce_source");
     for e in theirs.edges.iter().filter(|e| e.straight) {
         for w in e.points.windows(2) {
             if let Some(dir) = geom::unit(geom::sub(w[1], w[0])) {
@@ -566,23 +578,30 @@ fn shared(
             }
         }
     }
+    drop(probe_edges_timing);
     // Breaks across a slice: both shapes' edges crossing it, the lines shared by a plane of
     // each crossing it, and the curves where a plane of one meets a curved face of the other:
     // a sliver of material between such a curve and the nearest edge can be narrower than the
     // spacing of the Gauss points and be missed by both rules.
     let area = |h: f64| {
+        let _timing = crate::timing::operation("volume.slice");
         if unresolved.get() {
             return [0.0, 0.0];
         }
         let mut ss: Vec<f64> = Vec::new();
+        let crossings_timing = crate::timing::operation("volume.slice_edge_crossings");
         for e in mine.edges.iter().chain(&theirs.edges) {
             ss.extend(crossings(e, frame.z, h, frame.x));
         }
+        drop(crossings_timing);
+        let planes_timing = crate::timing::operation("volume.slice_plane_pairs");
         for &(n1, d1, ..) in &mine.planes {
             for &(n2, d2, ..) in &theirs.planes {
                 ss.extend(three_planes(n1, d1, n2, d2, frame.z, h).map(|v| at(v, frame.x)));
             }
         }
+        drop(planes_timing);
+        let cuts_timing = crate::timing::operation("volume.slice_plane_cuts");
         for (curved, flat) in [(&mine, &theirs), (&theirs, &mine)] {
             ss.extend(
                 plane_cuts(curved, flat, frame.z, h, &region)
@@ -590,8 +609,11 @@ fn shared(
                     .map(|v| at(v, frame.x)),
             );
         }
+        drop(cuts_timing);
+        let _integral = crate::timing::operation("volume.slice_integral");
         integrate(&|s| length(h, s), across, ss, rule.per(h1 - h0))
     };
+    let _integral = crate::timing::operation("volume.height_integral");
     let total = integrate_until(&area, (h0, h1), hs, rule, &|total| {
         unresolved.get() || stop(total)
     });

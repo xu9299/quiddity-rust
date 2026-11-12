@@ -60,8 +60,15 @@ internal_entry! {
 /// Whether [`material_fraction`] is at most *limit* (an unanswered fraction is not), measured
 /// only as far as the answer needs ([`fills_at_most`]).
 pub fn material_at_most(ctx: &Context<'_>, owner: usize, probe: &Part, limit: f64) -> bool {
-    let probe = Probe::Solid(RayCaster::for_solid(probe, 0));
-    fills_at_most(ctx.solid_classifier(owner), &probe, limit)
+    let probe = {
+        let _timing = crate::kernel::timing::operation("material_at_most.probe_classifier");
+        Probe::Solid(RayCaster::for_solid(probe, 0))
+    };
+    let solid = {
+        let _timing = crate::kernel::timing::operation("material_at_most.owner_classifier");
+        ctx.solid_classifier(owner)
+    };
+    fills_at_most(solid, &probe, limit)
 }
 }
 
