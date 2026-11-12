@@ -72,6 +72,21 @@ pub fn material_at_most(ctx: &Context<'_>, owner: usize, probe: &Part, limit: f6
 }
 }
 
+/// Try a complete, uninset planar air proof along a known sweep direction, then
+/// retain the ordinary material-fraction policy for every inconclusive result.
+pub(super) fn swept_material_at_most(
+    ctx: &Context<'_>,
+    owner: usize,
+    probe: &Part,
+    axis: V3,
+    limit: f64,
+) -> bool {
+    let probe = Probe::Solid(RayCaster::for_solid(probe, 0));
+    let solid = ctx.solid_classifier(owner);
+    (limit >= 0.0 && crate::kernel::volume::planar_empty_along(solid, &probe, axis))
+        || fills_at_most(solid, &probe, limit)
+}
+
 /// The removed cell under one bevel (`_cell_supports`): outside the base wall, inside the stock
 /// end, above the bevel and inside the ring's other wall planes, as a convex polyhedron whose
 /// bevel face is exactly the source bevel and which holds no material.

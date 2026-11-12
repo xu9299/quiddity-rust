@@ -192,6 +192,57 @@ fn an_intact_wall_ring_with_a_floor_is_not_a_through_cut() {
 }
 
 #[test]
+fn swept_planar_air_keeps_blind_and_sub_floor_obstructions_under_motion() {
+    use quiddity::kernel::classify::Classifier;
+    use quiddity::kernel::rays::RayCaster;
+    use quiddity::kernel::volume::{Probe, planar_empty_along};
+    let (s, c) = 0.37_f64.sin_cos();
+    let matrix = [
+        [c, 0., s, 123.456],
+        [s * s, c, -s * c, -78.9],
+        [-s * c, s, c * c, 41.3],
+    ];
+    for (sides, blind, lo) in [(80, false, -1.), (80, true, -1.), (6, true, 1. - 5e-7)] {
+        let (part, walls, _) = control(sides, blind);
+        let ring = |z| {
+            (0..sides)
+                .map(|i| {
+                    let t = std::f64::consts::TAU * i as f64 / sides as f64;
+                    [2. * t.cos(), 2. * t.sin(), z]
+                })
+                .collect::<Vec<_>>()
+        };
+        let tool = features::support_patches::ruled_prism(&ring(lo), &ring(11.)).unwrap();
+        for moved in [false, true] {
+            let (source, tool, axis) = if moved {
+                (
+                    part.transformed(&matrix).unwrap(),
+                    tool.transformed(&matrix).unwrap(),
+                    [matrix[0][2], matrix[1][2], matrix[2][2]],
+                )
+            } else {
+                (
+                    Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone()),
+                    Part::new(tool.faces.clone(), tool.edges.clone(), tool.solids.clone()),
+                    [0., 0., 1.],
+                )
+            };
+            let probe = Probe::Solid(RayCaster::for_solid(&tool, 0));
+            assert_eq!(
+                planar_empty_along(&Classifier::for_solid(&source, 0), &probe, axis),
+                !blind,
+                "{sides} walls, blind={blind}, moved={moved}, lo={lo}"
+            );
+            if !blind {
+                let found = prismatic_through_cuts::discover(&Context::new(&source));
+                assert_eq!(found.len(), 1);
+                assert_eq!(found[0].defining, walls);
+            }
+        }
+    }
+}
+
+#[test]
 fn cut_geometry_claims_and_fingerprint_follow_a_generic_rigid_motion() {
     let (p, walls, _) = control(6, false);
     let (s, c) = 0.37_f64.sin_cos();

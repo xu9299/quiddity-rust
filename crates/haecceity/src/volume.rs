@@ -233,6 +233,35 @@ pub fn fills_at_most(solid: &Classifier<'_>, probe: &Probe<'_>, limit: f64) -> b
     }
 }
 
+/// A sufficient emptiness proof for a locally planar arrangement, sliced along
+/// *axis*. All intersections still query the original B-Rep in world coordinates.
+/// This proof uses no inset and accepts only a complete, answered zero-material
+/// integral. Curved or unanswered arrangements, invalid axes and any measured
+/// material return `false`; callers may then use their ordinary volume policy.
+pub fn planar_empty_along(solid: &Classifier<'_>, probe: &Probe<'_>, axis: V3) -> bool {
+    let _timing = crate::timing::operation("volume.planar_along");
+    if !probe_volume(probe).is_some_and(|v| v.is_finite() && v > 0.0) {
+        return false;
+    }
+    let Some(z) = geom::unit(axis) else {
+        return false;
+    };
+    let x = geom::default_x_axis(z);
+    let Some(y) = geom::unit(geom::cross(z, x)) else {
+        return false;
+    };
+    let frame = Frame {
+        origin: [0.0; 3],
+        x,
+        y,
+        z,
+    };
+    matches!(
+        shared_in_frame(solid, probe, 0.0, &|m| m[0] > 0.0, Some(frame)),
+        Some(([0.0, _], false))
+    )
+}
+
 /// The probe's own volume; `None` for a solid probe whose mass cannot be integrated.
 pub fn probe_volume(probe: &Probe<'_>) -> Option<f64> {
     let _timing = crate::timing::operation("volume.probe_mass");
@@ -463,6 +492,16 @@ fn shared(
     inset: f64,
     stop: &dyn Fn(Pair) -> bool,
 ) -> Option<(Pair, bool)> {
+    shared_in_frame(solid, probe, inset, stop, None)
+}
+
+fn shared_in_frame(
+    solid: &Classifier<'_>,
+    probe: &Probe<'_>,
+    inset: f64,
+    stop: &dyn Fn(Pair) -> bool,
+    directed: Option<Frame>,
+) -> Option<(Pair, bool)> {
     let _timing = crate::timing::operation("volume.shared");
     let setup_timing = crate::timing::operation("volume.setup");
     let rays = solid.rays();
@@ -488,29 +527,56 @@ fn shared(
         Probe::Prism(p) => Side::of_prism(p),
     };
     drop(sides_timing);
+    if directed.is_some() && (mine.curved || theirs.curved) {
+        return None;
+    }
     // Slices across the probe's longest side, lines along the next.
     let size = geom::sub(pb.max, pb.min);
     let z = (0..3)
         .max_by(|&i, &j| size[i].total_cmp(&size[j]))
         .unwrap_or(2);
     let unit = |i: usize| [0, 1, 2].map(|k| if k == i { 1.0 } else { 0.0 });
-    let frame = Frame {
+    let frame = directed.unwrap_or(Frame {
         origin: [0.0; 3],
         x: unit((z + 1) % 3),
         y: unit((z + 2) % 3),
         z: unit(z),
+    });
+    let ((h0, h1), across, start, reach) = if directed.is_some() {
+        let height = projected_box(&region, frame.z);
+        let across = projected_box(&region, frame.x);
+        let source = projected_box(&sb, frame.y);
+        let tool = projected_box(&pb, frame.y);
+        let start = source.0.min(tool.0) - 1.0;
+        let reach = source.1.max(tool.1) + 1.0 - start;
+        if ![height.0, height.1, across.0, across.1, start, reach]
+            .into_iter()
+            .all(f64::is_finite)
+        {
+            return None;
+        }
+        (
+            (height.0 + inset, height.1 - inset),
+            (across.0 + inset, across.1 - inset),
+            start,
+            reach,
+        )
+    } else {
+        let y = (z + 2) % 3;
+        let start = sb.min[y].min(pb.min[y]) - 1.0;
+        (
+            (region.min[z] + inset, region.max[z] - inset),
+            (
+                region.min[(z + 1) % 3] + inset,
+                region.max[(z + 1) % 3] - inset,
+            ),
+            start,
+            sb.max[y].max(pb.max[y]) + 1.0 - start,
+        )
     };
-    let (h0, h1) = (region.min[z] + inset, region.max[z] - inset);
-    let across = (
-        region.min[(z + 1) % 3] + inset,
-        region.max[(z + 1) % 3] - inset,
-    );
     if h1 <= h0 || across.1 <= across.0 {
         return Some(([0.0, 0.0], false));
     }
-    let y = (z + 2) % 3;
-    let start = sb.min[y].min(pb.min[y]) - 1.0;
-    let reach = sb.max[y].max(pb.max[y]) + 1.0 - start;
     drop(setup_timing);
     let rule = if mine.curved || theirs.curved {
         Rule::Adaptive(1e-10 * whole)
@@ -623,6 +689,33 @@ fn shared(
         + theirs.planes.len()
         + theirs.curved_faces.len();
     integrate_slabs(&slab, (h0, h1), hs, stop, volume_workers(complexity))
+}
+
+/// Conservative projection of a finite box. Each product and sum rounds outward;
+/// this is a search range, never geometric evidence or an acceptance tolerance.
+fn projected_box(bounds: &Bounds, axis: V3) -> (f64, f64) {
+    let lower = [0, 1, 2].map(|i| {
+        (axis[i]
+            * if axis[i] >= 0.0 {
+                bounds.min[i]
+            } else {
+                bounds.max[i]
+            })
+        .next_down()
+    });
+    let upper = [0, 1, 2].map(|i| {
+        (axis[i]
+            * if axis[i] >= 0.0 {
+                bounds.max[i]
+            } else {
+                bounds.min[i]
+            })
+        .next_up()
+    });
+    (
+        ((lower[0] + lower[1]).next_down() + lower[2]).next_down(),
+        ((upper[0] + upper[1]).next_up() + upper[2]).next_up(),
+    )
 }
 
 /// Where a plane of *flat* meets a curved face of *curved* in the slice `z · p = h`: the line
@@ -1050,6 +1143,55 @@ mod tests {
     thread_local! {
         pub(super) static SHARED_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         pub(super) static VOLUME_WORKERS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    }
+
+    #[test]
+    fn directed_search_boxes_contain_corners_despite_cancellation() {
+        let bounds = Bounds {
+            min: [1e16, -1e16, -3.0],
+            max: [1e16 + 16.0, -1e16 + 16.0, 7.0],
+        };
+        for axis in [[0.3, 0.3, 0.4], [-0.7, 0.2, -0.1], [0.0, 0.0, 1.0]] {
+            let (lo, hi) = projected_box(&bounds, axis);
+            for bits in 0..8 {
+                let corner = [0, 1, 2].map(|i| {
+                    if bits & (1 << i) == 0 {
+                        bounds.min[i]
+                    } else {
+                        bounds.max[i]
+                    }
+                });
+                let projection = geom::dot(corner, axis);
+                assert!(lo <= projection && projection <= hi);
+            }
+        }
+    }
+
+    #[test]
+    fn directed_planar_shortcut_declines_curved_or_invalid_queries() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/rejected_bored_box.step");
+        let mut part = crate::read_step_file(&path).unwrap();
+        let probe = Probe::Box(Bounds {
+            min: [-2.0, -2.0, -10.0],
+            max: [2.0, 2.0, 10.0],
+        });
+        let solid = Classifier::new(&part);
+        assert_eq!(common_volume(&solid, &probe), Some(0.0));
+        for axis in [[0.0, 0.0, 1.0], [1.0, 2.0, 3.0], [0.0; 3], [f64::NAN; 3]] {
+            assert!(!planar_empty_along(&solid, &probe, axis));
+        }
+        drop(solid);
+        for face in &mut part.faces {
+            if matches!(face.surface, Surface::Cylinder { .. }) {
+                face.surface = Surface::Other { kind: "TEST" };
+            }
+        }
+        assert!(!planar_empty_along(
+            &Classifier::new(&part),
+            &probe,
+            [0.0, 0.0, 1.0]
+        ));
     }
 
     #[test]

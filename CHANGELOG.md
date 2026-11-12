@@ -28,6 +28,10 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Polygonal through-cuts first try an uninset planar air proof sliced along the
+  known sweep direction. Only a complete, answered zero-material integral accepts;
+  all inconclusive cases retain the existing material-fraction proof. Public-record
+  prerequisites are checked before spending time on air proofs.
 - Complex material-volume proofs evaluate bounded batches of independent height
   slabs on at most eight workers. Ordered sums, quadrature and refusal rules are
   retained; existing face workers do not start nested volume pools.

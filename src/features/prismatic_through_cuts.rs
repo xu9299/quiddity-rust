@@ -2,7 +2,7 @@
 //! The published prism is a nominal cut, not an assertion that its end planes are physical
 //! mouth faces. Every defining wall is contained in its side, every core side is covered by
 //! the original walls, and the entire prism through the owning solid's envelope is proved air.
-use super::entry_treatments::material_at_most;
+use super::entry_treatments::swept_material_at_most;
 use super::evidence::{self, Occurrence, common_valid_solid};
 use super::graph::{is_planar, normal};
 use super::passages::{SectionPassage, section_passage_record};
@@ -209,11 +209,10 @@ fn prove(
     }
     let core = core?;
     drop(core_timing);
-    let air_timing = crate::kernel::timing::operation("prismatic_through_cuts.air");
-    if !material_at_most(ctx, owner, &tool, 1e-9) {
-        return None;
-    }
-    drop(air_timing);
+    // A rejected public record cannot become an occurrence even when its tool is
+    // empty. Check the cheap representation constraints before proving air.
+    let record_timing = crate::kernel::timing::operation("prismatic_through_cuts.record");
+    let run = frame.run;
     let mut issuer = BodyRefIssuer::default();
     let occurrence = SectionOccurrence::new(
         issuer.issue(None).ok()?,
@@ -232,6 +231,17 @@ fn prove(
         high_gradient: [0.; 2],
     };
     let cut = section_passage_record(&proposal).ok()?;
+    drop(record_timing);
+    let air_timing = crate::kernel::timing::operation("prismatic_through_cuts.air");
+    let empty = swept_material_at_most(ctx, owner, &tool, run, 1e-9);
+    #[cfg(test)]
+    if std::env::var_os("QUIDDITY_PRISMATIC_PROFILE").is_some() {
+        eprintln!("through-cut air result: first={} empty={empty}", nodes[0]);
+    }
+    if !empty {
+        return None;
+    }
+    drop(air_timing);
     Some(Occurrence {
         record: PrismaticThroughCut {
             cut,
