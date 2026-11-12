@@ -24,7 +24,7 @@ env:
 
 jobs:
   candidate:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 360
     defaults:
       run:
@@ -61,7 +61,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: source -> ../target
-          shared-key: independent-performance-v050-20261112-macos-26
+          shared-key: independent-performance-v050-20261112-macos-15
       - name: Formatting and complete workspace lint
         run: |
           cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
