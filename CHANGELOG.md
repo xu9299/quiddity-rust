@@ -35,6 +35,7 @@ Pending version: 0.5.0
 
 ### Changed
 
+- Serialize physical evidence records once per document; existing output and refusal contracts are retained.
 - Face integration reuses complete cached moments, skips kink searches that cannot
   affect refinement, and stops once an accepted leaf makes the existing refusal
   inevitable. Integration nodes, error criteria and returned results are unchanged.
