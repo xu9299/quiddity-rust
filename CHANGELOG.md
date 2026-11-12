@@ -28,6 +28,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Complex material-volume proofs evaluate bounded batches of independent height
+  slabs on at most eight workers. Ordered sums, quadrature and refusal rules are
+  retained; existing face workers do not start nested volume pools.
 - Prismatic through-cut grouping checks both planar wall normals and their run
   direction before evaluating the exact shared-edge turn. Ineligible pairs avoid
   unused curve and surface queries; candidate order and geometric proofs stay unchanged.

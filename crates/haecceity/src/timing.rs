@@ -95,6 +95,11 @@ pub(crate) fn parallel_context() -> ParallelContext {
     ParallelContext(CURRENT.with(|current| current.borrow().clone()))
 }
 
+/// Worker binding exists even without an observer, so nested scheduling can stay serial.
+pub(crate) fn in_parallel_worker() -> bool {
+    PARALLEL.with(Cell::get)
+}
+
 impl ParallelContext {
     pub(crate) fn run<R>(&self, work: impl FnOnce() -> R) -> R {
         struct Binding {

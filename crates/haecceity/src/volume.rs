@@ -512,38 +512,6 @@ fn shared(
     let start = sb.min[y].min(pb.min[y]) - 1.0;
     let reach = sb.max[y].max(pb.max[y]) + 1.0 - start;
     drop(setup_timing);
-    // The integrators take plain lengths: a line either shape cannot resolve is noted here, and
-    // the whole answer refused.
-    let unresolved = std::cell::Cell::new(false);
-    let length = |h: f64, s: f64| {
-        // One unanswered line already refuses this whole pass. Later samples
-        // cannot restore an answer, and the accumulated numbers will be discarded.
-        if unresolved.get() {
-            return [0.0, 0.0];
-        }
-        #[cfg(test)]
-        tests::SHARED_LINES.with(|count| count.set(count.get() + 1));
-        let origin = geom::add(
-            geom::add(geom::scale(frame.z, h), geom::scale(frame.x, s)),
-            geom::scale(frame.y, start),
-        );
-        let (Some(material), Some(probed)) = (
-            intervals(rays, origin, frame.y, reach),
-            probe.intervals(origin, frame.y, reach),
-        ) else {
-            unresolved.set(true);
-            return [0.0, 0.0];
-        };
-        let inside: Vec<(f64, f64)> = probed
-            .into_iter()
-            .map(|(a, b)| (a + inset, b - inset))
-            .filter(|(a, b)| a < b)
-            .collect();
-        [
-            overlap_length(&material, &inside),
-            overlap_length(&gaps(&material, reach), &inside),
-        ]
-    };
     let rule = if mine.curved || theirs.curved {
         Rule::Adaptive(1e-10 * whole)
     } else {
@@ -579,45 +547,82 @@ fn shared(
         }
     }
     drop(probe_edges_timing);
-    // Breaks across a slice: both shapes' edges crossing it, the lines shared by a plane of
-    // each crossing it, and the curves where a plane of one meets a curved face of the other:
-    // a sliver of material between such a curve and the nearest edge can be narrower than the
-    // spacing of the Gauss points and be missed by both rules.
-    let area = |h: f64| {
-        let _timing = crate::timing::operation("volume.slice");
-        if unresolved.get() {
-            return [0.0, 0.0];
-        }
-        let mut ss: Vec<f64> = Vec::new();
-        let crossings_timing = crate::timing::operation("volume.slice_edge_crossings");
-        for e in mine.edges.iter().chain(&theirs.edges) {
-            ss.extend(crossings(e, frame.z, h, frame.x));
-        }
-        drop(crossings_timing);
-        let planes_timing = crate::timing::operation("volume.slice_plane_pairs");
-        for &(n1, d1, ..) in &mine.planes {
-            for &(n2, d2, ..) in &theirs.planes {
-                ss.extend(three_planes(n1, d1, n2, d2, frame.z, h).map(|v| at(v, frame.x)));
+    let slab = |lo, hi| {
+        // The integrators take plain lengths: a line either shape cannot resolve is noted here, and
+        // the whole answer refused.
+        let unresolved = std::cell::Cell::new(false);
+        let length = |h: f64, s: f64| {
+            // One unanswered line already refuses this whole pass. Later samples
+            // cannot restore an answer, and the accumulated numbers will be discarded.
+            if unresolved.get() {
+                return [0.0, 0.0];
             }
-        }
-        drop(planes_timing);
-        let cuts_timing = crate::timing::operation("volume.slice_plane_cuts");
-        for (curved, flat) in [(&mine, &theirs), (&theirs, &mine)] {
-            ss.extend(
-                plane_cuts(curved, flat, frame.z, h, &region)
-                    .into_iter()
-                    .map(|v| at(v, frame.x)),
+            #[cfg(test)]
+            tests::SHARED_LINES.with(|count| count.set(count.get() + 1));
+            let origin = geom::add(
+                geom::add(geom::scale(frame.z, h), geom::scale(frame.x, s)),
+                geom::scale(frame.y, start),
             );
-        }
-        drop(cuts_timing);
-        let _integral = crate::timing::operation("volume.slice_integral");
-        integrate(&|s| length(h, s), across, ss, rule.per(h1 - h0))
+            let (Some(material), Some(probed)) = (
+                intervals(rays, origin, frame.y, reach),
+                probe.intervals(origin, frame.y, reach),
+            ) else {
+                unresolved.set(true);
+                return [0.0, 0.0];
+            };
+            let inside: Vec<(f64, f64)> = probed
+                .into_iter()
+                .map(|(a, b)| (a + inset, b - inset))
+                .filter(|(a, b)| a < b)
+                .collect();
+            [
+                overlap_length(&material, &inside),
+                overlap_length(&gaps(&material, reach), &inside),
+            ]
+        };
+        // Breaks across a slice: both shapes' edges crossing it, the lines shared by a plane of
+        // each crossing it, and the curves where a plane of one meets a curved face of the other:
+        // a sliver of material between such a curve and the nearest edge can be narrower than the
+        // spacing of the Gauss points and be missed by both rules.
+        let area = |h: f64| {
+            let _timing = crate::timing::operation("volume.slice");
+            if unresolved.get() {
+                return [0.0, 0.0];
+            }
+            let mut ss: Vec<f64> = Vec::new();
+            let crossings_timing = crate::timing::operation("volume.slice_edge_crossings");
+            for e in mine.edges.iter().chain(&theirs.edges) {
+                ss.extend(crossings(e, frame.z, h, frame.x));
+            }
+            drop(crossings_timing);
+            let planes_timing = crate::timing::operation("volume.slice_plane_pairs");
+            for &(n1, d1, ..) in &mine.planes {
+                for &(n2, d2, ..) in &theirs.planes {
+                    ss.extend(three_planes(n1, d1, n2, d2, frame.z, h).map(|v| at(v, frame.x)));
+                }
+            }
+            drop(planes_timing);
+            let cuts_timing = crate::timing::operation("volume.slice_plane_cuts");
+            for (curved, flat) in [(&mine, &theirs), (&theirs, &mine)] {
+                ss.extend(
+                    plane_cuts(curved, flat, frame.z, h, &region)
+                        .into_iter()
+                        .map(|v| at(v, frame.x)),
+                );
+            }
+            drop(cuts_timing);
+            let _integral = crate::timing::operation("volume.slice_integral");
+            integrate(&|s| length(h, s), across, ss, rule.per(h1 - h0))
+        };
+        let total = integrate_interval(&area, (lo, hi), (h0, h1), rule);
+        (!unresolved.get()).then_some(total)
     };
     let _integral = crate::timing::operation("volume.height_integral");
-    let total = integrate_until(&area, (h0, h1), hs, rule, &|total| {
-        unresolved.get() || stop(total)
-    });
-    (!unresolved.get()).then_some(total)
+    let complexity = mine.planes.len()
+        + mine.curved_faces.len()
+        + theirs.planes.len()
+        + theirs.curved_faces.len();
+    integrate_slabs(&slab, (h0, h1), hs, stop, volume_workers(complexity))
 }
 
 /// Where a plane of *flat* meets a curved face of *curved* in the slice `z · p = h`: the line
@@ -873,30 +878,130 @@ fn integrate_until(
     if hi <= lo {
         return ([0.0, 0.0], false);
     }
-    let mut breaks: Vec<f64> = breaks.into_iter().filter(|&x| lo < x && x < hi).collect();
-    breaks.extend([lo, hi]);
-    breaks.sort_by(f64::total_cmp);
-    breaks.dedup_by(|x, y| *x - *y <= 1e-9 * (hi - lo));
+    let breaks = integration_breaks((lo, hi), breaks);
     let mut total = [0.0, 0.0];
     for (at, w) in breaks.windows(2).enumerate() {
-        let part = match rule {
-            Rule::Exact => gauss2(f, w[0], w[1]),
-            Rule::Adaptive(tol) => {
-                let share = tol * (w[1] - w[0]) / (hi - lo);
-                let (coarse, fine) = (gauss2(f, w[0], w[1]), gauss4(f, w[0], w[1]));
-                if (0..2).all(|i| (fine[i] - coarse[i]).abs() <= share) {
-                    fine
-                } else {
-                    adapt(f, w[0], w[1], fine, share, 0)
-                }
-            }
-        };
+        let part = integrate_interval(f, (w[0], w[1]), (lo, hi), rule);
         total = add(total, part);
         if at + 2 < breaks.len() && stop(total) {
             return (total, true);
         }
     }
     (total, false)
+}
+
+fn integration_breaks((lo, hi): (f64, f64), breaks: Vec<f64>) -> Vec<f64> {
+    let mut breaks: Vec<f64> = breaks.into_iter().filter(|&x| lo < x && x < hi).collect();
+    breaks.extend([lo, hi]);
+    breaks.sort_by(f64::total_cmp);
+    breaks.dedup_by(|x, y| *x - *y <= 1e-9 * (hi - lo));
+    breaks
+}
+
+fn integrate_interval(
+    f: &dyn Fn(f64) -> Pair,
+    (a, b): (f64, f64),
+    (lo, hi): (f64, f64),
+    rule: Rule,
+) -> Pair {
+    match rule {
+        Rule::Exact => gauss2(f, a, b),
+        Rule::Adaptive(tol) => {
+            let share = tol * (b - a) / (hi - lo);
+            let (coarse, fine) = (gauss2(f, a, b), gauss4(f, a, b));
+            if (0..2).all(|i| (fine[i] - coarse[i]).abs() <= share) {
+                fine
+            } else {
+                adapt(f, a, b, fine, share, 0)
+            }
+        }
+    }
+}
+
+/// Keep small arrangements and queries already inside a face worker serial.
+fn volume_workers(complexity: usize) -> usize {
+    if crate::timing::in_parallel_worker() {
+        return 1;
+    }
+    #[cfg(test)]
+    if let Some(workers) = tests::VOLUME_WORKERS.get() {
+        return workers;
+    }
+    if complexity < 64 {
+        return 1;
+    }
+    let cap = std::env::var("HAECCEITY_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(8);
+    std::thread::available_parallelism()
+        .map_or(1, |count| count.get())
+        .min(cap)
+        .clamp(1, 8)
+}
+
+/// Each slab keeps its original quadrature and local unanswered-line state.
+/// Only the caller consumes results, in the original order. An unanswered slab
+/// beyond a sufficient prefix is not evidence against that prefix. At most one
+/// bounded batch is outstanding when the caller can stop.
+fn integrate_slabs(
+    slab: &(impl Fn(f64, f64) -> Option<Pair> + Sync),
+    range: (f64, f64),
+    breaks: Vec<f64>,
+    stop: &dyn Fn(Pair) -> bool,
+    workers: usize,
+) -> Option<(Pair, bool)> {
+    if range.1 <= range.0 {
+        return Some(([0.0, 0.0], false));
+    }
+    let breaks = integration_breaks(range, breaks);
+    let count = breaks.len() - 1;
+    let context = crate::timing::parallel_context();
+    let work = |index: usize| {
+        let _timing = crate::timing::face("volume.slab", index, None);
+        slab(breaks[index], breaks[index + 1])
+    };
+    let mut total = [0.0, 0.0];
+    let mut at = 0;
+    while at < count {
+        let end = (at + workers.max(1)).min(count);
+        let values = if end == at + 1 {
+            vec![work(at)]
+        } else {
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = (at + 1..end)
+                    .map(|index| {
+                        std::thread::Builder::new()
+                            .name("quiddity-volume-slab".into())
+                            .spawn_scoped(scope, {
+                                let work = &work;
+                                let context = &context;
+                                move || context.run(|| work(index))
+                            })
+                            .ok()
+                    })
+                    .collect();
+                let mut values = vec![context.run(|| work(at))];
+                for (index, handle) in (at + 1..end).zip(handles) {
+                    values.push(match handle {
+                        Some(handle) => handle
+                            .join()
+                            .unwrap_or_else(|error| std::panic::resume_unwind(error)),
+                        None => context.run(|| work(index)),
+                    });
+                }
+                values
+            })
+        };
+        for value in values {
+            total = add(total, value?);
+            at += 1;
+            if at < count && stop(total) {
+                return Some((total, true));
+            }
+        }
+    }
+    Some((total, false))
 }
 
 /// Material and air, integrated together from the same lines.
@@ -944,6 +1049,109 @@ mod tests {
 
     thread_local! {
         pub(super) static SHARED_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        pub(super) static VOLUME_WORKERS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    }
+
+    #[test]
+    fn parallel_slabs_preserve_ordered_rounding_and_needed_refusals() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let breaks = || (1..8).map(f64::from).collect();
+        let slab = |lo: f64, _: f64| Some([if lo == 0.0 { 1e16 } else { 1.0 }, 1.0]);
+        let serial = integrate_slabs(&slab, (0.0, 8.0), breaks(), &|_| false, 1).unwrap();
+        let parallel = integrate_slabs(&slab, (0.0, 8.0), breaks(), &|_| false, 4).unwrap();
+        assert_eq!(serial, ([1e16, 8.0], false));
+        assert_eq!(
+            parallel, serial,
+            "worker completion must not regroup the sum"
+        );
+
+        let unknown_was_evaluated = AtomicBool::new(false);
+        let unanswered = |lo: f64, _: f64| {
+            if lo == 3.0 {
+                unknown_was_evaluated.store(true, Ordering::Relaxed);
+                None
+            } else {
+                Some([1.0, 0.0])
+            }
+        };
+        assert_eq!(
+            integrate_slabs(&unanswered, (0.0, 8.0), breaks(), &|m| m[0] > 0.0, 4),
+            Some(([1.0, 0.0], true)),
+            "a speculative later refusal must not poison an earlier sufficient prefix"
+        );
+        assert!(unknown_was_evaluated.load(Ordering::Relaxed));
+        for workers in [1, 4] {
+            assert_eq!(
+                integrate_slabs(&unanswered, (0.0, 8.0), breaks(), &|_| false, workers),
+                None,
+                "a required unanswered slab must still refuse the whole volume"
+            );
+        }
+    }
+
+    #[test]
+    fn volume_queries_do_not_start_nested_face_worker_pools() {
+        assert!(!crate::timing::in_parallel_worker());
+        crate::timing::parallel_context().run(|| {
+            assert!(crate::timing::in_parallel_worker());
+            assert_eq!(volume_workers(1_000), 1);
+        });
+        assert!(!crate::timing::in_parallel_worker());
+        assert_eq!(volume_workers(1), 1);
+    }
+
+    #[test]
+    fn parallel_brep_volumes_and_limits_match_serial_queries() {
+        struct ResetWorkers;
+        impl Drop for ResetWorkers {
+            fn drop(&mut self) {
+                VOLUME_WORKERS.set(None);
+            }
+        }
+        let _reset = ResetWorkers;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/rejected_bored_box.step");
+        for unanswered in [false, true] {
+            let mut part = crate::read_step_file(&path).unwrap();
+            if unanswered {
+                let face = RayCaster::for_faces(&part, (0..part.faces.len()).collect())
+                    .hits([20.0, 10.0, 2.5], [-1.0, 0.0, 0.0], 10.0)
+                    .unwrap()[0]
+                    .face;
+                part.faces[face].surface = Surface::Other { kind: "TEST" };
+            }
+            let solid = Classifier::new(&part);
+            let probes = [
+                Bounds {
+                    min: [-16.0, -16.0, 2.0],
+                    max: [16.0, 16.0, 3.0],
+                },
+                Bounds {
+                    min: [-4.0, 3.0, -10.0],
+                    max: [4.0, 4.98, 10.0],
+                },
+                Bounds {
+                    min: [-2.0, -2.0, -10.0],
+                    max: [2.0, 2.0, 10.0],
+                },
+                Bounds {
+                    min: [10.0, 10.0, -5.0],
+                    max: [14.0, 14.0, 5.0],
+                },
+            ];
+            for bounds in probes {
+                let probe = Probe::Box(bounds);
+                let answers = |workers| {
+                    VOLUME_WORKERS.set(Some(workers));
+                    (
+                        common_volume(&solid, &probe).map(f64::to_bits),
+                        [0.0, 1e-9, 0.5, 1.0, f64::NAN]
+                            .map(|limit| fills_at_most(&solid, &probe, limit)),
+                    )
+                };
+                assert_eq!(answers(1), answers(4));
+            }
+        }
     }
 
     #[test]
