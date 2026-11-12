@@ -108,6 +108,7 @@ pub(crate) fn analyse_cylinders(part: &Part) -> Vec<CylinderEvidence> {
             .flat_map(|(s, solid)| solid.faces.iter().map(move |&f| (s, f)))
             .collect()
     };
+    part.prepare_recovered(&faces.iter().map(|&(_, face)| face).collect::<Vec<_>>());
     let mut out = Vec::new();
     for (solid, face) in faces {
         let (frame, radius, u_extent, axial_v, external) = match part.faces[face].surface {

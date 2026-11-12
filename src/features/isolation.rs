@@ -172,6 +172,7 @@ pub(super) fn guarded<T: Default>(
             return T::default();
         }
     }
+    let _timing = crate::kernel::timing::family(family, stage);
     GUARDED.with(|depth| depth.set(depth.get() + 1));
     let scope = Scope;
     // The only persistent mutations in discovery are retryable OnceLocks. Post-passes

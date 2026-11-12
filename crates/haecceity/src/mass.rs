@@ -56,7 +56,7 @@ fn gauss_nodes() -> &'static [(f64, f64)] {
 
 /// ∫ f over the interval running through `cuts` in order, one Gauss panel between each
 /// consecutive pair, for every component of f at once.
-fn integrate<const N: usize>(cuts: &[f64], f: impl Fn(f64) -> [f64; N]) -> [f64; N] {
+fn integrate<const N: usize>(cuts: &[f64], mut f: impl FnMut(f64) -> [f64; N]) -> [f64; N] {
     let mut total = [0.0; N];
     for w in cuts.windows(2) {
         let (half, centre) = (0.5 * (w[1] - w[0]), 0.5 * (w[1] + w[0]));
@@ -68,6 +68,144 @@ fn integrate<const N: usize>(cuts: &[f64], f: impl Fn(f64) -> [f64; N]) -> [f64;
         }
     }
     total
+}
+
+/// Reuse exact integrand samples only while consecutive inner integrals hold the
+/// other parameter fixed. Panel weights and every addition remain in walking order.
+/// The first visit does not allocate a table for a parameter that may never repeat.
+#[derive(Default)]
+struct IntegralSamples<const N: usize> {
+    fixed: Option<u64>,
+    values: std::collections::HashMap<u64, [f64; N]>,
+    prefixes: IntegralPrefixes<N>,
+    #[cfg(test)]
+    counts: [u64; 2],
+}
+
+const MAX_INTEGRAL_SAMPLES: usize = 16_384;
+const MAX_INTEGRAL_PREFIXES: usize = MAX_INTEGRAL_SAMPLES / 16;
+
+/// Resume the exact running sum after an identical prefix of panel endpoints.
+/// No panel sum is regrouped, subtracted or appended to a different accumulator.
+#[derive(Default)]
+struct IntegralPrefixes<const N: usize> {
+    cuts: Vec<u64>,
+    totals: Vec<[f64; N]>,
+    #[cfg(test)]
+    counts: [u64; 2],
+}
+
+impl<const N: usize> IntegralPrefixes<N> {
+    fn clear(&mut self) {
+        self.cuts.clear();
+        self.totals.clear();
+    }
+
+    fn integrate(&mut self, cuts: &[f64], mut f: impl FnMut(f64) -> [f64; N]) -> [f64; N] {
+        let common = self
+            .cuts
+            .iter()
+            .zip(cuts)
+            .take_while(|(a, b)| **a == b.to_bits())
+            .count();
+        let panels = common.saturating_sub(1);
+        self.cuts.truncate(common);
+        self.totals.truncate(panels);
+        let mut total = self.totals.last().copied().unwrap_or([0.0; N]);
+        if common == 0
+            && let Some(&first) = cuts.first().filter(|x| x.is_finite())
+        {
+            self.cuts.push(first.to_bits());
+        }
+        #[cfg(test)]
+        {
+            self.counts[0] += cuts.len().saturating_sub(1) as u64;
+            self.counts[1] += panels as u64;
+        }
+        let mut retain = self.cuts.len() == panels + 1;
+        for (index, w) in cuts.windows(2).enumerate().skip(panels) {
+            let (half, centre) = (0.5 * (w[1] - w[0]), 0.5 * (w[1] + w[0]));
+            for &(x, weight) in gauss_nodes() {
+                let y = f(centre + half * x);
+                for k in 0..N {
+                    total[k] += weight * half * y[k];
+                }
+            }
+            retain &= index < MAX_INTEGRAL_PREFIXES
+                && w[1].is_finite()
+                && total.iter().all(|value| value.is_finite());
+            if retain {
+                self.cuts.push(w[1].to_bits());
+                self.totals.push(total);
+            }
+        }
+        total
+    }
+}
+
+impl<const N: usize> IntegralSamples<N> {
+    fn integrate(&mut self, fixed: f64, cuts: &[f64], f: impl Fn(f64) -> [f64; N]) -> [f64; N] {
+        #[cfg(test)]
+        {
+            self.counts[0] += (cuts.len().saturating_sub(1) * gauss_nodes().len()) as u64;
+        }
+        let fixed = fixed.is_finite().then(|| fixed.to_bits());
+        if fixed.is_none() || self.fixed != fixed {
+            self.fixed = fixed;
+            self.values.clear();
+            self.prefixes.clear();
+            return integrate(cuts, f);
+        }
+        let sample = |x: f64| {
+            if x.is_finite()
+                && let Some(&value) = self.values.get(&x.to_bits())
+            {
+                #[cfg(test)]
+                {
+                    self.counts[1] += 1;
+                }
+                return value;
+            }
+            let value = f(x);
+            if x.is_finite()
+                && value.iter().all(|v| v.is_finite())
+                && self.values.len() < MAX_INTEGRAL_SAMPLES
+            {
+                self.values.insert(x.to_bits(), value);
+            }
+            value
+        };
+        #[cfg(test)]
+        if !PREFIX_REUSE_ENABLED.get() {
+            return integrate(cuts, sample);
+        }
+        self.prefixes.integrate(cuts, sample)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SAMPLE_REUSE_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static SAMPLE_REUSE_COUNTS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    static PREFIX_REUSE_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static PREFIX_REUSE_COUNTS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+#[cfg(test)]
+impl<const N: usize> Drop for IntegralSamples<N> {
+    fn drop(&mut self) {
+        SAMPLE_REUSE_COUNTS.with(|counts| {
+            let old = counts.get();
+            counts.set([old[0] + self.counts[0], old[1] + self.counts[1]]);
+        });
+        PREFIX_REUSE_COUNTS.with(|counts| {
+            let old = counts.get();
+            counts.set([
+                old[0] + self.prefixes.counts[0],
+                old[1] + self.prefixes.counts[1],
+            ]);
+        });
+    }
 }
 
 /// Most panels or periods an integral is cut into. An angular range is a few turns and a conic's
@@ -693,6 +831,11 @@ impl Part {
     }
 
     fn compute_face_mass(&self, face: usize) -> Option<[f64; 5]> {
+        let _timing = crate::timing::face(
+            "mass.face_mass",
+            face,
+            self.face_source(face).map(|s| s.entity),
+        );
         let surface = &self.faces[face].surface;
         // A whole sphere has no boundary to integrate along; its area and flux (3V) are exact,
         // and its area vector vanishes.
@@ -708,8 +851,7 @@ impl Part {
                 0.0,
             ]);
         }
-        self.face_integral(face, |u, v| {
-            let (p, su, sv) = point_and_partials(surface, u, v);
+        self.face_integral(face, |p, su, sv| {
             let n = geom::cross(su, sv);
             [geom::norm(n), geom::dot(p, n), n[0], n[1], n[2]]
         })
@@ -720,7 +862,7 @@ impl Part {
     fn face_integral<const N: usize>(
         &self,
         face: usize,
-        f: impl Fn(f64, f64) -> [f64; N],
+        f: impl Fn(V3, V3, V3) -> [f64; N],
     ) -> Option<[f64; N]> {
         self.integrate_face(
             face,
@@ -740,12 +882,12 @@ impl Part {
         &self,
         face: usize,
         mass: [usize; 5],
-        f: impl Fn(f64, f64) -> [f64; N],
+        f: impl Fn(V3, V3, V3) -> [f64; N],
     ) -> Option<[f64; M]> {
         match self.cache[face].mass.get() {
             Some(None) => None,
-            Some(Some(_)) => self.face_integral(face, |u, v| {
-                let y = f(u, v);
+            Some(Some(_)) => self.face_integral(face, |p, su, sv| {
+                let y = f(p, su, sv);
                 std::array::from_fn(|k| y[k])
             }),
             None => self
@@ -764,7 +906,7 @@ impl Part {
     fn integrate_face<const N: usize>(
         &self,
         face: usize,
-        f: impl Fn(f64, f64) -> [f64; N],
+        f: impl Fn(V3, V3, V3) -> [f64; N],
         rule: IntegralRule,
     ) -> Option<[f64; N]> {
         let fc = &self.faces[face];
@@ -798,9 +940,19 @@ impl Part {
         // seam (a face's own seam need not lie on it), so the integrands read the surface a
         // whole span round.
         let spans = closed_spans(surface);
+        let evaluator = match surface {
+            Surface::Freeform { surface, .. } => Some(std::cell::RefCell::new(
+                crate::nurbs::SurfaceEvaluation::new(surface),
+            )),
+            _ => None,
+        };
         let f = |u: f64, v: f64| {
             let (u, v) = wrap_closed(surface, spans, (u, v));
-            f(u, v)
+            let (p, su, sv) = match &evaluator {
+                Some(evaluator) => evaluator.borrow_mut().value_and_partials(u, v),
+                None => point_and_partials(surface, u, v),
+            };
+            f(p, su, sv)
         };
         let first = (0..fc.loops.len()).find(|&i| fc.loops[i].vertex.is_none())?;
         let start = uv[first].points.first().copied()?;
@@ -822,13 +974,27 @@ impl Part {
         // (The swept area, read only where the loops do not run round u, is measured from the
         // same reference.)
         let u_ref = if along_v { 0.0 } else { reference };
+        let reuse_samples = matches!(surface, Surface::Freeform { .. });
+        #[cfg(test)]
+        let reuse_samples = reuse_samples && SAMPLE_REUSE_ENABLED.get();
+        let samples = reuse_samples.then(|| std::cell::RefCell::new(IntegralSamples::default()));
         let term = |u: f64, v: f64, du: f64, dv: f64| {
             let (weight, y) = if along_v {
                 let cuts = surface_cuts(surface, spans.1, true, reference, v)?;
-                (-du, integrate(&cuts, |s| f(u, s)))
+                let inner = |s| f(u, s);
+                let y = samples.as_ref().map_or_else(
+                    || integrate(&cuts, inner),
+                    |samples| samples.borrow_mut().integrate(u, &cuts, inner),
+                );
+                (-du, y)
             } else {
                 let cuts = surface_cuts(surface, spans.0, false, reference, u)?;
-                (dv, integrate(&cuts, |s| f(s, v)))
+                let inner = |s| f(s, v);
+                let y = samples.as_ref().map_or_else(
+                    || integrate(&cuts, inner),
+                    |samples| samples.borrow_mut().integrate(v, &cuts, inner),
+                );
+                (dv, y)
             };
             Some(y.map(|y| weight * y))
         };
@@ -1429,8 +1595,7 @@ impl Part {
             lp.vertex
                 .or_else(|| lp.edges.first().map(|&(e, _)| self.edges[e].start))
         })?;
-        let [area, x, y, z] = self.moment_integral(face, [4, 5, 6, 7, 8], |u, v| {
-            let (p, su, sv) = point_and_partials(&fc.surface, u, v);
+        let [area, x, y, z] = self.moment_integral(face, [4, 5, 6, 7, 8], |p, su, sv| {
             let n = geom::cross(su, sv);
             let w = geom::dot(n, direction);
             let q = geom::sub(p, origin);
@@ -1466,7 +1631,29 @@ impl Part {
             .get_or_init(|| self.compute_face_moments(face))
     }
 
+    /// Prepare the freeform recovery and moments queried for every face by a full
+    /// fingerprint. Existing immutable caches preserve exact values and refusals.
+    /// Analytic faces stay on the caller's inexpensive ordered path.
+    pub fn prepare_face_measures(&self) {
+        let pending = (0..self.faces.len())
+            .filter(|&face| {
+                matches!(self.faces[face].surface, Surface::Freeform { .. })
+                    && (self.cache[face].recovered.get().is_none()
+                        || self.cache[face].moments.get().is_none())
+            })
+            .collect();
+        self.prepare_face_queries(pending, "geometry.parallel_face_measures", |face| {
+            self.recovered(face);
+            self.face_moments(face);
+        });
+    }
+
     fn compute_face_moments(&self, face: usize) -> Option<FaceMoments> {
+        let _timing = crate::timing::face(
+            "mass.face_moments",
+            face,
+            self.face_source(face).map(|s| s.entity),
+        );
         let fc = &self.faces[face];
         let surface = &fc.surface;
         if let Surface::Sphere { frame, radius } = surface
@@ -1516,8 +1703,7 @@ impl Part {
             return None;
         }
         let [area, mx, my, mz, nx, ny, nz, xx, yy, zz, xy, xz, yz] =
-            self.moment_integral(face, [0, 13, 4, 5, 6], |u, v| {
-                let (p, su, sv) = point_and_partials(surface, u, v);
+            self.moment_integral(face, [0, 13, 4, 5, 6], |p, su, sv| {
                 let n = geom::cross(su, sv);
                 let w = geom::norm(n);
                 let [x, y, z] = geom::scale(geom::sub(p, origin), 1.0 / scale);
@@ -1609,8 +1795,7 @@ impl Part {
                 // amplify projection round-off on tiny faces far from c0: cgb242 face 483
                 // was refused only after translation, although its area was resolved.
                 // Restore physical units after quadrature; the fixed point below uses mm.
-                let f = self.moment_integral::<18, 17>(face, [0, 17, 2, 3, 4], |u, v| {
-                    let (p, su, sv) = point_and_partials(surface, u, v);
+                let f = self.moment_integral::<18, 17>(face, [0, 17, 2, 3, 4], |p, su, sv| {
                     let n = geom::cross(su, sv);
                     let q = geom::scale(geom::sub(p, c0), 1.0 / length);
                     let qn = geom::dot(q, n);
@@ -1658,6 +1843,266 @@ impl Part {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn without_sample_reuse<T>(f: impl FnOnce() -> T) -> T {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                SAMPLE_REUSE_ENABLED.set(self.0);
+            }
+        }
+        let _restore = Restore(SAMPLE_REUSE_ENABLED.replace(false));
+        f()
+    }
+
+    #[test]
+    fn exact_prefixes_resume_the_original_accumulator() {
+        let mut prefixes = IntegralPrefixes::<4>::default();
+        let f = |x: f64| [x.sin(), if x < 0.5 { 1e30 } else { -1e30 }, x * x, -0.0];
+        for endpoints in [
+            vec![0.0, 0.125, 0.25, 0.5, 0.75, 1.0],
+            vec![0.0, 0.125, 0.25, 0.5, 0.625],
+            vec![0.0, 0.125, 0.25, 0.5, 0.75, 1.125],
+            vec![0.0, 0.125],
+            vec![0.0, 0.125, 0.25, 0.5, 0.75, 1.0],
+            vec![0.0, 0.125, f64::from_bits(0.25f64.to_bits() + 1), 0.5, 1.0],
+            vec![1.0, 0.75, 0.5, 0.25, 0.125, 0.0],
+            vec![1.0, 0.75, 0.5, 0.25, 0.125, -0.5],
+            vec![1.0],
+            vec![],
+        ] {
+            for _ in 0..3 {
+                assert_eq!(
+                    prefixes.integrate(&endpoints, f).map(f64::to_bits),
+                    integrate(&endpoints, f).map(f64::to_bits),
+                    "{endpoints:?}"
+                );
+            }
+        }
+        assert!(prefixes.counts[1] > 0);
+    }
+
+    #[test]
+    fn exact_prefix_storage_is_bounded_and_start_bits_are_required() {
+        let mut prefixes = IntegralPrefixes::<2>::default();
+        let mut endpoints = cuts(0.0, 1.0, MAX_INTEGRAL_PREFIXES * 2, &[]).unwrap();
+        let f = |x: f64| [x.cos(), x];
+        prefixes.integrate(&endpoints, f);
+        let mut calls = 0;
+        let actual = prefixes.integrate(&endpoints, |x| {
+            calls += 1;
+            f(x)
+        });
+        assert_eq!(
+            actual.map(f64::to_bits),
+            integrate(&endpoints, f).map(f64::to_bits)
+        );
+        assert_eq!(calls, MAX_INTEGRAL_PREFIXES * gauss_nodes().len());
+        assert_eq!(prefixes.totals.len(), MAX_INTEGRAL_PREFIXES);
+        assert_eq!(prefixes.cuts.len(), MAX_INTEGRAL_PREFIXES + 1);
+        endpoints[0] = -0.0;
+        calls = 0;
+        let actual = prefixes.integrate(&endpoints, |x| {
+            calls += 1;
+            f(x)
+        });
+        assert_eq!(
+            actual.map(f64::to_bits),
+            integrate(&endpoints, f).map(f64::to_bits)
+        );
+        assert_eq!(calls, MAX_INTEGRAL_PREFIXES * 2 * gauss_nodes().len());
+    }
+
+    #[test]
+    fn exact_prefixes_do_not_reuse_nonfinite_accumulators() {
+        let endpoints = [0.0, 0.25, 0.5, 0.75, 1.0];
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut prefixes = IntegralPrefixes::<2>::default();
+            for _ in 0..3 {
+                let f = |x: f64| [bad, x];
+                assert_eq!(
+                    prefixes.integrate(&endpoints, f).map(f64::to_bits),
+                    integrate(&endpoints, f).map(f64::to_bits)
+                );
+                assert!(prefixes.totals.is_empty());
+                assert_eq!(prefixes.counts[1], 0);
+            }
+        }
+    }
+
+    #[test]
+    fn exact_prefixes_are_invalidated_when_the_fixed_parameter_changes() {
+        let mut samples = IntegralSamples::<2>::default();
+        let endpoints = cuts(0.0, 1.0, 8, &[]).unwrap();
+        for fixed in [0.0, -0.0, 0.25, f64::from_bits(0.25f64.to_bits() + 1)] {
+            let hits = samples.prefixes.counts[1];
+            for repeat in 0..3 {
+                let f = |x: f64| [fixed.signum() * x, fixed * x.sin()];
+                assert_eq!(
+                    samples.integrate(fixed, &endpoints, f).map(f64::to_bits),
+                    integrate(&endpoints, f).map(f64::to_bits)
+                );
+                if repeat < 2 {
+                    assert_eq!(samples.prefixes.counts[1], hits);
+                }
+            }
+            assert!(samples.prefixes.counts[1] > hits);
+        }
+        samples.integrate(f64::NAN, &endpoints, |x| [x, x]);
+        assert!(samples.prefixes.totals.is_empty());
+        assert!(samples.prefixes.cuts.is_empty());
+    }
+
+    #[test]
+    fn exact_samples_preserve_node_weights_and_addition_order() {
+        let mut samples = IntegralSamples::<5>::default();
+        let mut hits = 0;
+        for fixed in [0.0, 0.0, -0.0, 0.25, f64::from_bits(0.25f64.to_bits() + 1)] {
+            let f = |x: f64| [x.sin(), fixed * x, 1e20 * x, x.cos(), fixed.signum()];
+            for endpoint in [1.0, 1.0, 0.625, 1.125, 0.875] {
+                for direction in [1.0, -1.0] {
+                    let cuts =
+                        cuts(0.0, direction * endpoint, 1, &[0.125, 0.25, 0.5, 0.75]).unwrap();
+                    assert_eq!(
+                        samples.integrate(fixed, &cuts, f).map(f64::to_bits),
+                        integrate(&cuts, f).map(f64::to_bits)
+                    );
+                }
+            }
+            hits += samples.counts[1];
+        }
+        assert!(hits > 0, "the equality check must exercise actual reuse");
+    }
+
+    #[test]
+    fn exact_sample_storage_is_bounded_and_nonfinite_values_are_not_reused() {
+        let mut samples = IntegralSamples::<2>::default();
+        let panels = cuts(0.0, 1.0, MAX_INTEGRAL_SAMPLES / 8, &[]).unwrap();
+        for _ in 0..3 {
+            // Exercise the sample table independently of whole-prefix skipping.
+            samples.prefixes.clear();
+            let f = |x: f64| [x.sin(), x * x];
+            assert_eq!(
+                samples.integrate(0.0, &panels, f).map(f64::to_bits),
+                integrate(&panels, f).map(f64::to_bits)
+            );
+        }
+        assert_eq!(samples.values.len(), MAX_INTEGRAL_SAMPLES);
+        assert!(samples.counts[1] > 0);
+        for fixed in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let f = |x: f64| [fixed, x];
+            assert_eq!(
+                samples.integrate(fixed, &[0.0, 1.0], f).map(f64::to_bits),
+                integrate(&[0.0, 1.0], f).map(f64::to_bits)
+            );
+            assert!(samples.values.is_empty());
+        }
+        for _ in 0..3 {
+            let f = |x: f64| [f64::INFINITY, x];
+            assert_eq!(
+                samples.integrate(1.0, &[0.0, 1.0], f).map(f64::to_bits),
+                integrate(&[0.0, 1.0], f).map(f64::to_bits)
+            );
+            assert!(samples.values.is_empty());
+        }
+    }
+
+    #[test]
+    fn exact_samples_preserve_trimmed_freeform_mass_and_moments() {
+        for name in [
+            "held_side_knot.step",
+            "late_turn.step",
+            "rotated_seam_band.step",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures")
+                .join(name);
+            let part = crate::step::read_step_file(&path).unwrap();
+            SAMPLE_REUSE_COUNTS.set([0; 2]);
+            for face in 0..part.faces.len() {
+                let original = without_sample_reuse(|| {
+                    (
+                        part.compute_face_mass(face).map(|v| v.map(f64::to_bits)),
+                        part.compute_face_moments(face).map(moment_bits),
+                    )
+                });
+                assert_eq!(
+                    original,
+                    (
+                        part.compute_face_mass(face).map(|v| v.map(f64::to_bits)),
+                        part.compute_face_moments(face).map(moment_bits),
+                    ),
+                    "{name}, face {face}"
+                );
+            }
+            assert!(SAMPLE_REUSE_COUNTS.get()[0] > 0, "{name}");
+        }
+    }
+
+    /// Read a complete caller-provided STEP but measure only explicitly selected faces.
+    /// Keep private inputs and diagnostics outside the source checkout.
+    #[test]
+    #[ignore = "manual bounded exact-sample probe on selected real faces"]
+    fn selected_exact_sample_probe() {
+        selected_sample_probe(false);
+    }
+
+    #[test]
+    #[ignore = "manual bounded exact-prefix probe on selected real faces"]
+    fn selected_exact_prefix_probe() {
+        selected_sample_probe(true);
+    }
+
+    fn selected_sample_probe(prefix_only: bool) {
+        let input = std::env::var_os("QUIDDITY_SAMPLE_PROBE_INPUT").expect("input path");
+        let output = std::env::var_os("QUIDDITY_SAMPLE_PROBE_OUTPUT").expect("output path");
+        let faces: Vec<usize> = std::env::var("QUIDDITY_SAMPLE_PROBE_FACES")
+            .expect("face indices")
+            .split(',')
+            .map(|v| v.parse().expect("face index"))
+            .collect();
+        assert!(!faces.is_empty() && faces.len() <= 8);
+        let part = crate::step::read_step_file(std::path::Path::new(&input)).unwrap();
+        let output = std::path::Path::new(&output);
+        std::fs::create_dir_all(output).unwrap();
+        let mut rows = Vec::new();
+        for face in faces {
+            let mut expected = None;
+            for (round, enabled) in [false, true, true, false].into_iter().enumerate() {
+                SAMPLE_REUSE_ENABLED.set(prefix_only || enabled);
+                PREFIX_REUSE_ENABLED.set(!prefix_only || enabled);
+                SAMPLE_REUSE_COUNTS.set([0; 2]);
+                PREFIX_REUSE_COUNTS.set([0; 2]);
+                let started = std::time::Instant::now();
+                let value = part.compute_face_mass(face).map(|v| v.map(f64::to_bits));
+                let seconds = started.elapsed().as_secs_f64();
+                if let Some(expected) = expected {
+                    assert_eq!(value, expected, "face {face}, round {round}");
+                } else {
+                    expected = Some(value);
+                }
+                let row = serde_json::json!({
+                    "face": face,
+                    "round": round,
+                    "enabled": enabled,
+                    "seconds": seconds,
+                    "bits": value,
+                    "node_requests_and_hits": SAMPLE_REUSE_COUNTS.get(),
+                    "prefix_panels_and_hits": PREFIX_REUSE_COUNTS.get(),
+                    "prefix_only": prefix_only,
+                });
+                println!("{row}");
+                rows.push(row);
+                std::fs::write(
+                    output.join("samples.json"),
+                    serde_json::to_vec_pretty(&rows).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        SAMPLE_REUSE_ENABLED.set(true);
+        PREFIX_REUSE_ENABLED.set(true);
+    }
 
     #[test]
     fn mass_convergence_is_independent_of_moment_density() {

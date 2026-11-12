@@ -28,7 +28,7 @@ use super::cylindrical_passages::{CylindricalPassageProof, cylindrical_passage_p
 use super::cylindrical_pockets::{CylindricalPocketProof, cylindrical_pocket_proofs};
 use super::cylindrical_seats::{CylindricalSeatProof, cylindrical_seat_proofs};
 use super::effective_surfaces::EffectiveFaces;
-use super::entry_treatments::material_fraction;
+use super::entry_treatments::{material_at_most, material_fraction};
 use super::evidence::common_valid_solid;
 use super::graph::{face_vertices, is_planar, normal, shared_occurrences, span};
 use super::passages::{PassageFrame, PassageSectionVertex};
@@ -48,6 +48,7 @@ use super::sections::{
 };
 use super::support_patches::covered_patch;
 use crate::kernel::brep::{Arc, Edge, Face, Loop, Part};
+use crate::kernel::classify::State;
 use crate::kernel::geom::{Curve, Frame, Surface, V3};
 use crate::kernel::py;
 use crate::kernel::sampling::{edge_interval, sample_edge};
@@ -523,12 +524,27 @@ fn obround_prism(
 /// The share of *probe* *owner*'s material fills; an unbuilt or unanswered probe proves
 /// nothing.
 fn fraction(ctx: &Context<'_>, owner: usize, probe: Option<Part>) -> Option<f64> {
-    material_fraction(ctx, owner, &probe?)
+    let _timing = crate::kernel::timing::operation("section_recess.material_fraction");
+    let value = material_fraction(ctx, owner, &probe?);
+    #[cfg(test)]
+    if std::env::var_os("QUIDDITY_FLOOR_PROBE_OUTPUT").is_some() {
+        println!("probe_fraction={value:?}");
+    }
+    value
+}
+
+/// The existing empty-material predicate, with its original refusal semantics:
+/// an unanswered volume cannot accept a floor. The kernel may stop a rejected
+/// probe once its measured material already exceeds the unchanged threshold.
+fn probe_is_empty(ctx: &Context<'_>, owner: usize, probe: Option<Part>) -> Option<bool> {
+    let _timing = crate::kernel::timing::operation("section_recess.material_at_most");
+    Some(material_at_most(ctx, owner, &probe?, EMPTY))
 }
 
 /// An intact native obround pocket on *floor*: two semicircular caps and two flats, all
 /// concave to it, one mouth plane, proved by probes (`_one_obround_candidate`).
 fn one_obround_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
+    let _timing = crate::kernel::timing::operation("section_recess.obround");
     let part = ctx.part;
     let depth = canonical(normal(part, floor)?)?;
     let concave: Vec<usize> = part
@@ -660,15 +676,18 @@ fn one_obround_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
         };
         obround_prism(depth, first.2, second.2, radius, lo, hi)
     };
-    if fraction(ctx, owner, probe(low + INSET, high - INSET))? > EMPTY
-        || fraction(
+    // Reject material in the cavity or mouth before measuring floor support.
+    // The existing empty predicates can stop at a proved excess of material;
+    // all three original conditions are still required for an accepted floor.
+    if !probe_is_empty(ctx, owner, probe(low + INSET, high - INSET))?
+        || !probe_is_empty(
             ctx,
             owner,
             probe(
                 mouth_at - floor_sign * INSET,
                 mouth_at - floor_sign * thickness,
             ),
-        )? > EMPTY
+        )?
         || fraction(
             ctx,
             owner,
@@ -732,16 +751,41 @@ fn probes_prove(
     mouth: Option<Part>,
     under: Option<Part>,
 ) -> Option<bool> {
-    Some(
-        fraction(ctx, owner, void)? <= EMPTY
-            && fraction(ctx, owner, mouth)? <= EMPTY
-            && fraction(ctx, owner, under)? >= 1.0 - EMPTY,
-    )
+    // A point chooses only the order of the original volume predicates. It is
+    // never evidence for an empty cavity or a supported floor: every accepting
+    // path still proves all three volumes, including their refusal semantics.
+    let cavity_first = {
+        let _timing = crate::kernel::timing::operation("section_recess.probe_order_hint");
+        void.as_ref().is_some_and(|probe| {
+            let state = ctx
+                .solid_classifier(owner)
+                .classify(probe.bounds().centre());
+            #[cfg(test)]
+            if std::env::var_os("QUIDDITY_FLOOR_PROBE_OUTPUT").is_some() {
+                println!("probe_order_cavity_centre={state:?}");
+            }
+            state == State::In
+        })
+    };
+    if cavity_first {
+        Some(
+            probe_is_empty(ctx, owner, void)?
+                && probe_is_empty(ctx, owner, mouth)?
+                && fraction(ctx, owner, under)? >= 1.0 - EMPTY,
+        )
+    } else {
+        Some(
+            fraction(ctx, owner, under)? >= 1.0 - EMPTY
+                && probe_is_empty(ctx, owner, void)?
+                && probe_is_empty(ctx, owner, mouth)?,
+        )
+    }
 }
 
 /// An intact native straight-edged pocket on *floor*: planar walls concave to it along its
 /// normal, mouth planes every wall meets, proved by probes (`_one_polygonal_candidate`).
 fn one_polygonal_candidate(ctx: &Context<'_>, floor: usize) -> Checked<Option<Candidate>> {
+    let _timing = crate::kernel::timing::operation("section_recess.polygonal");
     let part = ctx.part;
     let Some(depth) = normal(part, floor).and_then(canonical) else {
         return Ok(None);
@@ -891,6 +935,7 @@ fn mixed_floor_section(
     floor: usize,
     depth: V3,
 ) -> Option<(LocalFrame, PlanarSection)> {
+    let _timing = crate::kernel::timing::operation("section_recess.mixed_section");
     let loops = &part.faces[floor].loops;
     if loops.len() != 1 {
         return None;
@@ -948,6 +993,7 @@ fn mixed_floor_section(
 /// (`_one_mixed_candidate`): the swept floor's every face covered by the walls, the floor and
 /// its copy at the mouth, and the probes.
 fn one_mixed_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
+    let _timing = crate::kernel::timing::operation("section_recess.mixed");
     let part = ctx.part;
     let depth = canonical(normal(part, floor)?)?;
     let (frame, section) = mixed_floor_section(part, floor, depth)?;
@@ -1006,17 +1052,25 @@ fn one_mixed_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
     members.extend(&walls);
     members.extend(&mouths);
     let owner = common_valid_solid(part, &members)?;
-    let swept = extrude_face(part, floor, [0.0; 3], scale(depth, mouth_at - floor_at))?;
+    let swept = {
+        let _timing = crate::kernel::timing::operation("section_recess.extrude_floor");
+        extrude_face(part, floor, [0.0; 3], scale(depth, mouth_at - floor_at))?
+    };
     // The swept floor's caps are the source floor and its copy at the mouth; the mouth cap is
     // face 1 because haecceity's `extrude_face` pushes the far cap there.
     let mut supports: Vec<(&Part, usize)> = walls.iter().map(|&w| (part, w)).collect();
     supports.push((part, floor));
     supports.push((&swept, 1));
-    if (0..swept.faces.len()).any(|patch| !covered_patch((&swept, patch), &supports)) {
+    let uncovered = {
+        let _timing = crate::kernel::timing::operation("section_recess.covered_patches");
+        (0..swept.faces.len()).any(|patch| !covered_patch((&swept, patch), &supports))
+    };
+    if uncovered {
         return None;
     }
     let thickness = 2e-5f64.max(1.0f64.max(high - low).max(moments.area.sqrt()) * 1e-4);
     let probe = |start: f64, end: f64| {
+        let _timing = crate::kernel::timing::operation("section_recess.swept_fraction");
         ctx.swept_face_fraction(
             owner,
             floor,
@@ -1681,12 +1735,38 @@ internal_entry! {
 /// cylindrical pockets and passages and plane-envelope passages. A proof whose projection
 /// refuses is dropped; a refusal outside the projections refuses the whole discovery.
 pub fn candidates(ctx: &Context<'_>, surfaces: &EffectiveFaces<'_, '_>) -> Checked<Vec<Candidate>> {
-    candidates_reading(ctx, surfaces, |floor| {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let read = super::evidence::bind_current_run_mode(|floor| {
         preferred(
             one_obround_candidate(ctx, floor),
             || one_polygonal_candidate(ctx, floor),
             || one_mixed_candidate(ctx, floor),
         )
+    });
+    let part = ctx.part;
+    let pending = (0..part.faces.len()).filter(|&i| is_planar(part, i)).collect();
+    let mut readings: Vec<OnceLock<FloorReading>> =
+        (0..part.faces.len()).map(|_| OnceLock::new()).collect();
+    let first_refusal = AtomicUsize::new(usize::MAX);
+    part.prepare_face_queries(pending, "section_recess.parallel_floors", |floor| {
+        if floor > first_refusal.load(Ordering::Relaxed) {
+            return;
+        }
+        let _timing = crate::kernel::timing::face(
+            "section_recess.floor", floor, part.face_source(floor).map(|s| s.entity),
+        );
+        let result = read(floor);
+        if result.is_err() {
+            first_refusal.fetch_min(floor, Ordering::Relaxed);
+        }
+        readings[floor].set(result).expect("one reading per floor");
+    });
+    // Replay the original face order, including its first refusal and duplicate
+    // handling. Small inputs and a single-worker cap use the original lazy path.
+    candidates_reading(ctx, surfaces, |floor| {
+        readings[floor].take().unwrap_or_else(|| read(floor))
     })
 }
 }
@@ -1750,6 +1830,11 @@ fn candidates_reading(
         if !is_planar(part, node) {
             continue;
         }
+        let _timing = crate::kernel::timing::face(
+            "section_recess.floor",
+            node,
+            part.face_source(node).map(|source| source.entity),
+        );
         if let Some(c) = floor(node)? {
             add(c);
         }
@@ -1802,6 +1887,125 @@ fn candidates_reading(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn box_probe(min: V3, max: V3) -> Part {
+        let low = [
+            min,
+            [max[0], min[1], min[2]],
+            [max[0], max[1], min[2]],
+            [min[0], max[1], min[2]],
+        ];
+        let high = low.map(|p| [p[0], p[1], max[2]]);
+        super::super::support_patches::ruled_prism(&low, &high).unwrap()
+    }
+
+    #[test]
+    fn a_probe_order_hint_does_not_replace_any_volume_evidence() {
+        let part = box_probe([0.0; 3], [10.0; 3]);
+        let ctx = Context::new(&part);
+        let empty = ([12.0, 2.0, 2.0], [13.0, 3.0, 3.0]);
+        let full = ([2.0; 3], [3.0; 3]);
+        // Its centre is outside, but a third of its volume is material. The
+        // longest dimension stays inside the owner, and rays span the crossing.
+        let crossing = ([9.0, 2.0, 2.0], [12.0, 8.0, 3.0]);
+        assert_eq!(
+            ctx.solid_classifier(0)
+                .classify(box_probe(crossing.0, crossing.1).bounds().centre()),
+            State::Out
+        );
+        for (void, mouth, under, want) in [
+            (empty, empty, full, true),
+            (crossing, empty, full, false),
+            (full, empty, full, false),
+            (empty, full, full, false),
+            (empty, empty, crossing, false),
+            (empty, empty, empty, false),
+        ] {
+            assert_eq!(
+                probes_prove(
+                    &ctx,
+                    0,
+                    Some(box_probe(void.0, void.1)),
+                    Some(box_probe(mouth.0, mouth.1)),
+                    Some(box_probe(under.0, under.1)),
+                ),
+                Some(want)
+            );
+        }
+        for missing in 0..3 {
+            let mut probes = [empty, empty, full].map(|(min, max)| Some(box_probe(min, max)));
+            probes[missing] = None;
+            let [void, mouth, under] = probes;
+            assert_ne!(probes_prove(&ctx, 0, void, mouth, under), Some(true));
+        }
+    }
+
+    #[test]
+    fn an_unknown_order_hint_cannot_accept_an_unanswered_support() {
+        let mut part = box_probe([0.0; 3], [10.0; 3]);
+        for face in &mut part.faces {
+            face.surface = Surface::Other { kind: "TEST" };
+        }
+        let ctx = Context::new(&part);
+        assert_eq!(ctx.solid_classifier(0).classify([2.5; 3]), State::Unknown);
+        assert_ne!(
+            probes_prove(
+                &ctx,
+                0,
+                Some(box_probe([2.0; 3], [3.0; 3])),
+                Some(box_probe([12.0; 3], [13.0; 3])),
+                Some(box_probe([2.0; 3], [3.0; 3])),
+            ),
+            Some(true)
+        );
+    }
+
+    /// Read the original complete input, but inspect only explicitly selected floors.
+    #[test]
+    #[ignore = "manual bounded floor-reader diagnosis"]
+    fn selected_floor_probe() {
+        let input = std::env::var_os("QUIDDITY_FLOOR_PROBE_INPUT").expect("input path");
+        let output = std::env::var_os("QUIDDITY_FLOOR_PROBE_OUTPUT").expect("output path");
+        let floors: Vec<usize> = std::env::var("QUIDDITY_FLOOR_PROBE_FACES")
+            .expect("selected floor indices")
+            .split(',')
+            .map(|v| v.parse().unwrap())
+            .collect();
+        assert!(!floors.is_empty() && floors.len() <= 4);
+        let output = std::path::PathBuf::from(output);
+        let _session = crate::kernel::timing::Session::start(move |event| {
+            use std::io::Write;
+            let row = serde_json::json!({
+                "event": event.event,
+                "seconds": event.elapsed_seconds,
+                "stack": event.stack.iter().map(|s| serde_json::json!({
+                    "name": s.name, "face": s.index, "seconds": s.elapsed_seconds
+                })).collect::<Vec<_>>(),
+                "totals": event.totals.iter().map(|t| serde_json::json!({
+                    "name": t.name, "calls": t.calls, "seconds": t.elapsed_seconds
+                })).collect::<Vec<_>>()
+            });
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(output.join("events.jsonl"))
+                .unwrap();
+            writeln!(file, "{row}").unwrap();
+        })
+        .unwrap();
+        let part = crate::kernel::step::read_step_file(std::path::Path::new(&input)).unwrap();
+        let ctx = Context::new(&part);
+        for floor in floors {
+            assert!(floor < part.faces.len() && is_planar(&part, floor));
+            let _span = crate::kernel::timing::face("section_recess.floor", floor, None);
+            let started = std::time::Instant::now();
+            let result = floor_readings(&ctx, floor);
+            println!(
+                "floor={floor} seconds={} result={result:?}",
+                started.elapsed().as_secs_f64()
+            );
+        }
+    }
 
     #[test]
     fn shapes_are_named_by_their_corners() {

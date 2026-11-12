@@ -4,6 +4,39 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### Added
+
+- Optional native stage and face timing for project diagnostics. Timing observes existing
+  work without changing geometry, tolerances, output documents or refusal decisions.
+  Python entry points retain the stable release's panic-to-exception handling.
+- A project document-only recognition entry returns the same complete recognition
+  document without correspondence measurements. The full and shared-analysis APIs
+  remain available.
+
+### Fixed
+
+- Parallel floor readers retain the caller's strict or locally degraded ownership
+  mode on every worker, restoring previous thread state after each query.
+
+### Changed
+
+- Port project computation reuse to the 0.5.0 mass-validity and publication paths,
+  preserving the release's independent mass checks, schemas and refusal criteria.
+- Independent freeform recovery starts larger control-net walks earlier, while
+  preserving the caller's result order, exact calculations and cached refusals.
+- Surface quadrature resumes an identical finite panel prefix from its original
+  running sum, avoiding repeated weighted additions without regrouping arithmetic.
+- Evidence documents serialize the physical inventory once and clone each record's
+  unchanged JSON value, instead of serializing every family for each record.
+- Ray casters for different solids share immutable whole-part face boxes, edge
+  boxes and polyline-run bounds. Custom face bounds and each caster's membership,
+  hierarchy and tolerances remain separate; geometry queries are unchanged.
+- Reconciliation and publication reuse native section-recess discovery within the
+  same context and ownership mode. Inventory projection, ordering and refusals are
+  still evaluated for each caller's current inventory.
+
 ## 0.5.0 (2026-11-12)
 
 Upgrading from 0.4.9:

@@ -1196,8 +1196,54 @@ pub(crate) fn published_fingerprint_in(
     features: &crate::published_records::PublishedFeatures,
     ctx: &crate::features::Context<'_>,
 ) -> Fingerprints {
+    let _timing = crate::kernel::timing::stage("recognition.fingerprints");
     let (source, motion) = features.measurement_source();
     published_fingerprint_impl(ctx, part, features, source, Some(motion))
+}
+
+/// Defining faces alone, without constructing geometric correspondence fingerprints.
+pub(crate) fn published_record_faces(
+    features: &crate::published_records::PublishedFeatures,
+) -> BTreeMap<String, Vec<usize>> {
+    let working = features.working();
+    let json = records_json(working);
+    let mut out = BTreeMap::new();
+    for (key, records) in json.as_object().expect("an object") {
+        let Some(records) = records.as_array() else {
+            continue;
+        };
+        for (n, record) in records.iter().enumerate() {
+            let own = record_faces(&json, working, key, n, record);
+            out.insert(features.published_id(key, n), own);
+        }
+    }
+    out
+}
+
+fn record_faces(
+    json: &Value,
+    features: &Features,
+    key: &str,
+    n: usize,
+    record: &Value,
+) -> Vec<usize> {
+    let table =
+        family(key).unwrap_or_else(|| panic!("family {key} has no fingerprint table (FAMILIES)"));
+    let mut own = match (features.defining.get(key), table.members) {
+        (Some(defining), _) => defining.get(n).cloned().unwrap_or_else(|| {
+            panic!(
+                "family {key} has a record at {n} but defining faces for {}",
+                defining.len()
+            )
+        }),
+        (None, Some(members)) => derived_faces(json, features, key, members, record),
+        (None, None) => {
+            panic!("family {key} has no defining faces in Features::defining and is not derived")
+        }
+    };
+    own.sort_unstable();
+    own.dedup();
+    own
 }
 
 fn published_fingerprint_impl(
@@ -1262,6 +1308,7 @@ fn fingerprint_with_axes(
     motion: Option<&crate::framed_records::Rigid>,
     axis: impl Fn(&str, &str, &Value) -> Option<V3>,
 ) -> Fingerprints {
+    part.prepare_face_measures();
     let faces: Vec<FaceFingerprint> = (0..part.faces.len())
         .map(|i| {
             // Axial cone-strip projection already integrated these same surface moments.
@@ -1292,19 +1339,7 @@ fn fingerprint_with_axes(
         let table = family(key)
             .unwrap_or_else(|| panic!("family {key} has no fingerprint table (FAMILIES)"));
         for (n, record) in records.iter().enumerate() {
-            let faces_of = match (features.defining.get(key.as_str()), table.members) {
-                (Some(defining), _) => defining.get(n).cloned().unwrap_or_else(|| {
-                    panic!(
-                        "family {key} has {} records but defining faces for {}",
-                        records.len(),
-                        defining.len()
-                    )
-                }),
-                (None, Some(members)) => derived_faces(&json, features, key, members, record),
-                (None, None) => panic!(
-                    "family {key} has no defining faces in Features::defining and is not derived"
-                ),
-            };
+            let faces_of = record_faces(&json, features, key, n, record);
             let mut fp = feature(&faces, format!("{key}/{n}"), table, record, faces_of, &axis);
             if !fp.faces.is_empty() && (key == "bosses" || key == "plates") {
                 fp.neighbourhood = supporting_neighbourhood(&faces, &fp.faces, ctx);

@@ -62,39 +62,108 @@ pub struct Recognition {
 /// If frame inference is refused, records are caller-space and `frame` carries the reason.
 /// This performs no STEP reads and preserves face and edge indices.
 pub fn recognise(part: &Part) -> Recognition {
+    with_fingerprints(recognise_with(part, fingerprint::published_fingerprint_in))
+}
+
+/// Shared recognition state before an optional correspondence product is built.
+struct Recognised<T> {
+    features: PublishedFeatures,
+    extra: T,
+    frame: RecordFrame,
+    input_repairs: Vec<String>,
+    body_evidence: BTreeMap<usize, crate::recognition::BodyReason>,
+}
+
+fn with_fingerprints(result: Recognised<Fingerprints>) -> Recognition {
+    Recognition {
+        features: result.features,
+        fingerprints: result.extra,
+        frame: result.frame,
+        source_sha256: None,
+        input_repairs: result.input_repairs,
+        body_evidence: result.body_evidence,
+    }
+}
+
+/// The complete recognition document without revision-correspondence measurements.
+/// Its defining faces use the same extraction as the full fingerprint API.
+pub(crate) fn recognise_document(part: &Part) -> crate::recognition::RecognitionDocument {
+    let result = recognise_with(part, |_, features, _| {
+        fingerprint::published_record_faces(features)
+    });
+    let _timing = crate::kernel::timing::stage("recognition.document");
+    crate::recognition::document_with_faces(
+        &result.features,
+        &result.extra,
+        &result.frame,
+        None,
+        &result.input_repairs,
+        &result.body_evidence,
+        part.faces.len(),
+    )
+}
+
+fn recognise_with<T>(
+    part: &Part,
+    finish: impl Fn(&Part, &PublishedFeatures, &features::Context<'_>) -> T,
+) -> Recognised<T> {
+    let _timing = crate::kernel::timing::stage("recognition.correspondence");
     let frame = match frames::infer_part_frame(part) {
         Ok(frame) => frame,
         Err(reason) => {
             return features::recognise_with(part, |ctx, features| {
-                publish(part, ctx, features, RecordFrame::Refused { reason })
+                publish_with(part, ctx, features, RecordFrame::Refused { reason }, finish)
             });
         }
     };
-    recognise_in_frame(part, frame)
+    recognise_in_frame_with(part, frame, finish)
 }
 
+#[cfg(test)]
 fn recognise_in_frame(part: &Part, frame: PartFrame) -> Recognition {
+    with_fingerprints(recognise_in_frame_with(
+        part,
+        frame,
+        fingerprint::published_fingerprint_in,
+    ))
+}
+
+fn recognise_in_frame_with<T>(
+    part: &Part,
+    frame: PartFrame,
+    finish: impl Fn(&Part, &PublishedFeatures, &features::Context<'_>) -> T,
+) -> Recognised<T> {
+    let _timing = crate::kernel::timing::stage("recognition.normalized");
     let working = match part.transformed(&frame.normalisation()) {
         Ok(working) => working,
         Err(_) => {
             // A failed normalisation must never silently publish caller-space features.
-            return normalisation_refused(part);
+            return normalisation_refused_with(part, finish);
         }
     };
     features::recognise_with(&working, |ctx, features| {
-        publish(part, ctx, features, RecordFrame::Inferred(frame))
+        publish_with(part, ctx, features, RecordFrame::Inferred(frame), finish)
     })
 }
 
 fn normalisation_refused(part: &Part) -> Recognition {
-    let features = Features::default();
-    Recognition {
-        fingerprints: fingerprint(part, &features),
-        features: features.into(),
+    with_fingerprints(normalisation_refused_with(
+        part,
+        fingerprint::published_fingerprint_in,
+    ))
+}
+
+fn normalisation_refused_with<T>(
+    part: &Part,
+    finish: impl Fn(&Part, &PublishedFeatures, &features::Context<'_>) -> T,
+) -> Recognised<T> {
+    let features = Features::default().into();
+    Recognised {
+        extra: finish(part, &features, &features::Context::new(part)),
+        features,
         frame: RecordFrame::Refused {
             reason: frames::FrameRefusal::NonrigidFrame,
         },
-        source_sha256: None,
         input_repairs: part.input_repairs().to_vec(),
         body_evidence: BTreeMap::new(),
     }
@@ -106,6 +175,22 @@ fn publish(
     features: Features,
     frame: RecordFrame,
 ) -> Recognition {
+    with_fingerprints(publish_with(
+        part,
+        ctx,
+        features,
+        frame,
+        fingerprint::published_fingerprint_in,
+    ))
+}
+
+fn publish_with<T>(
+    part: &Part,
+    ctx: &features::Context<'_>,
+    features: Features,
+    frame: RecordFrame,
+    finish: impl Fn(&Part, &PublishedFeatures, &features::Context<'_>) -> T,
+) -> Recognised<T> {
     if let RecordFrame::Inferred(inferred) = &frame {
         let working = ctx.part;
         let body_evidence = crate::body::evidence(working, &features);
@@ -115,27 +200,23 @@ fn publish(
             motion,
         } = framed_records::to_file(features, inferred, working);
         let _ = motion;
-        // Fingerprints read the published values as found in the frame, carried through the exact
-        // motion, so they stay intrinsic to the part: publishing on the file's grid would make a
-        // derived size (hi − lo) depend on where the part is placed, and a near-aligned frame's
-        // publication in the file's axes (#70) would change its axes by the round-off it drops.
-        let fingerprints = fingerprint::published_fingerprint_in(part, &fingerprinted, ctx);
-        Recognition {
+        // Fingerprints retain the framed published values and exact motion. The document-only
+        // caller extracts the same defining faces without computing correspondence measures.
+        let extra = finish(part, &fingerprinted, ctx);
+        Recognised {
             features,
-            fingerprints,
+            extra,
             frame,
-            source_sha256: None,
             input_repairs: part.input_repairs().to_vec(),
             body_evidence,
         }
     } else {
         let features: PublishedFeatures = features.into();
-        let fingerprints = fingerprint::published_fingerprint_in(part, &features, ctx);
-        Recognition {
+        let extra = finish(part, &features, ctx);
+        Recognised {
             features,
-            fingerprints,
+            extra,
             frame,
-            source_sha256: None,
             input_repairs: part.input_repairs().to_vec(),
             body_evidence: BTreeMap::new(),
         }

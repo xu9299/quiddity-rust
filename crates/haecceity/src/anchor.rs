@@ -43,6 +43,11 @@ impl Part {
     /// contains (larger triangles first, ties by index). Refused, naming the face, where the face
     /// has no trimming domain, cannot be triangulated, or no triangle's centroid is inside.
     pub fn face_anchor(&self, face: usize) -> Result<FaceAnchor, AnchorRefusal> {
+        let _timing = crate::timing::face(
+            "geometry.face_anchor",
+            face,
+            self.face_source(face).map(|s| s.entity),
+        );
         let refuse = |why: String| {
             Err(AnchorRefusal {
                 reason: format!("face {face}: {why}"),

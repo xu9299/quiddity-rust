@@ -14,6 +14,7 @@ use crate::{
 
 /// Pretty JSON with the CLI's terminating newline.
 pub fn json<T: Serialize>(value: &T) -> Result<String, String> {
+    let _timing = crate::kernel::timing::stage("output.serialize_json");
     serde_json::to_string_pretty(value)
         .map(|text| format!("{text}\n"))
         .map_err(|e| e.to_string())
@@ -78,6 +79,24 @@ fn recognise_with_evidence_snapshot(path: &str, bytes: Vec<u8>) -> Result<String
         "evidence": evidence,
         "evidence_error": evidence_error,
     }))
+}
+
+/// Recognition's unchanged document, without family duplicates or fingerprints.
+#[derive(Serialize)]
+struct DocumentOutput {
+    document: crate::recognition::RecognitionDocument,
+}
+
+/// Complete document-only recognition from an immutable byte snapshot.
+pub fn recognise_document_bytes(bytes: Vec<u8>) -> Result<String, String> {
+    let document = serve::recognise_document_bytes("<bytes>", bytes).map_err(|e| e.to_string())?;
+    json(&DocumentOutput { document })
+}
+
+/// Complete document-only recognition from a STEP path.
+pub fn recognise_document_file(path: &str) -> Result<String, String> {
+    let document = serve::recognise_document_file(path).map_err(|e| e.to_string())?;
+    json(&DocumentOutput { document })
 }
 
 /// The evidence of a loaded part.
@@ -158,7 +177,7 @@ pub fn capabilities() -> String {
         "analysis": "quiddity-rust/analysis/1",
         "fingerprints": crate::correspondence::fingerprint::FINGERPRINT_VERSION,
         "inputs": ["step-path", "step-bytes"],
-        "functions": ["recognise", "evidence", "recognise_with_evidence", "anchor", "fingerprints", "correspond", "capabilities"],
+        "functions": ["recognise", "recognise_document", "evidence", "recognise_with_evidence", "anchor", "fingerprints", "correspond", "capabilities"],
         "pmi_json_import": cfg!(feature = "json-import"),
     })).expect("capabilities serialise")
 }
@@ -266,4 +285,63 @@ pub fn product_ids(
         })
         .map(|p| p.id.clone())
         .collect())
+}
+
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn compare(name: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        let full: serde_json::Value =
+            serde_json::from_str(&recognise_file(path.to_str().unwrap()).unwrap()).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&events);
+        let session = crate::kernel::timing::Session::start(move |event| {
+            observed.lock().unwrap().push(event);
+        })
+        .unwrap();
+        let raw = recognise_document_file(path.to_str().unwrap()).unwrap();
+        drop(session);
+        let document: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(document.as_object().unwrap().len(), 1);
+        assert_eq!(document["document"], full["document"], "{name}");
+        assert_eq!(
+            raw,
+            recognise_document_bytes(std::fs::read(path).unwrap()).unwrap(),
+            "file and bytes share the same source identity"
+        );
+        let events = events.lock().unwrap();
+        let totals = &events.last().unwrap().totals;
+        assert!(totals.iter().any(|t| t.name == "recognition.document"));
+        assert!(!totals.iter().any(|t| t.name == "recognition.fingerprints"));
+    }
+
+    #[test]
+    fn document_only_retains_solid_records_and_accounting() {
+        compare("large_block_small_fillets.step");
+    }
+
+    #[test]
+    fn document_only_retains_open_shell_evidence_and_refusals() {
+        compare("golden_open_channels.step");
+    }
+
+    #[test]
+    fn document_only_retains_patterns_and_defining_faces() {
+        compare("golden_counterbored_and_countersunk_holes.step");
+    }
+
+    #[test]
+    fn document_only_retains_freeform_records_and_frame() {
+        compare("held_side_knot.step");
+    }
+
+    #[test]
+    fn document_only_refuses_invalid_step_bytes() {
+        assert!(recognise_document_bytes(b"invalid STEP".to_vec()).is_err());
+    }
 }

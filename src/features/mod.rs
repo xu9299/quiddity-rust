@@ -308,6 +308,7 @@ pub(crate) type RecessProjection = Option<
 
 /// `recognise` over one completed run.
 pub(crate) fn recognise_in(ctx: &Context<'_>, mut inventory: Inventory) -> Features {
+    let _timing = crate::kernel::timing::stage("features.project_and_publish");
     let projection = project_recesses(ctx, &mut inventory);
     recognise_projected(ctx, inventory, projection)
 }
@@ -712,6 +713,7 @@ pub(crate) fn take_inventory<'p, T>(
     part: &'p Part,
     then: impl FnOnce(&Context<'p>, Inventory) -> T,
 ) -> Result<T, reconcile::ReconcileError> {
+    let _timing = crate::kernel::timing::stage("features.inventory");
     if !evidence::local_degradation() {
         let ctx = Context::new(part);
         if let Some(inventory) = inventory_in(&ctx)? {
