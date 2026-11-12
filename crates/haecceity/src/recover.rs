@@ -83,11 +83,11 @@ impl Part {
         let cap = std::env::var("HAECCEITY_THREADS")
             .ok()
             .and_then(|n| n.parse().ok())
-            .unwrap_or(4);
+            .unwrap_or(8);
         let workers = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .min(cap)
-            .min(4);
+            .min(8);
         if workers <= 1 {
             return;
         }

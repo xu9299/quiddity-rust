@@ -22,6 +22,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Independent face-query preparation can use up to eight available logical
+  processors, still capped by `HAECCEITY_THREADS`. Geometry operations and ordered
+  result consumption are unchanged.
 - Port project computation reuse to the 0.5.0 mass-validity and publication paths,
   preserving the release's independent mass checks, schemas and refusal criteria.
 - Independent freeform recovery starts larger control-net walks earlier, while
