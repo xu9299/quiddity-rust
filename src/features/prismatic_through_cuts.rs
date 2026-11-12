@@ -118,8 +118,29 @@ fn prove(
     base: &LocalFrame,
 ) -> Option<Occurrence<PrismaticThroughCut>> {
     let p = ctx.part;
-    let owner = common_valid_solid(p, nodes)?;
-    let order = ordered_cycle(nodes, adj, lines).ok()?;
+    let _component =
+        crate::kernel::timing::face("prismatic_through_cuts.component", nodes[0], None);
+    #[cfg(test)]
+    if std::env::var_os("QUIDDITY_PRISMATIC_PROFILE").is_some() {
+        eprintln!(
+            "through-cut component: walls={} first={} owner={:?}",
+            nodes.len(),
+            nodes[0],
+            p.faces[nodes[0]].solid
+        );
+        if std::env::var_os("QUIDDITY_PRISMATIC_COMPONENTS_ONLY").is_some() {
+            return None;
+        }
+    }
+    let owner = {
+        let _timing = crate::kernel::timing::operation("prismatic_through_cuts.owner");
+        common_valid_solid(p, nodes)?
+    };
+    let order = {
+        let _timing = crate::kernel::timing::operation("prismatic_through_cuts.cycle");
+        ordered_cycle(nodes, adj, lines).ok()?
+    };
+    let section_timing = crate::kernel::timing::operation("prismatic_through_cuts.section");
     let corners: Vec<_> = (0..order.len())
         .map(|i| {
             let a = order[i];
@@ -142,9 +163,16 @@ fn prove(
     }
     let frame = LocalFrame::canonical(base.run, centre_world).ok()?;
     let section = raw.translated([-centre[0], -centre[1]]).ok()?;
+    drop(section_timing);
+    let bounds_timing = crate::kernel::timing::operation("prismatic_through_cuts.bounds");
     let (lo, hi) = projection_bounds(p, nodes, frame.run)?;
     let (body_lo, body_hi) = owner_envelope(p, owner, frame.run)?;
-    let tool = prism(&frame, &section, body_lo - 4. * EPS, body_hi + 4. * EPS)?;
+    drop(bounds_timing);
+    let tool = {
+        let _timing = crate::kernel::timing::operation("prismatic_through_cuts.tool");
+        prism(&frame, &section, body_lo - 4. * EPS, body_hi + 4. * EPS)?
+    };
+    let coverage_timing = crate::kernel::timing::operation("prismatic_through_cuts.wall_coverage");
     // Claim whole source faces only if the nominal side contains them, including curved trims.
     for &w in nodes {
         let supports: Vec<_> = (2..tool.faces.len()).map(|i| (&tool, i)).collect();
@@ -152,6 +180,8 @@ fn prove(
             return None;
         }
     }
+    drop(coverage_timing);
+    let core_timing = crate::kernel::timing::operation("prismatic_through_cuts.core_coverage");
     // Try intervals cut only at observed vertex stations. Coverage proves the entire open
     // slab, so holes, gaps and intermediate intersections cannot masquerade as an intact core.
     let mut stations: Vec<f64> = nodes
@@ -178,9 +208,12 @@ fn prove(
         }
     }
     let core = core?;
+    drop(core_timing);
+    let air_timing = crate::kernel::timing::operation("prismatic_through_cuts.air");
     if !material_at_most(ctx, owner, &tool, 1e-9) {
         return None;
     }
+    drop(air_timing);
     let mut issuer = BodyRefIssuer::default();
     let occurrence = SectionOccurrence::new(
         issuer.issue(None).ok()?,
@@ -341,6 +374,8 @@ fn discover_uncovered(
     let mut seen = BTreeSet::new();
     for group in groups {
         let base = group.frame;
+        let graph_timing =
+            crate::kernel::timing::operation("prismatic_through_cuts.junction_graph");
         let mut adj: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         let mut lines = BTreeMap::new();
         for (a, b) in group.pairs {
@@ -357,7 +392,12 @@ fn discover_uncovered(
             lines.insert((a, b), line);
         }
         let nodes = adj.keys().copied().collect();
-        for component in components(&nodes, &adj) {
+        drop(graph_timing);
+        let connected = {
+            let _timing = crate::kernel::timing::operation("prismatic_through_cuts.components");
+            components(&nodes, &adj)
+        };
+        for component in connected {
             if component.len() < 3
                 || component.iter().any(|w| adj[w].len() != 2)
                 || seen.contains(&component)
@@ -409,6 +449,51 @@ pub(crate) fn append(ctx: &Context<'_>, features: &mut Features) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "manual original STEP family diagnostics; requires QUIDDITY_PRISMATIC_PROFILE"]
+    fn profile_original_step_prismatic_components() {
+        let path = std::env::var_os("QUIDDITY_PRISMATIC_PROFILE").expect("explicit STEP input");
+        let _session = crate::kernel::timing::Session::start(|event| {
+            if event.event == "heartbeat" || event.event == "summary" {
+                let active: Vec<_> = event
+                    .stack
+                    .iter()
+                    .map(|f| (f.name, f.index, f.elapsed_seconds))
+                    .collect();
+                eprintln!(
+                    "profile {} elapsed={} active={active:?}",
+                    event.event, event.elapsed_seconds
+                );
+                if event.event == "summary" {
+                    eprintln!("totals={:?}", event.totals);
+                }
+            }
+        })
+        .unwrap();
+        let original = crate::read_step_file(std::path::Path::new(&path)).unwrap();
+        let part = match crate::frames::infer_part_frame(&original) {
+            Ok(frame) => original.transformed(&frame.normalisation()).unwrap(),
+            Err(reason) => {
+                eprintln!("caller-space frame refusal: {reason:?}");
+                original
+            }
+        };
+        if std::env::var_os("QUIDDITY_PRISMATIC_COMPONENTS_ONLY").is_none() {
+            part.prepare_recovered(&(0..part.faces.len()).collect::<Vec<_>>());
+        }
+        let ctx = Context::new(&part);
+        let run = || discover_uncovered(&ctx, &BTreeSet::new());
+        let found = if std::env::var_os("QUIDDITY_PRISMATIC_DEGRADED").is_some() {
+            evidence::locally_degraded(run)
+        } else {
+            run()
+        };
+        eprintln!(
+            "family-only diagnostic finished: found={}; no publication-owner filtering or whole-part acceptance",
+            found.len()
+        );
+    }
 
     #[test]
     fn direction_buckets_preserve_tolerance_across_cells_and_signs() {

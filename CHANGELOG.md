@@ -8,6 +8,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Added
 
+- Optional through-cut proof timing distinguishes ownership, cycle ordering,
+  exact bounds, coverage and material-volume work without changing any proof.
 - Optional native stage and face timing for project diagnostics. Timing observes existing
   work without changing geometry, tolerances, output documents or refusal decisions.
   Python entry points retain the stable release's panic-to-exception handling.

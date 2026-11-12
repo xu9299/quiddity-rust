@@ -19,3 +19,17 @@ checks retain the interrupted polygonal cuts, blind refusals, rigid motion,
 nearly aligned walls, slot ownership, degenerate normals and curved-trim extent
 controls. Complete native output comparisons and bounded whole-part GUI
 measurements remain separate from those geometric regressions.
+
+Proof diagnostics further separate ownership, cycle ordering, section creation,
+exact bounds, tool construction, wall coverage, intact-core coverage and the air
+proof. Component spans retain the first source-face index. These observations do
+not alter the proof or its order.
+
+The ignored `profile_original_step_prismatic_components` test reads an explicitly
+provided `QUIDDITY_PRISMATIC_PROFILE` STEP path and applies the normal frame policy.
+With `QUIDDITY_PRISMATIC_COMPONENTS_ONLY` it reports candidate component sizes and
+skips proofs inside test-only code. Otherwise it prepares recovery and runs this
+family's proofs, optionally under `QUIDDITY_PRISMATIC_DEGRADED`. It deliberately
+does not reconstruct other families' publication ownership and is a diagnostic,
+not complete recognition or an acceptance result. These environment hooks are
+absent from production builds; the manual test is ignored by normal regressions.
