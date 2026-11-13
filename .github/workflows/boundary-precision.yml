@@ -1,0 +1,108 @@
+name: Boundary precision strict and independent checks
+
+on:
+  push:
+    branches: [validation/boundary-precision-051-20261114]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize retries of this branch without blocking unrelated validation workflows.
+concurrency:
+  group: boundary-precision-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+# Keep committed expectations and independent reference bands unchanged.
+jobs:
+  topic:
+    name: ARM ${{ matrix.topic }}
+    runs-on: macos-26
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: [{"topic": "boundary-precision-051", "head": "8ecca8a793ec2b65dbdd3ef47980ed62e1f6332d", "tree": "6a4c4aa7f6062e742d7b2d8032c5d0949f61ec6e"}]
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ${{ matrix.head }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Record exact source and independent input identity
+        run: |
+          mkdir -p ../validation-logs/verified
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; uv --version; } | tee ../validation-logs/environment.log
+          test "$(uname -m)" = arm64
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(git rev-parse HEAD)" = '${{ matrix.head }}'
+          test "$(git rev-parse HEAD^{tree})" = '${{ matrix.tree }}'
+          git diff --stat 3a20dceb099f9780a5c18e1429d673ab6d5bca29 HEAD | tee ../validation-logs/scope.log
+          git diff --exit-code 3a20dceb099f9780a5c18e1429d673ab6d5bca29 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: boundary-precision-v051-20261114-macos-26
+      - name: Formatting and complete workspace lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Supported feature-off builds
+        run: |
+          cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
+      - name: Upstream public API policy and dependency audit
+        run: |
+          cargo install cargo-semver-checks --version 0.51.0 --locked
+          uv run --no-project --python 3.14 python -m unittest discover -s .github -p test_check_semver.py 2>&1 | tee ../validation-logs/semver-policy.log
+          uv run --no-project --python 3.14 python .github/check_semver.py 2>&1 | tee ../validation-logs/semver.log
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --file Cargo.lock 2>&1 | tee ../validation-logs/audit.log
+      - name: Strict committed snapshot reproduction
+        id: strict
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Complete workspace and corpus with unchanged expectations
+        if: ${{ !cancelled() }}
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+          RUST_BACKTRACE: full
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+      - name: Produced snapshot coverage against committed expectations
+        if: ${{ !cancelled() }}
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: boundary-precision-${{ matrix.topic }}
+          path: validation-logs/
+          retention-days: 30
