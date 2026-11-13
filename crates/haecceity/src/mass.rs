@@ -798,6 +798,24 @@ impl Part {
         // seam (a face's own seam need not lie on it), so the integrands read the surface a
         // whole span round.
         let spans = closed_spans(surface);
+        // Winding determines loop sense independently of the antiderivative's axis.
+        let winding_u = along_v;
+        let along_v = along_v
+            || (!pu
+                && !pv
+                && !spans.0.is_finite()
+                && !spans.1.is_finite()
+                && collapsed_sides(surface) == (None, None)
+                && uv.iter().all(|lp| {
+                    !lp.winds_u
+                        && !lp.winds_v
+                        && !open(lp, |p| p.0, half(domain.u_range()))
+                        && !open(lp, |p| p.1, far_v)
+                })
+                && matches!(surface, Surface::Freeform { surface, .. }
+                if breaks(&surface.knots_v, surface.degree_v).len()
+                    < breaks(&surface.knots_u, surface.degree_u).len()));
+
         let f = |u: f64, v: f64| {
             let (u, v) = wrap_closed(surface, spans, (u, v));
             f(u, v)
@@ -821,7 +839,11 @@ impl Part {
         };
         // (The swept area, read only where the loops do not run round u, is measured from the
         // same reference.)
-        let u_ref = if along_v { 0.0 } else { reference };
+        let u_ref = if winding_u {
+            0.0
+        } else {
+            collapsed.0.unwrap_or(start.0)
+        };
         let term = |u: f64, v: f64, du: f64, dv: f64| {
             let (weight, y) = if along_v {
                 let cuts = surface_cuts(surface, spans.1, true, reference, v)?;
@@ -870,7 +892,7 @@ impl Part {
                 } else {
                     (panel.0, panel.3)
                 };
-                let winding = along_v || uv[i].winds_v;
+                let winding = winding_u || uv[i].winds_v;
                 let direction = self.loop_direction(face, i, (!winding).then_some(swept))?;
                 for k in 0..5 {
                     mass[k] += direction * sum[indices[k]];
@@ -907,7 +929,7 @@ impl Part {
                 swept = refined.3;
             }
             // A loop that winds round either parameter has no signed area to read.
-            let winding = along_v || uv[i].winds_v;
+            let winding = winding_u || uv[i].winds_v;
             let direction = self.loop_direction(face, i, (!winding).then_some(swept))?;
             for k in 0..N {
                 total[k] += direction * sum[k];
@@ -1235,7 +1257,9 @@ impl Part {
                         {
                             let t = corner(i, cuts[k]);
                             // (A turn within round-off of the cut is the cut's own.)
-                            if (t - cuts[k]).abs() > 1e-7 * (cuts[j] - cuts[k]).abs() {
+                            // A real held-side interval may be shorter than every rule node's
+                            // endpoint distance. Keep every representable interior split.
+                            if t > cuts[k].min(cuts[j]) && t < cuts[k].max(cuts[j]) {
                                 more.push(t);
                             }
                         }
@@ -1955,6 +1979,128 @@ mod tests {
                 assert_eq!(prefix, full);
                 assert_eq!(prefix_panels, full_panels);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod narrow_endpoint_controls {
+    //! Synthetic clamped-boundary controls with a known projected unit-square area.
+    use super::*;
+    fn square(delta: f64, reverse: bool) -> Part {
+        let points = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0 + delta, 0.0],
+            [0.0, 1.0 + delta, 0.0],
+        ];
+        let edges = (0..4)
+            .map(|i| crate::brep::Edge {
+                curve: Curve::Line {
+                    origin: points[i],
+                    dir: geom::sub(points[(i + 1) % 4], points[i]),
+                },
+                start: points[i],
+                end: points[(i + 1) % 4],
+                vertices: (i, (i + 1) % 4),
+                same_sense: true,
+                samples: vec![points[i], points[(i + 1) % 4]],
+            })
+            .collect();
+        let surface = crate::nurbs::NurbsSurface::new(
+            1,
+            1,
+            vec![
+                vec![[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                vec![[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+            ],
+            vec![vec![1.0; 2]; 2],
+            vec![0.0, 0.0, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        let uses = if reverse {
+            (0..4).rev().map(|i| (i, false)).collect()
+        } else {
+            (0..4).map(|i| (i, true)).collect()
+        };
+        Part::new(
+            vec![crate::brep::Face {
+                surface: Surface::Freeform {
+                    kind: "synthetic",
+                    surface: Box::new(surface),
+                },
+                reversed: false,
+                loops: vec![crate::brep::Loop {
+                    edges: uses,
+                    vertex: None,
+                }],
+                solid: None,
+                pcurves: vec![],
+            }],
+            edges,
+            vec![],
+        )
+    }
+    #[test]
+    fn shorter_inner_axis_preserves_square_moments_and_rigid_motion() {
+        for reverse in [false, true] {
+            let mut part = square(0.0, reverse);
+            let surface = crate::nurbs::NurbsSurface::new(
+                1,
+                1,
+                [0.0, 0.2, 0.8, 1.0]
+                    .into_iter()
+                    .map(|u| vec![[u, 0.0, 0.0], [u, 1.0, 0.0]])
+                    .collect(),
+                vec![vec![1.0; 2]; 4],
+                vec![0.0, 0.0, 0.2, 0.8, 1.0, 1.0],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            part.faces[0].surface = Surface::Freeform {
+                kind: "synthetic",
+                surface: Box::new(surface),
+            };
+            let moments = part.compute_face_moments(0).unwrap();
+            assert!((moments.area - 1.0).abs() < 3e-12);
+            for (a, b) in moments.centroid.into_iter().zip([0.5, 0.5, 0.0]) {
+                assert!((a - b).abs() < 3e-12);
+            }
+            for k in 0..3 {
+                assert!(
+                    (moments.second_moments[k][k] - if k < 2 { 1.0 / 12.0 } else { 0.0 }).abs()
+                        < 3e-12
+                );
+            }
+            let transform = [
+                [1.0, 0.0, 0.0, 12.0],
+                [0.0, 0.0, -1.0, -3.0],
+                [0.0, 1.0, 0.0, 7.0],
+            ];
+            let moved = part.transformed(&transform).unwrap();
+            let mass = moved.compute_face_mass(0).unwrap();
+            for (a, b) in mass.into_iter().zip([1.0, 3.0, 0.0, -1.0, 0.0]) {
+                assert!((a - b).abs() < 1e-10, "{mass:?}");
+            }
+            let m = moved.compute_face_moments(0).unwrap();
+            for (a, b) in m.centroid.into_iter().zip([12.5, -3.0, 7.5]) {
+                assert!((a - b).abs() < 1e-10);
+            }
+            for k in 0..3 {
+                assert!(
+                    (m.second_moments[k][k] - if k != 1 { 1.0 / 12.0 } else { 0.0 }).abs() < 1e-10
+                );
+            }
+        }
+    }
+    #[test]
+    fn tiny_endpoint_clamp_has_the_projected_square_area_in_both_loop_directions() {
+        for reverse in [false, true] {
+            let part = square(2f64.powi(-35), reverse);
+            let fixed = part.compute_face_mass(0).unwrap();
+            assert!((fixed[0] - 1.0).abs() < 3e-12, "{fixed:?}");
+            assert!((fixed[4] - 1.0).abs() < 3e-12);
         }
     }
 }

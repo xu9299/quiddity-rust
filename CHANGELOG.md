@@ -4,6 +4,12 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+- Stabilize rational curve and surface evaluation by accumulating local homogeneous coordinates.
+- Retain representable held-boundary endpoint splits even when the interval is shorter than the quadrature nodes can see.
+- Use the shorter spline axis for eligible nonwinding freeform face antiderivatives while preserving loop orientation.
+
 ## 0.5.1 (2026-11-13)
 
 A patch release: additive API, no breaking change.

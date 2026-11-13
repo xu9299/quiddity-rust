@@ -226,17 +226,37 @@ impl NurbsCurve {
         &self.knots
     }
 
+    // Translation reduces cancellation without changing the rational curve. Preserve the
+    // original nonfinite path when the active homogeneous controls cannot be formed.
+    fn evaluation_origin(&self, span: usize) -> Option<V3> {
+        let origin = self.control_points[span - self.degree];
+        (span - self.degree..=span)
+            .all(|i| {
+                let c = self.control_points[i];
+                self.weights[i].is_finite()
+                    && (0..3).all(|k| {
+                        c[k].is_finite()
+                            && (c[k] * self.weights[i]).is_finite()
+                            && (c[k] - origin[k]).is_finite()
+                    })
+            })
+            .then_some(origin)
+    }
+
     pub fn value(&self, t: f64) -> V3 {
         let (lo, hi) = self.domain();
         let t = t.clamp(lo, hi);
         let n = self.control_points.len();
         let span = find_span(&self.knots, self.degree, n, t);
+        let origin = self.evaluation_origin(span);
         let b = basis(&self.knots, self.degree, span, t);
         let mut acc = [0.0; 4];
         for (j, bj) in b.iter().enumerate() {
             let i = span - self.degree + j;
             let w = self.weights[i] * bj;
-            let c = self.control_points[i];
+            let c = origin.map_or(self.control_points[i], |o| {
+                geom::sub(self.control_points[i], o)
+            });
             acc = [
                 acc[0] + c[0] * w,
                 acc[1] + c[1] * w,
@@ -244,7 +264,8 @@ impl NurbsCurve {
                 acc[3] + w,
             ];
         }
-        [acc[0] / acc[3], acc[1] / acc[3], acc[2] / acc[3]]
+        let point = [acc[0] / acc[3], acc[1] / acc[3], acc[2] / acc[3]];
+        origin.map_or(point, |o| geom::add(o, point))
     }
 
     /// The exact first derivative (quotient rule on the homogeneous form).
@@ -252,12 +273,15 @@ impl NurbsCurve {
         let (lo, hi) = self.domain();
         let t = t.clamp(lo, hi);
         let span = find_span(&self.knots, self.degree, self.control_points.len(), t);
+        let origin = self.evaluation_origin(span);
         let (b, db) = basis_and_derivative(&self.knots, self.degree, span, t);
         let (mut a, mut a_t) = ([0.0; 4], [0.0; 4]);
         for j in 0..b.len() {
             let i = span - self.degree + j;
             let w = self.weights[i];
-            let c = self.control_points[i];
+            let c = origin.map_or(self.control_points[i], |o| {
+                geom::sub(self.control_points[i], o)
+            });
             let h = [c[0] * w, c[1] * w, c[2] * w, w];
             for k in 0..4 {
                 a[k] += b[j] * h[k];
@@ -683,13 +707,30 @@ impl NurbsSurface {
         let sv = find_span(&self.knots_v, self.degree_v, nv, v);
         let (bu, du) = basis_and_derivative(&self.knots_u, self.degree_u, su, u);
         let (bv, dv) = basis_and_derivative(&self.knots_v, self.degree_v, sv, v);
+        // Work relative to a local pole; quotient-rule derivatives use the relative point.
+        let center = self.control_points[su - self.degree_u][sv - self.degree_v];
+        let origin = (su - self.degree_u..=su)
+            .all(|i| {
+                (sv - self.degree_v..=sv).all(|j| {
+                    let c = self.control_points[i][j];
+                    self.weights[i][j].is_finite()
+                        && (0..3).all(|k| {
+                            c[k].is_finite()
+                                && (c[k] * self.weights[i][j]).is_finite()
+                                && (c[k] - center[k]).is_finite()
+                        })
+                })
+            })
+            .then_some(center);
         let (mut a, mut a_u, mut a_v) = ([0.0; 4], [0.0; 4], [0.0; 4]);
         for i in 0..bu.len() {
             let ci = su - self.degree_u + i;
             for j in 0..bv.len() {
                 let cj = sv - self.degree_v + j;
                 let w = self.weights[ci][cj];
-                let c = self.control_points[ci][cj];
+                let c = origin.map_or(self.control_points[ci][cj], |o| {
+                    geom::sub(self.control_points[ci][cj], o)
+                });
                 let h = [c[0] * w, c[1] * w, c[2] * w, w];
                 for k in 0..4 {
                     a[k] += bu[i] * bv[j] * h[k];
@@ -700,7 +741,11 @@ impl NurbsSurface {
         }
         let point = [a[0] / a[3], a[1] / a[3], a[2] / a[3]];
         let derive = |d: [f64; 4]| [0, 1, 2].map(|k| (d[k] - d[3] * point[k]) / a[3]);
-        (point, derive(a_u), derive(a_v))
+        (
+            origin.map_or(point, |o| geom::add(o, point)),
+            derive(a_u),
+            derive(a_v),
+        )
     }
 
     pub fn invert(&self, p: V3, hint: Option<(f64, f64)>) -> (f64, f64) {
@@ -1243,6 +1288,98 @@ mod tests {
             }
             // Tangent to the unit circle.
             assert!(crate::geom::dot(d, arc.value(t)).abs() < 1e-12);
+        }
+    }
+}
+
+#[cfg(test)]
+mod centered_evaluation_controls {
+    use super::*;
+    fn near(a: V3, b: V3) {
+        for k in 0..3 {
+            assert!((a[k] - b[k]).abs() < 1e-12, "{a:?} != {b:?}");
+        }
+    }
+    #[test]
+    fn local_coordinates_do_not_mask_nonfinite_or_overflowed_controls() {
+        for x in [f64::INFINITY, f64::NAN, 1e308] {
+            let c = NurbsCurve::new(
+                1,
+                vec![[x, 0.0, 0.0], [x, 1.0, 0.0]],
+                vec![2.0; 2],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            assert!(c.value(0.5).iter().any(|v| !v.is_finite()));
+            assert!(c.derivative(0.5).iter().any(|v| !v.is_finite()));
+            let s = NurbsSurface::new(
+                1,
+                1,
+                vec![vec![[x, 0.0, 0.0], [x, 1.0, 0.0]]; 2],
+                vec![vec![2.0; 2]; 2],
+                vec![0.0, 0.0, 1.0, 1.0],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            let (p, _, _) = s.value_and_partials(0.5, 0.5);
+            assert!(p.iter().any(|v| !v.is_finite()));
+        }
+    }
+    #[test]
+    fn translated_quadratic_curve_and_surface_keep_analytic_derivatives() {
+        let o = [1e9, -1e9, 1e9];
+        let curve = NurbsCurve::new(
+            2,
+            vec![
+                o,
+                geom::add(o, [1.0, 0.0, 0.0]),
+                geom::add(o, [2.0, 1.0, 0.0]),
+            ],
+            vec![1.0; 3],
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        )
+        .unwrap();
+        near(curve.derivative(0.25), [2.0, 0.5, 0.0]);
+        let controls = (0..3)
+            .map(|i| {
+                (0..3)
+                    .map(|j| {
+                        let u = i as f64 / 2.0;
+                        let v = j as f64 / 2.0;
+                        geom::add(
+                            o,
+                            [
+                                u,
+                                v,
+                                if i == 2 { 1.0 } else { 0.0 }
+                                    + u * v
+                                    + if j == 2 { 1.0 } else { 0.0 },
+                            ],
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let surface =
+            NurbsSurface::new(2, 2, controls, vec![vec![1.0; 3]; 3], knots.clone(), knots).unwrap();
+        let (p, su, sv) = surface.value_and_partials(0.25, 0.75);
+        near(p, geom::add(o, [0.25, 0.75, 0.8125]));
+        near(su, [1.0, 0.0, 1.25]);
+        near(sv, [0.0, 1.0, 1.75]);
+    }
+    #[test]
+    fn translated_rational_linear_curve_keeps_quotient_derivative() {
+        let o = [1e9, -1e9, 1e9];
+        let c = NurbsCurve::new(
+            1,
+            vec![o, geom::add(o, [1.0, 0.0, 0.0])],
+            vec![1.0, 2.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        for t in [0.0, 0.25, 0.5, 1.0] {
+            near(c.derivative(t), [2.0 / (1.0 + t).powi(2), 0.0, 0.0]);
         }
     }
 }
