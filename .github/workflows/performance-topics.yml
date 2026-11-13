@@ -1,0 +1,266 @@
+name: Independent performance topic validation
+
+on:
+  push:
+    branches: [validation/performance-v051-20261113]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize retries of this branch without blocking unrelated validation workflows.
+concurrency:
+  group: independent-performance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  baseline:
+    runs-on: macos-26
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: 3a20dceb099f9780a5c18e1429d673ab6d5bca29
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record exact baseline and environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion)" = '26.7.2'
+          test "$(sw_vers -buildVersion)" = '25G332'
+          test "$(rustc -V)" = 'rustc 1.99.1 (58cf8f9c3 2026-10-13)'
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = '3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f'
+          test "$(git rev-parse HEAD)" = 3a20dceb099f9780a5c18e1429d673ab6d5bca29
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: independent-performance-v051-20261113-macos-26
+      - name: Strict baseline snapshot reproduction
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          grep -Fx 'HEAD reproduces all 2702 snapshots byte for byte' ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: independent-performance-baseline
+          path: validation-logs/
+          retention-days: 30
+
+  windows:
+    name: Windows ${{ matrix.topic }}
+    runs-on: windows-2022
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include: [{"topic": "01-ray-geometry", "head": "6963da1c92f3c38620035f081261fc7c4c972fc0", "tree": "e175c7965e52c65b7b02c4a3812599d3ed4dca55", "package": "haecceity", "tests": ["haecceity:rays::tests::"]}, {"topic": "02-evidence-records", "head": "50976dbe69298f1c6af3109fdfac11a387227be4", "tree": "1c9bd38abbc8e7e96a6d006573bb83c8fb33333f", "package": "quiddity", "tests": ["quiddity:document_record_serialization_matches_the_individual_accessor_bytes", "quiddity:shared_analysis_", "quiddity:unowned_recess_projection_errors_are_partial_not_silent_success", "quiddity:unowned_recess_controls_keep_independent_evidence_and_source_identity"]}, {"topic": "03-recess-discovery", "head": "c320e5a6d138795937568dcfe97eca137b86627b", "tree": "ff0ef56b29e7b35c9db3d4306f04d1c7545d64bb", "package": "quiddity", "tests": ["quiddity:section_recess_cache", "quiddity:shared_analysis_", "quiddity:unowned_recess_projection_errors_are_partial_not_silent_success", "quiddity:unowned_recess_controls_keep_independent_evidence_and_source_identity"]}, {"topic": "04-integral-operands", "head": "c0dc00dc48299fe3defb0f66f4521841a662a40d", "tree": "09b1e33398f36e205c2d35b3c70be6f1d5badc6d", "package": "haecceity", "tests": ["haecceity:nurbs::tests::integral_evaluator", "haecceity:mass::tests::"]}, {"topic": "06-thread-scan", "head": "4be4ffe0d39e07a320088fad2bc0218003c4d8b3", "tree": "996407db6d9529277843d0293a5768476bc082e1", "package": "quiddity", "tests": ["quiddity:modelled_threads::tests::"]}, {"topic": "07-volume-refusal", "head": "c434b0258dea72211ba4de3de1f9e89143d89172", "tree": "63f9d580acb9591f7e9565c6fea4ee73a1b20be3", "package": "haecceity", "tests": ["haecceity:volume::tests::"]}]
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: source
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+      RUST_MIN_STACK: "67108864"
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Preserve source and fixture bytes
+        working-directory: ${{ github.workspace }}
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ${{ matrix.head }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Prepare and record the exact Windows environment
+        run: |
+          New-Item -ItemType Directory -Force ../validation-logs | Out-Null
+          [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw 'No MSVC x64 installation found' }
+          $devcmd = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
+          $configure = '"' + $devcmd + '" -no_logo -arch=x64 -host_arch=x64 >nul && set'
+          & $env:ComSpec /s /c $configure | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') {
+              [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+            }
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC environment setup failed' }
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
+          if ((git rev-parse HEAD) -ne '${{ matrix.head }}') { throw 'Wrong source commit' }
+          if ((git rev-parse 'HEAD^{tree}') -ne '${{ matrix.tree }}') { throw 'Wrong source tree' }
+          git diff --exit-code 3a20dceb099f9780a5c18e1429d673ab6d5bca29 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate changed baseline dependencies or expectations' }
+          @(
+            "source=${{ matrix.head }}"
+            "tree=${{ matrix.tree }}"
+            "os=$([Environment]::OSVersion.VersionString)"
+            "architecture=$env:PROCESSOR_ARCHITECTURE"
+            "msvc=$env:VCToolsVersion"
+            "windows_sdk=$env:WindowsSDKVersion"
+            "rust_min_stack=$env:RUST_MIN_STACK"
+            "build_jobs=$env:CARGO_BUILD_JOBS"
+            "test_threads=$env:RUST_TEST_THREADS"
+            (rustc -vV)
+            (cargo -V)
+          ) | Set-Content -Encoding utf8 ../validation-logs/environment.log
+          # Preserve only the compiler variables needed by later steps.
+          foreach ($name in @('PATH','INCLUDE','LIB','LIBPATH','VCToolsVersion','WindowsSDKVersion')) {
+            "$name=$([Environment]::GetEnvironmentVariable($name, 'Process'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: independent-performance-v051-20261113-windows
+      - name: Directed tests and affected-library lint
+        run: |
+          cargo fmt --all --check 2>&1 | Tee-Object -FilePath ../validation-logs/fmt.log
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting failed' }
+          $cases = ConvertFrom-Json '${{ toJSON(matrix.tests) }}'
+          $index = 0
+          foreach ($case in $cases) {
+            $package, $filter = $case.Split(':', 2)
+            $log = "../validation-logs/test-$index.log"
+            cargo test -p $package --lib --release --locked $filter -- --nocapture 2>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { throw "Directed check failed: $case" }
+            if (-not (Select-String -Path $log -Pattern 'test result: ok\. [1-9][0-9]* passed; 0 failed;')) {
+              throw "The filter did not execute a passing test: $case"
+            }
+            $index++
+          }
+          cargo clippy -p '${{ matrix.package }}' --lib --release --locked -- -D warnings 2>&1 | Tee-Object -FilePath ../validation-logs/clippy.log
+          if ($LASTEXITCODE -ne 0) { throw 'Affected-library Clippy failed' }
+          if (git status --porcelain) { throw 'Checks modified the reviewed source or expectations' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: independent-windows-${{ matrix.topic }}
+          path: validation-logs/
+          retention-days: 30
+
+  topic:
+    name: ARM ${{ matrix.topic }}
+    needs: [baseline, windows]
+    runs-on: macos-26
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: [{"topic": "01-ray-geometry", "head": "6963da1c92f3c38620035f081261fc7c4c972fc0", "tree": "e175c7965e52c65b7b02c4a3812599d3ed4dca55", "package": "haecceity", "tests": ["haecceity:rays::tests::"]}, {"topic": "02-evidence-records", "head": "50976dbe69298f1c6af3109fdfac11a387227be4", "tree": "1c9bd38abbc8e7e96a6d006573bb83c8fb33333f", "package": "quiddity", "tests": ["quiddity:document_record_serialization_matches_the_individual_accessor_bytes", "quiddity:shared_analysis_", "quiddity:unowned_recess_projection_errors_are_partial_not_silent_success", "quiddity:unowned_recess_controls_keep_independent_evidence_and_source_identity"]}, {"topic": "03-recess-discovery", "head": "c320e5a6d138795937568dcfe97eca137b86627b", "tree": "ff0ef56b29e7b35c9db3d4306f04d1c7545d64bb", "package": "quiddity", "tests": ["quiddity:section_recess_cache", "quiddity:shared_analysis_", "quiddity:unowned_recess_projection_errors_are_partial_not_silent_success", "quiddity:unowned_recess_controls_keep_independent_evidence_and_source_identity"]}, {"topic": "04-integral-operands", "head": "c0dc00dc48299fe3defb0f66f4521841a662a40d", "tree": "09b1e33398f36e205c2d35b3c70be6f1d5badc6d", "package": "haecceity", "tests": ["haecceity:nurbs::tests::integral_evaluator", "haecceity:mass::tests::"]}, {"topic": "06-thread-scan", "head": "4be4ffe0d39e07a320088fad2bc0218003c4d8b3", "tree": "996407db6d9529277843d0293a5768476bc082e1", "package": "quiddity", "tests": ["quiddity:modelled_threads::tests::"]}, {"topic": "07-volume-refusal", "head": "c434b0258dea72211ba4de3de1f9e89143d89172", "tree": "63f9d580acb9591f7e9565c6fea4ee73a1b20be3", "package": "haecceity", "tests": ["haecceity:volume::tests::"]}]
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ${{ matrix.head }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Record exact candidate and unchanged expectations
+        run: |
+          mkdir -p ../validation-logs/verified
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; uv --version; } | tee ../validation-logs/environment.log
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion)" = '26.7.2'
+          test "$(sw_vers -buildVersion)" = '25G332'
+          test "$(rustc -V)" = 'rustc 1.99.1 (58cf8f9c3 2026-10-13)'
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = '3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f'
+          test "$(git rev-parse HEAD)" = '${{ matrix.head }}'
+          test "$(git rev-parse HEAD^{tree})" = '${{ matrix.tree }}'
+          git diff --stat 3a20dceb099f9780a5c18e1429d673ab6d5bca29 HEAD | tee ../validation-logs/scope.log
+          git diff --exit-code 3a20dceb099f9780a5c18e1429d673ab6d5bca29 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: independent-performance-v051-20261113-macos-26
+      - name: Formatting and complete workspace lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Supported feature-off builds
+        run: |
+          cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
+      - name: Upstream public API policy and dependency audit
+        run: |
+          cargo install cargo-semver-checks --version 0.51.0 --locked
+          uv run --no-project --python 3.14 python -m unittest discover -s .github -p test_check_semver.py 2>&1 | tee ../validation-logs/semver-policy.log
+          uv run --no-project --python 3.14 python .github/check_semver.py 2>&1 | tee ../validation-logs/semver.log
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --file Cargo.lock 2>&1 | tee ../validation-logs/audit.log
+      - name: Strict candidate snapshot reproduction
+        id: strict
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          grep -Fx 'HEAD reproduces all 2702 snapshots byte for byte' ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Complete workspace and corpus regression
+        if: ${{ !cancelled() }}
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+          RUST_BACKTRACE: full
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+      - name: Produced snapshot coverage and provenance
+        if: ${{ !cancelled() }}
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: independent-performance-${{ matrix.topic }}
+          path: validation-logs/
+          retention-days: 30
