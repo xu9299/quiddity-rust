@@ -9,6 +9,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 ### Changed
 
 - Serialize physical evidence records once per document; existing output and refusal contracts are retained.
+- Wire-seeded recess discovery follows the queried edges' face ownership instead of
+  repeatedly comparing every neighbour of a many-loop opening. Unique opposite-use
+  pairing and the resulting seed face sets are unchanged.
 
 ## 0.5.1 (2026-11-13)
 
