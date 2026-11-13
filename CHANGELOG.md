@@ -4,6 +4,14 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### Changed
+
+- Wire-seeded recess discovery follows the queried edges' face ownership instead of
+  repeatedly comparing every neighbour of a many-loop opening. Unique opposite-use
+  pairing and the resulting seed face sets are unchanged.
+
 ## 0.5.2 (2026-11-13)
 
 A patch release: faster recognition with byte-identical output, contributed by xu9299. No API
