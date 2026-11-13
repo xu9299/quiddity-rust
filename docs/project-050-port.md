@@ -21,8 +21,9 @@ supplies the same point and partial derivatives to those callbacks; it does not
 replace the mass-validity rules. Closed-surface wrapping and tangent-rank checks
 also remain those of the release.
 
-The existing project patches retain exact operand and prefix reuse, bounded
-parallel queries, recovery scheduling, shared ray geometry, section-discovery and
-evidence-record reuse, and ordered floor-proof refusal. No part-specific identifier
-or sample input is included. Private real-part timings remain outside this source
+The project patches retain exact operand and prefix reuse, shared ray geometry,
+section-discovery and evidence-record reuse, ordered floor-proof refusal, and
+sequential original-slab rejection witnesses. Additional compute workers and
+recovery scheduling are removed; see [serial reuse](serial-project-reuse.md).
+No part-specific identifier or sample input is included. Private real-part timings remain outside this source
 repository.

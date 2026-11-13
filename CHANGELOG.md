@@ -23,27 +23,21 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 - Periodic timing heartbeats remain visible while completed-span events keep
   arriving, including when their observer queue never becomes empty.
-- Parallel floor readers retain the caller's strict or locally degraded ownership
-  mode on every worker, restoring previous thread state after each query.
 
 ### Changed
+
+- Project recognition keeps face queries and volume slabs on the calling thread.
+  Reuse and rejection witnesses remain enabled without extra compute workers or
+  recovery scheduling; independent parts may still be dispatched by the caller.
 
 - At-most material queries can reject from a sufficient original integration slab
   before walking every preceding slab. Successful answers retain complete required
   proofs, original ordered sums, and the existing empty/full conventions.
-- Complex material-volume proofs evaluate bounded batches of independent height
-  slabs on at most eight workers. Ordered sums, quadrature and refusal rules are
-  retained; existing face workers do not start nested volume pools.
 - Prismatic through-cut grouping checks both planar wall normals and their run
   direction before evaluating the exact shared-edge turn. Ineligible pairs avoid
   unused curve and surface queries; candidate order and geometric proofs stay unchanged.
-- Independent face-query preparation can use up to eight available logical
-  processors, still capped by `HAECCEITY_THREADS`. Geometry operations and ordered
-  result consumption are unchanged.
 - Port project computation reuse to the 0.5.0 mass-validity and publication paths,
   preserving the release's independent mass checks, schemas and refusal criteria.
-- Independent freeform recovery starts larger control-net walks earlier, while
-  preserving the caller's result order, exact calculations and cached refusals.
 - Surface quadrature resumes an identical finite panel prefix from its original
   running sum, avoiding repeated weighted additions without regrouping arithmetic.
 - Evidence documents serialize the physical inventory once and clone each record's

@@ -494,7 +494,9 @@ mod tests {
         if std::env::var_os("QUIDDITY_PRISMATIC_COMPONENTS_ONLY").is_none()
             && std::env::var_os("QUIDDITY_PRISMATIC_SKIP_RECOVERY_WARMUP").is_none()
         {
-            part.prepare_recovered(&(0..part.faces.len()).collect::<Vec<_>>());
+            for face in 0..part.faces.len() {
+                part.recovered(face);
+            }
         }
         let ctx = Context::new(&part);
         let run = || discover_uncovered(&ctx, &BTreeSet::new());

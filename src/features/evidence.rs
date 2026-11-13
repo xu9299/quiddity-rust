@@ -128,28 +128,17 @@ pub fn local_degradation() -> bool {
 
 /// Run *f* as a locally degraded run: every [`common_valid_solid`] query inside it answers as
 /// Python's degraded graph does ([`locally_valid_solid`]). The previous mode is restored
-/// afterwards, also if *f* panics. Runs nest; readers sent to worker threads bind the
-/// current mode explicitly with [`bind_current_run_mode`].
+/// afterwards, also if *f* panics. Runs nest; recognition makes no threads of its own, so the
+/// mode reaches all of the run.
 pub(crate) fn locally_degraded<T>(f: impl FnOnce() -> T) -> T {
-    with_degradation_mode(true, f)
-}
-
-fn with_degradation_mode<T>(enabled: bool, f: impl FnOnce() -> T) -> T {
     struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
             LOCAL_DEGRADATION.with(|mode| mode.set(self.0));
         }
     }
-    let _restore = Restore(LOCAL_DEGRADATION.with(|mode| mode.replace(enabled)));
+    let _restore = Restore(LOCAL_DEGRADATION.with(|mode| mode.replace(true)));
     f()
-}
-
-/// Bind the caller's ownership mode to a query that may run on another thread.
-/// Each invocation restores that thread's previous mode, including on unwinding.
-pub(crate) fn bind_current_run_mode<A, R>(query: impl Fn(A) -> R) -> impl Fn(A) -> R {
-    let enabled = local_degradation();
-    move |argument| with_degradation_mode(enabled, || query(argument))
 }
 
 internal_entry! {
@@ -224,83 +213,6 @@ pub fn verified<R>(
 mod trust_tests {
     use super::*;
     use std::path::Path;
-
-    #[test]
-    fn bound_queries_keep_the_captured_mode_on_scoped_workers() {
-        use std::sync::atomic::{AtomicU8, Ordering};
-        let part = Part::new(Vec::new(), Vec::new(), Vec::new());
-        for enabled in [false, true] {
-            let observed: Vec<_> = (0..128).map(|_| AtomicU8::new(0)).collect();
-            let query = with_degradation_mode(enabled, || {
-                bind_current_run_mode(|index: usize| {
-                    observed[index]
-                        .store(if local_degradation() { 2 } else { 1 }, Ordering::Relaxed);
-                })
-            });
-            assert!(!local_degradation());
-            std::thread::scope(|scope| {
-                scope
-                    .spawn(|| {
-                        assert!(!local_degradation());
-                        part.prepare_face_queries(
-                            (0..128).collect(),
-                            "test.ownership_mode",
-                            &query,
-                        );
-                        // The executor leaves small or single-worker requests to its caller.
-                        for (index, value) in observed.iter().enumerate() {
-                            if value.load(Ordering::Relaxed) == 0 {
-                                query(index);
-                            }
-                        }
-                        assert!(!local_degradation());
-                    })
-                    .join()
-                    .unwrap();
-            });
-            let expected = if enabled { 2 } else { 1 };
-            assert!(
-                observed
-                    .iter()
-                    .all(|value| value.load(Ordering::Relaxed) == expected)
-            );
-            assert!(!local_degradation());
-        }
-    }
-
-    #[test]
-    fn bound_queries_restore_a_different_nested_mode_after_a_panic() {
-        use std::sync::atomic::{AtomicU8, Ordering};
-        for enabled in [false, true] {
-            let observed = AtomicU8::new(0);
-            let query = with_degradation_mode(enabled, || {
-                bind_current_run_mode(|(): ()| {
-                    observed.store(if local_degradation() { 2 } else { 1 }, Ordering::Relaxed);
-                    panic!("intentional query refusal");
-                })
-            });
-            std::thread::scope(|scope| {
-                scope
-                    .spawn(|| {
-                        with_degradation_mode(!enabled, || {
-                            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                                || query(()),
-                            ));
-                            assert!(result.is_err());
-                            assert_eq!(
-                                observed.load(Ordering::Relaxed),
-                                if enabled { 2 } else { 1 }
-                            );
-                            assert_eq!(local_degradation(), !enabled);
-                        });
-                        assert!(!local_degradation());
-                    })
-                    .join()
-                    .unwrap();
-            });
-            assert!(!local_degradation());
-        }
-    }
 
     #[test]
     fn strict_status_checks_consulted_faces_and_never_relaxes_in_a_retry() {
