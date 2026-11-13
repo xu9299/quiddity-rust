@@ -1,0 +1,93 @@
+{
+  "base": "18eefdc10c07dca3d1d0a3de19fe59e93713b9c6",
+  "corpus": "3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f",
+  "snapshots": 2702,
+  "inputs": 3227,
+  "baseline_job": 131139114055,
+  "baseline_run": 43205383195,
+  "baseline_result": "All 2702 snapshots reproduced byte for byte",
+  "baseline_environment": {
+    "os": "macOS 26.7.2",
+    "build": "25G332",
+    "arch": "arm64",
+    "rust": "1.99.1"
+  },
+  "candidates": [
+    {
+      "topic": "02-evidence-records",
+      "current_commit": "b4bfd78e365dc12cb4b7fd925613871a4171b7c3",
+      "tested_commit": "cdf096072064baf9ab3c57fa4d513dd786833031",
+      "tree": "cbe02dafb06ee06513c9e2dcde7032086e75098d",
+      "base": "18eefdc10c07dca3d1d0a3de19fe59e93713b9c6",
+      "windows_job": 131139116171,
+      "windows_test_executions": {
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0
+      },
+      "patch_sha256": "a44c2d49d39187e0a5a7c62ec5a92c5ce9daa26358ddfd121cb81b5043daf471"
+    },
+    {
+      "topic": "03-recess-discovery",
+      "current_commit": "cfaf1c18172742da534590bff66e426a8f382c93",
+      "tested_commit": "8cf065df1cadabd4f925012c7b8aac81f9d8b55e",
+      "tree": "1c61a9081045bd843a57ea9dc3a019ad98835a51",
+      "base": "18eefdc10c07dca3d1d0a3de19fe59e93713b9c6",
+      "windows_job": 131139114379,
+      "windows_test_executions": {
+        "passed": 11,
+        "failed": 0,
+        "ignored": 0
+      },
+      "patch_sha256": "03e29c06604947ece1c2f26502122e0f3505ecca5e11b178ab310c5fd09f5d39"
+    },
+    {
+      "topic": "04-integral-operands",
+      "current_commit": "ee0896e6f9f33feac2b47d275700d90558bdbc2b",
+      "tested_commit": "8bb04585d3166a3b2ea86e6d9f050bea34e0f7c9",
+      "tree": "e0477705dd6f1dad84f596263bb5418ae868066a",
+      "base": "18eefdc10c07dca3d1d0a3de19fe59e93713b9c6",
+      "windows_job": 131139114309,
+      "windows_test_executions": {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0
+      },
+      "patch_sha256": "c61ad207ba5070d68c62f21226054f7d87f23e8c5e037cbd52f196f857a3466a"
+    },
+    {
+      "topic": "06-thread-scan",
+      "current_commit": "7e7ef0ddaaa12ff3c1c5d3591628c58a38c08ed3",
+      "tested_commit": "3ca41b69e8c43563519115e759bc28c46ba24657",
+      "tree": "20a41e2545dbecfe548dcea7473bf872993d223d",
+      "base": "18eefdc10c07dca3d1d0a3de19fe59e93713b9c6",
+      "windows_job": 131139115250,
+      "windows_test_executions": {
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0
+      },
+      "patch_sha256": "437e4a4dd4ad7e4e5edb39f537a8fc27bd2a2a315bb45f5e9630714bdeeab96e"
+    },
+    {
+      "topic": "07-volume-refusal",
+      "current_commit": "3281e40d0cc1fc7c9ad2b7d3311a2391707e878e",
+      "tested_commit": "9b8ed8d09ab09e0825be8c4d451625116529dff3",
+      "tree": "ed3e86968504c3e1f55f6e58a2e5de7b8c3781f4",
+      "base": "18eefdc10c07dca3d1d0a3de19fe59e93713b9c6",
+      "windows_job": 131139114406,
+      "windows_test_executions": {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0
+      },
+      "patch_sha256": "2bd732a47239cb4abf92c9bd5d8fffc3e3fc80701f76ecce185a35d579928d0f"
+    }
+  ],
+  "already_completed_arm_topic": "01-ray-geometry",
+  "already_completed_arm_job": 131157059802,
+  "identity_scope": "Only contribution email metadata changed after Windows testing; source trees and parents are identical. Original test SHAs are retained. These five ARM jobs check the current personal-email commits.",
+  "schedule": "At most two remaining ARM candidates; independent runners and workspaces; no shared global lock with project-kernel validation",
+  "validation_scope": "Same full ARM checks as the original workflow; completed Windows and baseline checks are reused on their recorded source and environment",
+  "recorded_at": "2026-11-13T00:23:39.468513+00:00"
+}
