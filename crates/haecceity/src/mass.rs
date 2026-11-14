@@ -799,7 +799,7 @@ impl Part {
         let spans = closed_spans(surface);
         let evaluator = match surface {
             Surface::Freeform { surface, .. } => Some(std::cell::RefCell::new(
-                crate::nurbs::SurfaceEvaluation::new(surface),
+                crate::nurbs::integral::IntegralEvaluation::new(surface, along_v),
             )),
             _ => None,
         };

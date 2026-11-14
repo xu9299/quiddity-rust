@@ -4,6 +4,16 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### Changed
+
+- Evaluate low-degree NURBS face integrands using fixed-parameter homogeneous contraction
+  and bounded, centered span polynomials. Integral directions, quadrature rules, and
+  acceptance tolerances are retained; reassociated floating-point arithmetic can change
+  the last digits of derived measurements. Unsupported degrees and unsafe evaluations
+  retain the original evaluator. No public API or result-schema change.
+
 ## 0.5.2 (2026-11-13)
 
 A patch release: faster recognition with byte-identical output, contributed by xu9299. No API
