@@ -242,6 +242,63 @@ fn analytic_cylinder_area_flux_and_area_vector() {
 }
 
 #[test]
+fn finite_weight_contrasts_near_span_ends_keep_the_analytic_sweep() {
+    // A flat sweep with C(u) = (u + (w - 1) u^p) / (1 + (w - 1) u^p).
+    // Its last control row alone has weight w. A near-zero basis rounding error
+    // can leave every intermediate finite while moving C outside its [0, 1] hull.
+    for degree in [3, 5, 7] {
+        for weight in [1.0, 16.0, 256.0, 512.0, 1e8, 1e16] {
+            let surface = NurbsSurface::new(
+                degree,
+                1,
+                (0..=degree)
+                    .map(|i| {
+                        vec![
+                            [i as f64 / degree as f64, 0.0, 0.0],
+                            [i as f64 / degree as f64, 1.0, 0.0],
+                        ]
+                    })
+                    .collect(),
+                (0..=degree)
+                    .map(|i| vec![if i == degree { weight } else { 1.0 }; 2])
+                    .collect(),
+                std::iter::repeat_n(0.0, degree + 1)
+                    .chain(std::iter::repeat_n(1.0, degree + 1))
+                    .collect(),
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            for along_v in [false, true] {
+                let mut evaluator = IntegralEvaluation::new(&surface, along_v);
+                for u in [0.0_f64, 1e-7, 0.001, 0.005, 0.02, 0.5, 1.0] {
+                    let z = (weight - 1.0) * u.powi(degree as i32);
+                    let dz = (weight - 1.0) * degree as f64 * u.powi(degree as i32 - 1);
+                    let denominator = 1.0 + z;
+                    let expected = [
+                        [(u + z) / denominator, 0.37, 0.0],
+                        [
+                            (denominator + dz * (1.0 - u)) / denominator.powi(2),
+                            0.0,
+                            0.0,
+                        ],
+                        [0.0, 1.0, 0.0],
+                    ];
+                    let (p, du, dv) = evaluator.value_and_partials(u, 0.37);
+                    for (actual, expected) in
+                        [p, du, dv].iter().flatten().zip(expected.iter().flatten())
+                    {
+                        assert!(
+                            (actual - expected).abs() < 2e-11 * (1.0 + expected.abs()),
+                            "degree {degree}, weight {weight}, u {u}, direction {along_v}: {actual} vs {expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "serial timing experiment; no performance assertion"]
 fn benchmark_synthetic_inner_sweeps() {
     use std::hint::black_box;

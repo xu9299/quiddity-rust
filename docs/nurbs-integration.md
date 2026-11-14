@@ -41,6 +41,13 @@ the original integral evaluator. Nonfinite clamped parameters, weighted controls
 results fall back to the original evaluator. The parameter direction is immutable for
 an evaluator's lifetime.
 
+An active control net with a largest-to-smallest weight ratio above 256 also uses the
+original evaluator. Near a span endpoint, a tiny absolute error in a nearly zero basis
+value can otherwise be amplified by a large rational weight, even while every value
+stays finite. The cutoff is a conservative applicability guard, not a uniform error
+bound. A flat rational sweep with a closed-form parameterization tests this failure
+mode, including weight contrasts through `1e16`, endpoints, and both directions.
+
 The floating-point association changes. Mathematically equal formulas need not produce
 bit-identical measurements or identical adaptive subdivision decisions. Existing integral
 rules, error thresholds, and refusal conditions are unchanged; those rules still decide

@@ -11,8 +11,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 - Evaluate low-degree NURBS face integrands using fixed-parameter homogeneous contraction
   and bounded, centered span polynomials. Integral directions, quadrature rules, and
   acceptance tolerances are retained; reassociated floating-point arithmetic can change
-  the last digits of derived measurements. Unsupported degrees and unsafe evaluations
-  retain the original evaluator. No public API or result-schema change.
+  the last digits of derived measurements. Unsupported degrees, high active weight
+  contrasts, and unsafe evaluations retain the original evaluator. No public API or
+  result-schema change.
 
 ## 0.5.2 (2026-11-13)
 

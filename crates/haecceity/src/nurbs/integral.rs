@@ -72,6 +72,9 @@ fn basis_and_derivative(knots: &[f64], degree: usize, span: usize, t: f64) -> (B
 
 const SIZE: usize = 8;
 const AXIS_BYTES: usize = 2 * 1024 * 1024;
+// Near-zero polynomial basis errors can be amplified by unequal rational weights.
+// Keep a conservative active-net contrast limit; this is not a uniform error bound.
+const MAX_WEIGHT_RATIO: f64 = 256.0;
 
 #[derive(Clone)]
 struct Polynomial {
@@ -257,14 +260,19 @@ impl<'a> PreparedSurface<'a> {
         };
         if self.spans != Some((pu.span, pv.span)) {
             self.controls.clear();
+            let (mut min_weight, mut max_weight) = (f64::INFINITY, 0.0_f64);
             for ci in pu.span - s.degree_u..=pu.span {
                 for cj in pv.span - s.degree_v..=pv.span {
                     let c = s.control_points[ci][cj];
                     let w = s.weights[ci][cj];
+                    min_weight = min_weight.min(w);
+                    max_weight = max_weight.max(w);
                     self.controls.push([c[0] * w, c[1] * w, c[2] * w, w]);
                 }
             }
-            self.safe_controls = self.controls.iter().flatten().all(|x| x.is_finite());
+            self.safe_controls = min_weight > 0.0
+                && max_weight / min_weight <= MAX_WEIGHT_RATIO
+                && self.controls.iter().flatten().all(|x| x.is_finite());
             self.spans = Some((pu.span, pv.span));
         }
         if !self.safe_controls {
