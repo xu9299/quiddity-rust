@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        include: [{"topic": "boundary-regular-052", "head": "1d085c705240df2b3f5e8a60a96e80d8fcd5283a", "tree": "d7341a8914f8cf5d217c6cec11f3a2b7a4777a22"}]
+        include: [{"topic": "boundary-regular-052", "head": "914bdb2f3a884fda976e2a272df2f0bc340b83b4", "tree": "86701667fc19fdf2b710aa7b64892db915e14e76"}]
     defaults:
       run:
         shell: bash
