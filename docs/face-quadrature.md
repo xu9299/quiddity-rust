@@ -28,6 +28,7 @@ ordinary point, derivative, inverse and curve paths consistently. Mixing a local
 inverse or tangent frame with their established sheet and winding choices can count
 the wrong parameter turn, even when the surface values differ only at round-off.
 The eligibility cache contains no source geometry and is excluded from Debug identity.
+Control-point transforms clear this cache before the next eligibility query.
 The integral-local operand cache retains the same frame for every span pair, including
 its finite-control fallback. Cached and direct evaluation must agree bit for bit;
 ordinary evaluation retains the upstream operand order and cache behavior.

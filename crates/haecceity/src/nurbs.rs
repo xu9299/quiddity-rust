@@ -531,6 +531,7 @@ impl NurbsSurface {
             *p = point(*p);
         }
         self.grid = std::sync::OnceLock::new();
+        self.local_quadrature_frame = std::sync::OnceLock::new();
     }
 
     /// `None` for malformed arrays (see [`NurbsCurve::new`]).
@@ -1717,7 +1718,7 @@ mod quadrature_frame_controls {
             }
             assert_eq!(identity, format!("{surface:?}"));
         }
-        let open = NurbsSurface::new(
+        let mut open = NurbsSurface::new(
             1,
             1,
             vec![
@@ -1732,5 +1733,7 @@ mod quadrature_frame_controls {
         let identity = format!("{open:?}");
         assert!(open.has_local_quadrature_frame());
         assert_eq!(identity, format!("{open:?}"));
+        open.transform_points(|p| [0.0, p[1], p[2]]);
+        assert!(!open.has_local_quadrature_frame());
     }
 }
