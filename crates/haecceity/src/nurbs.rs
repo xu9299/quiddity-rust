@@ -244,11 +244,22 @@ impl NurbsCurve {
     }
 
     pub fn value(&self, t: f64) -> V3 {
+        self.value_in_frame(t, false)
+    }
+    /// Local homogeneous evaluation for face quadrature, without changing other geometry queries.
+    pub(crate) fn integral_value(&self, t: f64) -> V3 {
+        self.value_in_frame(t, true)
+    }
+    fn value_in_frame(&self, t: f64, local: bool) -> V3 {
         let (lo, hi) = self.domain();
         let t = t.clamp(lo, hi);
         let n = self.control_points.len();
         let span = find_span(&self.knots, self.degree, n, t);
-        let origin = self.evaluation_origin(span);
+        let origin = if local {
+            self.evaluation_origin(span)
+        } else {
+            None
+        };
         let b = basis(&self.knots, self.degree, span, t);
         let mut acc = [0.0; 4];
         for (j, bj) in b.iter().enumerate() {
@@ -270,10 +281,21 @@ impl NurbsCurve {
 
     /// The exact first derivative (quotient rule on the homogeneous form).
     pub fn derivative(&self, t: f64) -> V3 {
+        self.derivative_in_frame(t, false)
+    }
+    /// Local homogeneous evaluation for face quadrature, without changing other geometry queries.
+    pub(crate) fn integral_derivative(&self, t: f64) -> V3 {
+        self.derivative_in_frame(t, true)
+    }
+    fn derivative_in_frame(&self, t: f64, local: bool) -> V3 {
         let (lo, hi) = self.domain();
         let t = t.clamp(lo, hi);
         let span = find_span(&self.knots, self.degree, self.control_points.len(), t);
-        let origin = self.evaluation_origin(span);
+        let origin = if local {
+            self.evaluation_origin(span)
+        } else {
+            None
+        };
         let (b, db) = basis_and_derivative(&self.knots, self.degree, span, t);
         let (mut a, mut a_t) = ([0.0; 4], [0.0; 4]);
         for j in 0..b.len() {
@@ -699,6 +721,13 @@ impl NurbsSurface {
 
     /// The point and its exact first partial derivatives (quotient rule on the homogeneous form).
     pub fn value_and_partials(&self, u: f64, v: f64) -> (V3, V3, V3) {
+        self.partials_in_frame(u, v, false)
+    }
+    /// Stable quadrature density and projection derivatives, isolated from normal queries.
+    pub(crate) fn integral_value_and_partials(&self, u: f64, v: f64) -> (V3, V3, V3) {
+        self.partials_in_frame(u, v, true)
+    }
+    fn partials_in_frame(&self, u: f64, v: f64, local: bool) -> (V3, V3, V3) {
         let (u0, u1, v0, v1) = self.domain();
         let (u, v) = (u.clamp(u0, u1), v.clamp(v0, v1));
         let nu = self.control_points.len();
@@ -708,20 +737,24 @@ impl NurbsSurface {
         let (bu, du) = basis_and_derivative(&self.knots_u, self.degree_u, su, u);
         let (bv, dv) = basis_and_derivative(&self.knots_v, self.degree_v, sv, v);
         // Work relative to a local pole; quotient-rule derivatives use the relative point.
-        let center = self.control_points[su - self.degree_u][sv - self.degree_v];
-        let origin = (su - self.degree_u..=su)
-            .all(|i| {
-                (sv - self.degree_v..=sv).all(|j| {
-                    let c = self.control_points[i][j];
-                    self.weights[i][j].is_finite()
-                        && (0..3).all(|k| {
-                            c[k].is_finite()
-                                && (c[k] * self.weights[i][j]).is_finite()
-                                && (c[k] - center[k]).is_finite()
-                        })
+        let origin = if local {
+            let center = self.control_points[su - self.degree_u][sv - self.degree_v];
+            (su - self.degree_u..=su)
+                .all(|i| {
+                    (sv - self.degree_v..=sv).all(|j| {
+                        let c = self.control_points[i][j];
+                        self.weights[i][j].is_finite()
+                            && (0..3).all(|k| {
+                                c[k].is_finite()
+                                    && (c[k] * self.weights[i][j]).is_finite()
+                                    && (c[k] - center[k]).is_finite()
+                            })
+                    })
                 })
-            })
-            .then_some(center);
+                .then_some(center)
+        } else {
+            None
+        };
         let (mut a, mut a_u, mut a_v) = ([0.0; 4], [0.0; 4], [0.0; 4]);
         for i in 0..bu.len() {
             let ci = su - self.degree_u + i;
@@ -749,12 +782,18 @@ impl NurbsSurface {
     }
 
     pub fn invert(&self, p: V3, hint: Option<(f64, f64)>) -> (f64, f64) {
+        self.invert_in_frame(p, hint, false)
+    }
+    pub(crate) fn integral_invert(&self, p: V3, hint: Option<(f64, f64)>) -> (f64, f64) {
+        self.invert_in_frame(p, hint, true)
+    }
+    fn invert_in_frame(&self, p: V3, hint: Option<(f64, f64)>, local: bool) -> (f64, f64) {
         let (mut u, mut v) = hint.unwrap_or_else(|| self.nearest_grid(p));
         let (u0, u1, v0, v1) = self.domain();
         let settle = 1e-12 * (u1 - u0).abs().max((v1 - v0).abs()).max(1e-300);
         let mut residual = f64::INFINITY;
         for _ in 0..50 {
-            let (s, su, sv) = self.value_and_partials(u, v);
+            let (s, su, sv) = self.partials_in_frame(u, v, local);
             let r = geom::sub(p, s);
             residual = geom::norm(r);
             let (a, b, c) = (geom::dot(su, su), geom::dot(su, sv), geom::dot(sv, sv));
@@ -776,8 +815,16 @@ impl NurbsSurface {
         // Boundary samples sit off their surface by up to the edge tolerance; only a hinted
         // start that lands clearly further away has found a wrong local minimum.
         if hint.is_some() && residual > HINT_RETRY_DISTANCE {
-            let fresh = self.invert(p, None);
-            if geom::dist(self.value(fresh.0, fresh.1), p) < residual {
+            let fresh = self.invert_in_frame(p, None, local);
+            if geom::dist(
+                if local {
+                    self.partials_in_frame(fresh.0, fresh.1, true).0
+                } else {
+                    self.value(fresh.0, fresh.1)
+                },
+                p,
+            ) < residual
+            {
                 return fresh;
             }
         }
@@ -1310,8 +1357,8 @@ mod centered_evaluation_controls {
                 vec![0.0, 0.0, 1.0, 1.0],
             )
             .unwrap();
-            assert!(c.value(0.5).iter().any(|v| !v.is_finite()));
-            assert!(c.derivative(0.5).iter().any(|v| !v.is_finite()));
+            assert!(c.integral_value(0.5).iter().any(|v| !v.is_finite()));
+            assert!(c.integral_derivative(0.5).iter().any(|v| !v.is_finite()));
             let s = NurbsSurface::new(
                 1,
                 1,
@@ -1321,7 +1368,7 @@ mod centered_evaluation_controls {
                 vec![0.0, 0.0, 1.0, 1.0],
             )
             .unwrap();
-            let (p, _, _) = s.value_and_partials(0.5, 0.5);
+            let (p, _, _) = s.integral_value_and_partials(0.5, 0.5);
             assert!(p.iter().any(|v| !v.is_finite()));
         }
     }
@@ -1339,7 +1386,7 @@ mod centered_evaluation_controls {
             vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
         )
         .unwrap();
-        near(curve.derivative(0.25), [2.0, 0.5, 0.0]);
+        near(curve.integral_derivative(0.25), [2.0, 0.5, 0.0]);
         let controls = (0..3)
             .map(|i| {
                 (0..3)
@@ -1363,7 +1410,7 @@ mod centered_evaluation_controls {
         let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
         let surface =
             NurbsSurface::new(2, 2, controls, vec![vec![1.0; 3]; 3], knots.clone(), knots).unwrap();
-        let (p, su, sv) = surface.value_and_partials(0.25, 0.75);
+        let (p, su, sv) = surface.integral_value_and_partials(0.25, 0.75);
         near(p, geom::add(o, [0.25, 0.75, 0.8125]));
         near(su, [1.0, 0.0, 1.25]);
         near(sv, [0.0, 1.0, 1.75]);
@@ -1379,7 +1426,10 @@ mod centered_evaluation_controls {
         )
         .unwrap();
         for t in [0.0, 0.25, 0.5, 1.0] {
-            near(c.derivative(t), [2.0 / (1.0 + t).powi(2), 0.0, 0.0]);
+            near(
+                c.integral_derivative(t),
+                [2.0 / (1.0 + t).powi(2), 0.0, 0.0],
+            );
         }
     }
 }

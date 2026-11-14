@@ -6,9 +6,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
-- Stabilize rational curve and surface evaluation by accumulating local homogeneous coordinates.
+- Stabilize face quadrature with local homogeneous curve and surface evaluation, while keeping ordinary geometry queries on their established evaluation path.
 - Retain representable held-boundary endpoint splits even when the interval is shorter than the quadrature nodes can see.
-- Use the shorter spline axis for eligible nonwinding freeform face antiderivatives while preserving loop orientation.
+- Use the shorter spline axis for eligible nonwinding freeform face antiderivatives after checking normalized closed differentials; retain the established axis when the projected walk fails that check.
 
 ## 0.5.1 (2026-11-13)
 
