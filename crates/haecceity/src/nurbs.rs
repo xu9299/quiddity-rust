@@ -226,17 +226,48 @@ impl NurbsCurve {
         &self.knots
     }
 
+    // Translation reduces cancellation without changing the rational curve. Preserve the
+    // original nonfinite path when the active homogeneous controls cannot be formed.
+    fn evaluation_origin(&self, span: usize) -> Option<V3> {
+        let origin = self.control_points[span - self.degree];
+        (span - self.degree..=span)
+            .all(|i| {
+                let c = self.control_points[i];
+                self.weights[i].is_finite()
+                    && (0..3).all(|k| {
+                        c[k].is_finite()
+                            && (c[k] * self.weights[i]).is_finite()
+                            && (c[k] - origin[k]).is_finite()
+                    })
+            })
+            .then_some(origin)
+    }
+
     pub fn value(&self, t: f64) -> V3 {
+        self.value_in_frame(t, false)
+    }
+    /// Local homogeneous evaluation for face quadrature, without changing other geometry queries.
+    pub(crate) fn integral_value(&self, t: f64) -> V3 {
+        self.value_in_frame(t, true)
+    }
+    fn value_in_frame(&self, t: f64, local: bool) -> V3 {
         let (lo, hi) = self.domain();
         let t = t.clamp(lo, hi);
         let n = self.control_points.len();
         let span = find_span(&self.knots, self.degree, n, t);
+        let origin = if local {
+            self.evaluation_origin(span)
+        } else {
+            None
+        };
         let b = basis(&self.knots, self.degree, span, t);
         let mut acc = [0.0; 4];
         for (j, bj) in b.iter().enumerate() {
             let i = span - self.degree + j;
             let w = self.weights[i] * bj;
-            let c = self.control_points[i];
+            let c = origin.map_or(self.control_points[i], |o| {
+                geom::sub(self.control_points[i], o)
+            });
             acc = [
                 acc[0] + c[0] * w,
                 acc[1] + c[1] * w,
@@ -244,20 +275,35 @@ impl NurbsCurve {
                 acc[3] + w,
             ];
         }
-        [acc[0] / acc[3], acc[1] / acc[3], acc[2] / acc[3]]
+        let point = [acc[0] / acc[3], acc[1] / acc[3], acc[2] / acc[3]];
+        origin.map_or(point, |o| geom::add(o, point))
     }
 
     /// The exact first derivative (quotient rule on the homogeneous form).
     pub fn derivative(&self, t: f64) -> V3 {
+        self.derivative_in_frame(t, false)
+    }
+    /// Local homogeneous evaluation for face quadrature, without changing other geometry queries.
+    pub(crate) fn integral_derivative(&self, t: f64) -> V3 {
+        self.derivative_in_frame(t, true)
+    }
+    fn derivative_in_frame(&self, t: f64, local: bool) -> V3 {
         let (lo, hi) = self.domain();
         let t = t.clamp(lo, hi);
         let span = find_span(&self.knots, self.degree, self.control_points.len(), t);
+        let origin = if local {
+            self.evaluation_origin(span)
+        } else {
+            None
+        };
         let (b, db) = basis_and_derivative(&self.knots, self.degree, span, t);
         let (mut a, mut a_t) = ([0.0; 4], [0.0; 4]);
         for j in 0..b.len() {
             let i = span - self.degree + j;
             let w = self.weights[i];
-            let c = self.control_points[i];
+            let c = origin.map_or(self.control_points[i], |o| {
+                geom::sub(self.control_points[i], o)
+            });
             let h = [c[0] * w, c[1] * w, c[2] * w, w];
             for k in 0..4 {
                 a[k] += b[j] * h[k];
@@ -345,10 +391,11 @@ pub struct NurbsSurface {
     /// A sampled grid over the domain: seeds for inversion and ray intersection, built on
     /// first use so that reading a file pays nothing for surfaces no query touches.
     grid: std::sync::OnceLock<Grid>,
+    local_quadrature_frame: std::sync::OnceLock<bool>,
 }
 
-/// The surface's own data, without the grid: a cache built on first use, which would make the
-/// output depend on which queries have been asked.
+/// The surface's own data, without query caches, so the output does not depend on
+/// which queries have been asked.
 impl std::fmt::Debug for NurbsSurface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NurbsSurface")
@@ -516,6 +563,7 @@ impl NurbsSurface {
             knots_u,
             knots_v,
             grid: std::sync::OnceLock::new(),
+            local_quadrature_frame: std::sync::OnceLock::new(),
         })
     }
 
@@ -675,6 +723,41 @@ impl NurbsSurface {
 
     /// The point and its exact first partial derivatives (quotient rule on the homogeneous form).
     pub fn value_and_partials(&self, u: f64, v: f64) -> (V3, V3, V3) {
+        self.partials_in_frame(u, v, false)
+    }
+    /// Stable quadrature density and projection derivatives, isolated from normal queries.
+    pub(crate) fn integral_value_and_partials(&self, u: f64, v: f64) -> (V3, V3, V3) {
+        self.partials_in_frame(u, v, self.has_local_quadrature_frame())
+    }
+    pub(crate) fn integral_value(&self, u: f64, v: f64) -> V3 {
+        if self.has_local_quadrature_frame() {
+            self.partials_in_frame(u, v, true).0
+        } else {
+            self.value(u, v)
+        }
+    }
+    pub(crate) fn has_local_quadrature_frame(&self) -> bool {
+        *self
+            .local_quadrature_frame
+            .get_or_init(|| crate::mass::supports_local_quadrature_frame(self))
+    }
+    fn evaluation_origin(&self, su: usize, sv: usize) -> Option<V3> {
+        let center = self.control_points[su - self.degree_u][sv - self.degree_v];
+        (su - self.degree_u..=su)
+            .all(|i| {
+                (sv - self.degree_v..=sv).all(|j| {
+                    let c = self.control_points[i][j];
+                    self.weights[i][j].is_finite()
+                        && (0..3).all(|k| {
+                            c[k].is_finite()
+                                && (c[k] * self.weights[i][j]).is_finite()
+                                && (c[k] - center[k]).is_finite()
+                        })
+                })
+            })
+            .then_some(center)
+    }
+    fn partials_in_frame(&self, u: f64, v: f64, local: bool) -> (V3, V3, V3) {
         let (u0, u1, v0, v1) = self.domain();
         let (u, v) = (u.clamp(u0, u1), v.clamp(v0, v1));
         let nu = self.control_points.len();
@@ -683,13 +766,21 @@ impl NurbsSurface {
         let sv = find_span(&self.knots_v, self.degree_v, nv, v);
         let (bu, du) = basis_and_derivative(&self.knots_u, self.degree_u, su, u);
         let (bv, dv) = basis_and_derivative(&self.knots_v, self.degree_v, sv, v);
+        // Work relative to a local pole; quotient-rule derivatives use the relative point.
+        let origin = if local {
+            self.evaluation_origin(su, sv)
+        } else {
+            None
+        };
         let (mut a, mut a_u, mut a_v) = ([0.0; 4], [0.0; 4], [0.0; 4]);
         for i in 0..bu.len() {
             let ci = su - self.degree_u + i;
             for j in 0..bv.len() {
                 let cj = sv - self.degree_v + j;
                 let w = self.weights[ci][cj];
-                let c = self.control_points[ci][cj];
+                let c = origin.map_or(self.control_points[ci][cj], |o| {
+                    geom::sub(self.control_points[ci][cj], o)
+                });
                 let h = [c[0] * w, c[1] * w, c[2] * w, w];
                 for k in 0..4 {
                     a[k] += bu[i] * bv[j] * h[k];
@@ -700,16 +791,26 @@ impl NurbsSurface {
         }
         let point = [a[0] / a[3], a[1] / a[3], a[2] / a[3]];
         let derive = |d: [f64; 4]| [0, 1, 2].map(|k| (d[k] - d[3] * point[k]) / a[3]);
-        (point, derive(a_u), derive(a_v))
+        (
+            origin.map_or(point, |o| geom::add(o, point)),
+            derive(a_u),
+            derive(a_v),
+        )
     }
 
     pub fn invert(&self, p: V3, hint: Option<(f64, f64)>) -> (f64, f64) {
+        self.invert_in_frame(p, hint, false)
+    }
+    pub(crate) fn integral_invert(&self, p: V3, hint: Option<(f64, f64)>) -> (f64, f64) {
+        self.invert_in_frame(p, hint, self.has_local_quadrature_frame())
+    }
+    fn invert_in_frame(&self, p: V3, hint: Option<(f64, f64)>, local: bool) -> (f64, f64) {
         let (mut u, mut v) = hint.unwrap_or_else(|| self.nearest_grid(p));
         let (u0, u1, v0, v1) = self.domain();
         let settle = 1e-12 * (u1 - u0).abs().max((v1 - v0).abs()).max(1e-300);
         let mut residual = f64::INFINITY;
         for _ in 0..50 {
-            let (s, su, sv) = self.value_and_partials(u, v);
+            let (s, su, sv) = self.partials_in_frame(u, v, local);
             let r = geom::sub(p, s);
             residual = geom::norm(r);
             let (a, b, c) = (geom::dot(su, su), geom::dot(su, sv), geom::dot(sv, sv));
@@ -731,8 +832,16 @@ impl NurbsSurface {
         // Boundary samples sit off their surface by up to the edge tolerance; only a hinted
         // start that lands clearly further away has found a wrong local minimum.
         if hint.is_some() && residual > HINT_RETRY_DISTANCE {
-            let fresh = self.invert(p, None);
-            if geom::dist(self.value(fresh.0, fresh.1), p) < residual {
+            let fresh = self.invert_in_frame(p, None, local);
+            if geom::dist(
+                if local {
+                    self.partials_in_frame(fresh.0, fresh.1, true).0
+                } else {
+                    self.value(fresh.0, fresh.1)
+                },
+                p,
+            ) < residual
+            {
                 return fresh;
             }
         }
@@ -1079,6 +1188,8 @@ struct PreparedAxis {
 /// end with the integral; accumulation must keep the u/v/component order below.
 pub(crate) struct SurfaceEvaluation<'a> {
     surface: &'a NurbsSurface,
+    local: bool,
+    origin: Option<V3>,
     u: Option<PreparedAxis>,
     v: Option<PreparedAxis>,
     spans: Option<(usize, usize)>,
@@ -1089,10 +1200,19 @@ impl<'a> SurfaceEvaluation<'a> {
     pub(crate) fn new(surface: &'a NurbsSurface) -> Self {
         Self {
             surface,
+            local: false,
+            origin: None,
             u: None,
             v: None,
             spans: None,
             controls: Vec::with_capacity((surface.degree_u + 1) * (surface.degree_v + 1)),
+        }
+    }
+
+    pub(crate) fn for_quadrature(surface: &'a NurbsSurface) -> Self {
+        Self {
+            local: surface.has_local_quadrature_frame(),
+            ..Self::new(surface)
         }
     }
 
@@ -1101,7 +1221,7 @@ impl<'a> SurfaceEvaluation<'a> {
         let (u0, u1, v0, v1) = surface.domain();
         let (u, v) = (u.clamp(u0, u1), v.clamp(v0, v1));
         if !(u.is_finite() && v.is_finite()) {
-            return surface.value_and_partials(u, v);
+            return surface.partials_in_frame(u, v, self.local);
         }
         let prepare = |slot: &mut Option<PreparedAxis>, t: f64, knots: &[f64], degree, count| {
             if slot
@@ -1133,13 +1253,19 @@ impl<'a> SurfaceEvaluation<'a> {
             surface.control_points[0].len(),
         );
         let (Some(pu), Some(pv)) = (self.u.as_ref(), self.v.as_ref()) else {
-            return surface.value_and_partials(u, v);
+            return surface.partials_in_frame(u, v, self.local);
         };
         if self.spans != Some((pu.span, pv.span)) {
+            self.origin = self
+                .local
+                .then(|| surface.evaluation_origin(pu.span, pv.span))
+                .flatten();
             self.controls.clear();
             for ci in pu.span - surface.degree_u..=pu.span {
                 for cj in pv.span - surface.degree_v..=pv.span {
-                    let c = surface.control_points[ci][cj];
+                    let c = self.origin.map_or(surface.control_points[ci][cj], |o| {
+                        geom::sub(surface.control_points[ci][cj], o)
+                    });
                     let w = surface.weights[ci][cj];
                     self.controls.push([c[0] * w, c[1] * w, c[2] * w, w]);
                 }
@@ -1165,7 +1291,11 @@ impl<'a> SurfaceEvaluation<'a> {
         }
         let point = [a[0] / a[3], a[1] / a[3], a[2] / a[3]];
         let derive = |d: [f64; 4]| [0, 1, 2].map(|k| (d[k] - d[3] * point[k]) / a[3]);
-        (point, derive(a_u), derive(a_v))
+        (
+            self.origin.map_or(point, |o| geom::add(o, point)),
+            derive(a_u),
+            derive(a_v),
+        )
     }
 }
 
@@ -1208,6 +1338,7 @@ mod tests {
                 )
                 .expect("valid rational test surface");
                 let mut evaluator = SurfaceEvaluation::new(&surface);
+                let mut quadrature = SurfaceEvaluation::for_quadrature(&surface);
                 let coordinates: Vec<f64> = [
                     -1.0,
                     -0.0,
@@ -1234,6 +1365,11 @@ mod tests {
                                 bits(evaluator.value_and_partials(u, v)),
                                 bits(surface.value_and_partials(u, v)),
                                 "degrees {degree_u}/{degree_v}, ({u}, {v})"
+                            );
+                            assert_eq!(
+                                bits(quadrature.value_and_partials(u, v)),
+                                bits(surface.integral_value_and_partials(u, v)),
+                                "quadrature degrees {degree_u}/{degree_v}, ({u}, {v})"
                             );
                         }
                     }
@@ -1423,5 +1559,178 @@ mod tests {
             // Tangent to the unit circle.
             assert!(crate::geom::dot(d, arc.value(t)).abs() < 1e-12);
         }
+    }
+}
+
+#[cfg(test)]
+mod centered_evaluation_controls {
+    use super::*;
+    fn near(a: V3, b: V3) {
+        for k in 0..3 {
+            assert!((a[k] - b[k]).abs() < 1e-12, "{a:?} != {b:?}");
+        }
+    }
+    #[test]
+    fn local_coordinates_do_not_mask_nonfinite_or_overflowed_controls() {
+        for x in [f64::INFINITY, f64::NAN, 1e308] {
+            let c = NurbsCurve::new(
+                1,
+                vec![[x, 0.0, 0.0], [x, 1.0, 0.0]],
+                vec![2.0; 2],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            assert!(c.integral_value(0.5).iter().any(|v| !v.is_finite()));
+            assert!(c.integral_derivative(0.5).iter().any(|v| !v.is_finite()));
+            let s = NurbsSurface::new(
+                1,
+                1,
+                vec![vec![[x, 0.0, 0.0], [x, 1.0, 0.0]]; 2],
+                vec![vec![2.0; 2]; 2],
+                vec![0.0, 0.0, 1.0, 1.0],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            let (p, _, _) = s.integral_value_and_partials(0.5, 0.5);
+            assert!(p.iter().any(|v| !v.is_finite()));
+        }
+    }
+    #[test]
+    fn translated_quadratic_curve_and_surface_keep_analytic_derivatives() {
+        let o = [1e9, -1e9, 1e9];
+        let curve = NurbsCurve::new(
+            2,
+            vec![
+                o,
+                geom::add(o, [1.0, 0.0, 0.0]),
+                geom::add(o, [2.0, 1.0, 0.0]),
+            ],
+            vec![1.0; 3],
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        )
+        .unwrap();
+        near(curve.integral_derivative(0.25), [2.0, 0.5, 0.0]);
+        let controls = (0..3)
+            .map(|i| {
+                (0..3)
+                    .map(|j| {
+                        let u = i as f64 / 2.0;
+                        let v = j as f64 / 2.0;
+                        geom::add(
+                            o,
+                            [
+                                u,
+                                v,
+                                if i == 2 { 1.0 } else { 0.0 }
+                                    + u * v
+                                    + if j == 2 { 1.0 } else { 0.0 },
+                            ],
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let surface =
+            NurbsSurface::new(2, 2, controls, vec![vec![1.0; 3]; 3], knots.clone(), knots).unwrap();
+        let (p, su, sv) = surface.integral_value_and_partials(0.25, 0.75);
+        near(p, geom::add(o, [0.25, 0.75, 0.8125]));
+        near(su, [1.0, 0.0, 1.25]);
+        near(sv, [0.0, 1.0, 1.75]);
+    }
+    #[test]
+    fn translated_rational_linear_curve_keeps_quotient_derivative() {
+        let o = [1e9, -1e9, 1e9];
+        let c = NurbsCurve::new(
+            1,
+            vec![o, geom::add(o, [1.0, 0.0, 0.0])],
+            vec![1.0, 2.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        for t in [0.0, 0.25, 0.5, 1.0] {
+            near(
+                c.integral_derivative(t),
+                [2.0 / (1.0 + t).powi(2), 0.0, 0.0],
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod quadrature_frame_controls {
+    use super::*;
+    #[test]
+    fn closed_and_collapsed_surfaces_keep_query_arithmetic_and_identity() {
+        let knots = vec![0., 0., 1., 1.];
+        let triangle = NurbsSurface::new(
+            1,
+            1,
+            vec![
+                vec![[0., 1., 0.], [0., 0., 0.]],
+                vec![[1., 0., 0.], [0., 0., 0.]],
+            ],
+            vec![vec![1.; 2]; 2],
+            knots.clone(),
+            knots.clone(),
+        )
+        .unwrap();
+        let folded = NurbsSurface::new(
+            1,
+            1,
+            vec![
+                vec![[0., 0., 0.], [0., 1., 0.]],
+                vec![[1., 0., 0.], [1., 1., 0.]],
+                vec![[0., 0., 0.], [0., 1., 0.]],
+            ],
+            vec![vec![1.; 2]; 3],
+            vec![0., 0., 0.5, 1., 1.],
+            knots.clone(),
+        )
+        .unwrap();
+        let bits = |(p, u, v): (V3, V3, V3)| {
+            [
+                p.map(f64::to_bits),
+                u.map(f64::to_bits),
+                v.map(f64::to_bits),
+            ]
+        };
+        for surface in [triangle, folded] {
+            let identity = format!("{surface:?}");
+            assert!(!surface.has_local_quadrature_frame());
+            for (u, v) in [(0.125, 0.25), (0.75, 0.625), (1., 1.)] {
+                assert_eq!(
+                    surface.value(u, v).map(f64::to_bits),
+                    surface.integral_value(u, v).map(f64::to_bits)
+                );
+                assert_eq!(
+                    bits(surface.value_and_partials(u, v)),
+                    bits(surface.integral_value_and_partials(u, v))
+                );
+                let point = surface.value(u, v);
+                let actual = surface.integral_invert(point, None);
+                let expected = surface.invert(point, None);
+                assert_eq!(
+                    [actual.0.to_bits(), actual.1.to_bits()],
+                    [expected.0.to_bits(), expected.1.to_bits()]
+                );
+            }
+            assert_eq!(identity, format!("{surface:?}"));
+        }
+        let open = NurbsSurface::new(
+            1,
+            1,
+            vec![
+                vec![[0., 0., 0.], [0., 1., 0.]],
+                vec![[1., 0., 0.], [1., 1., 0.]],
+            ],
+            vec![vec![1.; 2]; 2],
+            knots.clone(),
+            knots,
+        )
+        .unwrap();
+        let identity = format!("{open:?}");
+        assert!(open.has_local_quadrature_frame());
+        assert_eq!(identity, format!("{open:?}"));
     }
 }
