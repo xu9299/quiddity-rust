@@ -1,0 +1,49 @@
+name: NURBS integral snapshot delta audit
+
+on:
+  push:
+    branches: [validation/nurbs-integral-052-audit-20261114]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: maintenance
+          sparse-checkout: .github
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: 184946bc4f0e2924f5c1fc370bcd62baf7387679
+          path: source
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: "14099562262"
+          run-id: "43550362331"
+          github-token: ${{ github.token }}
+          path: evidence
+          merge-multiple: true
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Compare existing outputs without changing expectations
+        shell: bash
+        run: |
+          test "$(git -C source rev-parse HEAD)" = 184946bc4f0e2924f5c1fc370bcd62baf7387679
+          uv run --no-project --python 3.14 python maintenance/.github/scripts/audit_nurbs_snapshots.py --expected source/tests/fixtures/rust-snapshot --evidence evidence --out audit
+          test -z "$(git -C source status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: nurbs-integral-snapshot-delta-audit
+          path: audit/
+          retention-days: 30
