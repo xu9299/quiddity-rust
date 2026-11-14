@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: xu9299/quiddity-rust
-          ref: 37a647dea815a5d4125facaae7b6ff8e853547de
+          ref: 184946bc4f0e2924f5c1fc370bcd62baf7387679
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -77,8 +77,8 @@ jobs:
           mkdir -p ../validation-logs/verified
           rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
           { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; sw_vers; rustc -vV; cargo -V; uv --version; } | tee ../validation-logs/environment.log
-          test "$(git rev-parse HEAD)" = 37a647dea815a5d4125facaae7b6ff8e853547de
-          test "$(git rev-parse HEAD^{tree})" = 2d4a13ef2a494e166c097ccfd5ee889f3e32e796
+          test "$(git rev-parse HEAD)" = 184946bc4f0e2924f5c1fc370bcd62baf7387679
+          test "$(git rev-parse HEAD^{tree})" = a79eac1be4ae3ce3573ad5ee0c89a4223c202015
           test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
           # Reuse the independently completed, identical upstream baseline:
           # https://github.com/xu9299/quiddity-rust/actions/runs/43531369173/job/132249626951
@@ -100,13 +100,38 @@ jobs:
         run: |
           cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
           cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
-      - name: Public API policy and dependency audit
+      - name: Reuse unchanged public API and dependency checks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cargo install cargo-semver-checks --version 0.51.0 --locked
-          uv run --no-project --python 3.14 python -m unittest discover -s .github -p test_check_semver.py 2>&1 | tee ../validation-logs/semver-policy.log
-          uv run --no-project --python 3.14 python .github/check_semver.py 2>&1 | tee ../validation-logs/semver.log
-          cargo install cargo-audit --version 0.22.2 --locked
-          cargo audit --file Cargo.lock 2>&1 | tee ../validation-logs/audit.log
+          # The previous candidate passed this step before its deliberate cancellation.
+          # This revision changes only the private evaluator, its tests, and prose.
+          previous=37a647dea815a5d4125facaae7b6ff8e853547de
+          git diff --name-only "$previous" HEAD | sort > ../validation-logs/reused-scope.log
+          files=(CHANGELOG.md
+                 crates/haecceity/src/nurbs/integral.rs
+                 crates/haecceity/src/nurbs/integral/tests.rs
+                 docs/nurbs-integration.md)
+          printf '%s\n' "${files[@]}" | sort > ../validation-logs/allowed-scope.log
+          diff -u ../validation-logs/allowed-scope.log ../validation-logs/reused-scope.log
+          endpoint=repos/xu9299/quiddity-rust/actions/jobs/132295200583
+          query='.steps[]
+            | select(.name == "Public API policy and dependency audit")
+            | .conclusion'
+          conclusion=$(gh api "$endpoint" --jq "$query")
+          test "$conclusion" = success
+          summary='Reused passing API policy, semver and Cargo.lock audit:'
+          job_url=https://github.com/xu9299/quiddity-rust/actions/runs/43545319693/job/132295200583
+          printf '%s\n' "$summary" "$job_url" | tee ../validation-logs/reused-checks.log
+      - name: Public synthetic surface-evaluation timing
+        env:
+          RUST_TEST_THREADS: "1"
+          HAECCEITY_THREADS: "1"
+        run: |
+          timing_args=(-p haecceity --lib --release --locked
+            nurbs::integral::tests::benchmark_synthetic_inner_sweeps
+            -- --exact --ignored --nocapture)
+          cargo test "${timing_args[@]}" 2>&1 | tee ../validation-logs/synthetic-timing.log
       - name: Strict candidate snapshot reproduction
         run: |
           cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
