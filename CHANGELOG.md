@@ -26,6 +26,11 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Specialize low-degree NURBS face-integral evaluation by contracting the fixed
+  parameter direction and evaluating centered span polynomials. Keep both partials
+  and the original evaluator for high degree, extreme active weights or nonfinite
+  results; floating association can change while quadrature and tolerances remain.
+
 - Project recognition keeps face queries and volume slabs on the calling thread.
   Reuse and rejection witnesses remain enabled without extra compute workers or
   recovery scheduling; independent parts may still be dispatched by the caller.

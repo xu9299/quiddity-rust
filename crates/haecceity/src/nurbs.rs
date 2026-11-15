@@ -5,6 +5,8 @@
 
 use super::geom::{self, COORD_FLOOR, V3};
 
+pub(crate) mod integral;
+
 fn find_span(knots: &[f64], degree: usize, n: usize, t: f64) -> usize {
     // n = number of control points; valid spans are degree..n-1: the last whose knot is <= t.
     degree + knots[degree + 1..n.max(degree + 1)].partition_point(|&k| k <= t)
