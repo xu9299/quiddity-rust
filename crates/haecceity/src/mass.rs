@@ -2073,14 +2073,18 @@ mod tests {
             for face in 0..part.faces.len() {
                 let original = without_sample_reuse(|| {
                     (
-                        part.compute_face_mass(face).map(|v| v.map(f64::to_bits)),
+                        part.compute_face_mass(face)
+                            .terms
+                            .map(|v| v.map(f64::to_bits)),
                         part.compute_face_moments(face).map(moment_bits),
                     )
                 });
                 assert_eq!(
                     original,
                     (
-                        part.compute_face_mass(face).map(|v| v.map(f64::to_bits)),
+                        part.compute_face_mass(face)
+                            .terms
+                            .map(|v| v.map(f64::to_bits)),
                         part.compute_face_moments(face).map(moment_bits),
                     ),
                     "{name}, face {face}"
@@ -2125,7 +2129,10 @@ mod tests {
                 SAMPLE_REUSE_COUNTS.set([0; 2]);
                 PREFIX_REUSE_COUNTS.set([0; 2]);
                 let started = std::time::Instant::now();
-                let value = part.compute_face_mass(face).map(|v| v.map(f64::to_bits));
+                let value = part
+                    .compute_face_mass(face)
+                    .terms
+                    .map(|v| v.map(f64::to_bits));
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(expected) = expected {
                     assert_eq!(value, expected, "face {face}, round {round}");
