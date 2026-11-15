@@ -6,6 +6,7 @@ use quiddity::{Part, file_api, kernel::step, serve};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod pmi;
+mod timing;
 
 pyo3::create_exception!(quiddity, QuiddityError, PyRuntimeError);
 
@@ -69,6 +70,13 @@ impl Input {
         }
     }
 
+    fn recognise_document(self) -> Result<String, String> {
+        match self {
+            Self::Path(path) => file_api::recognise_document_file(&path),
+            Self::Bytes(bytes) => file_api::recognise_document_bytes(bytes),
+        }
+    }
+
     fn fingerprints(self) -> Result<quiddity::Fingerprints, String> {
         let output = match self {
             Self::Path(path) => serve::recognise_file(&path),
@@ -80,9 +88,19 @@ impl Input {
 }
 
 #[pyfunction]
-fn recognise(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
+#[pyo3(signature = (step, *, on_timing=None))]
+fn recognise(
+    py: Python<'_>,
+    step: &Bound<'_, PyAny>,
+    on_timing: Option<Py<PyAny>>,
+) -> PyResult<String> {
     let input = Input::extract(step)?;
-    detached(py, || input.recognise())?.map_err(PyValueError::new_err)
+    detached(py, move || {
+        let _session = timing::start(on_timing);
+        let _stage = quiddity::kernel::timing::stage("recognition");
+        input.recognise()
+    })?
+    .map_err(PyValueError::new_err)
 }
 
 /// Return complete recognition and evidence as JSON from shared analysis.
@@ -94,20 +112,55 @@ fn recognise(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
 /// Recognition document parameters remain in file coordinates. An evidence refusal
 /// preserves recognition and is reported in ``evidence_error`` with ``evidence: null``.
 #[pyfunction]
-fn recognise_with_evidence(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<String> {
+#[pyo3(signature = (step, *, on_timing=None))]
+fn recognise_with_evidence(
+    py: Python<'_>,
+    step: &Bound<'_, PyAny>,
+    on_timing: Option<Py<PyAny>>,
+) -> PyResult<String> {
     let input = Input::extract(step)?;
-    detached(py, || match input {
-        Input::Path(path) => file_api::recognise_with_evidence_file(&path),
-        Input::Bytes(bytes) => file_api::recognise_with_evidence_bytes(bytes),
+    detached(py, move || {
+        let _session = timing::start(on_timing);
+        let _stage = quiddity::kernel::timing::stage("analysis");
+        match input {
+            Input::Path(path) => file_api::recognise_with_evidence_file(&path),
+            Input::Bytes(bytes) => file_api::recognise_with_evidence_bytes(bytes),
+        }
     })?
     .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
-#[pyo3(signature = (step, framed=false))]
-fn evidence(py: Python<'_>, step: &Bound<'_, PyAny>, framed: bool) -> PyResult<String> {
+#[pyo3(signature = (step, *, on_timing=None))]
+fn recognise_document(
+    py: Python<'_>,
+    step: &Bound<'_, PyAny>,
+    on_timing: Option<Py<PyAny>>,
+) -> PyResult<String> {
     let input = Input::extract(step)?;
-    detached(py, || file_api::evidence(&input.load()?, framed))?.map_err(PyValueError::new_err)
+    detached(py, move || {
+        let _session = timing::start(on_timing);
+        let _stage = quiddity::kernel::timing::stage("recognition");
+        input.recognise_document()
+    })?
+    .map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+#[pyo3(signature = (step, framed=false, *, on_timing=None))]
+fn evidence(
+    py: Python<'_>,
+    step: &Bound<'_, PyAny>,
+    framed: bool,
+    on_timing: Option<Py<PyAny>>,
+) -> PyResult<String> {
+    let input = Input::extract(step)?;
+    detached(py, move || {
+        let _session = timing::start(on_timing);
+        let _stage = quiddity::kernel::timing::stage("evidence");
+        file_api::evidence(&input.load()?, framed)
+    })?
+    .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
@@ -252,6 +305,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_manifest, m)?)?;
     m.add_class::<ManifestHandle>()?;
     m.add_function(wrap_pyfunction!(recognise_with_evidence, m)?)?;
+    m.add_function(wrap_pyfunction!(recognise_document, m)?)?;
     m.add_function(wrap_pyfunction!(evidence, m)?)?;
     m.add_function(wrap_pyfunction!(anchor, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprints, m)?)?;

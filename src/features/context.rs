@@ -228,6 +228,7 @@ internal_entry! {
     ) -> &Result<Vec<SectionRecess>, SectionRecessError> {
         let mode = usize::from(super::evidence::local_degradation());
         self.native_section_recesses[mode].get_or_init(|| {
+            let _timing = crate::kernel::timing::stage("section_recess.native_discovery");
             super::section_recess_discovery::discover_section_recesses(self, surfaces)
                 .map(|found| found.into_iter().map(|occurrence| occurrence.record).collect())
         })

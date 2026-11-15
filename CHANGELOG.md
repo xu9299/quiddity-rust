@@ -4,6 +4,20 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### Added
+
+- Optional native stage and face timing, including the shared-analysis Python entry point.
+- A document-only recognition entry that omits correspondence fingerprints.
+
+### Changed
+
+- Retain project-local integral sample and ordered-prefix reuse, thread candidate filtering,
+  early wall eligibility checks and floor-proof ordering on the official 0.5.4 baseline.
+- Use the released widest-slab volume rejection and refusal checks in place of the local
+  individual-slab overlay. Preserve complete sums and exact B-Rep evidence.
+
 ## 0.5.4 (2026-11-16)
 
 A patch release for Specify and draftwright 0.6.0-alpha.4: a hole's counterbore, spotface,

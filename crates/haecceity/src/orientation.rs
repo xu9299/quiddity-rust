@@ -36,6 +36,7 @@ impl Part {
     /// and signed volume unchanged. Probing every face instead introduces substantial ray
     /// and spline work, and unproved faces still force mass on otherwise ordinary solids.
     pub fn repair_inverted_shells(mut self) -> Self {
+        let _timing = crate::timing::stage("step.orient_shells");
         for solid in 0..self.solids.len() {
             if !self.solid_is_valid(solid) || outward_proved(&self, solid) {
                 continue;

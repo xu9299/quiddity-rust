@@ -160,6 +160,7 @@ pub(crate) fn section_recess_projection_in(
 ) -> Result<SectionRecessProjection, SectionRecessFamilyError> {
     let surfaces = EffectiveFaces::new(ctx);
     let native = ctx.native_section_recesses(&surfaces).clone()?;
+    let _timing = crate::kernel::timing::stage("section_recess.project_inventory");
     project(ctx, &surfaces, inventory, native)
 }
 
