@@ -1,0 +1,191 @@
+name: NURBS integral current main review
+
+on:
+  push:
+    branches: [validation/nurbs-integral-main-20261115]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nurbs-integral-main-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Wait for the stable-candidate full regression to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 230); do
+            state=$(gh api repos/xu9299/quiddity-rust/actions/runs/43709010777 --jq .status)
+            if [ "$state" = completed ]; then exit 0; fi
+            sleep 30
+          done
+          exit 1
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "4"
+      RUST_TEST_THREADS: "1"
+      RUST_MIN_STACK: "67108864"
+      HAECCEITY_THREADS: "1"
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: c88afa7deefdad5447c67085dfeedd8fb2462408
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record source and Windows compiler
+        run: |
+          New-Item -ItemType Directory -Force ../windows-logs | Out-Null
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git rev-parse HEAD 'HEAD^{tree}' | Tee-Object ../windows-logs/source.log
+          rustc -vV | Tee-Object ../windows-logs/environment.log
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,OSArchitecture | Out-File -Append ../windows-logs/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: nurbs-integral-review-windows
+      - name: Affected Windows correctness checks
+        run: |
+          $commands = @(
+            @('test','-p','haecceity','--lib','--release','--locked','nurbs::'),
+            @('test','-p','haecceity','--lib','--release','--locked','mass::'),
+            @('test','-p','haecceity','--test','face_areas','--release','--locked','held_side_crossing_a_knot_line','--','--exact'),
+            @('test','-p','haecceity','--test','face_areas','--release','--locked','rotated_seam_on_a_closed_bspline_surface','--','--exact'),
+            @('test','-p','haecceity','--test','face_areas','--release','--locked','foot_point_turning_next_to_an_edge_end','--','--exact'),
+            @('test','-p','haecceity','--test','face_integrals','--release','--locked','bspline_held_side_has_independently_integrated_second_moments','--','--exact'),
+            @('test','-p','snapshot-tool','--release','--locked')
+          )
+          $i = 0
+          foreach ($arguments in $commands) {
+            $i += 1
+            & cargo @arguments 2>&1 | Tee-Object "../windows-logs/check-$i.log"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: nurbs-integral-main-windows-evidence
+          path: windows-logs/
+          retention-days: 30
+  review:
+    needs: [admission, windows]
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: c88afa7deefdad5447c67085dfeedd8fb2462408
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Record exact source and environment
+        run: |
+          mkdir -p ../validation-logs/verified
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; sw_vers; rustc -vV; cargo -V; uv --version; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = c88afa7deefdad5447c67085dfeedd8fb2462408
+          test "$(git rev-parse HEAD^{tree})" = 2212b3c28a1a29cbad379bde85cf6c47a8bde8ba
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(sw_vers -productVersion)" = '15.8.2'
+          test "$(sw_vers -buildVersion)" = '24H232'
+          test "$(uname -m)" = arm64
+          rustc -vV | grep -Fx 'release: 1.99.1'
+          git diff --stat 44b6b16fa87ba7219202495418d4f6ca86eda2b8 HEAD | tee ../validation-logs/scope.log
+          # The integration update retains the exact reviewed evaluator and snapshots.
+          git diff --exit-code c294e9b1f5ab93b68b8c26a319ccf299889ed000 HEAD -- crates/haecceity/src/nurbs.rs crates/haecceity/src/nurbs crates/snapshot-tool tests/fixtures/rust-snapshot
+          git diff --exit-code 44b6b16fa87ba7219202495418d4f6ca86eda2b8 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests ':!tests/fixtures/rust-snapshot'
+          cargo run -p snapshot-tool --release --locked -- --diff 44b6b16fa87ba7219202495418d4f6ca86eda2b8 > ../validation-logs/expectation-diff.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: nurbs-integral-review-macos-15
+      - name: Formatting and complete workspace lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Supported feature-off builds
+        run: |
+          cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
+      - name: Reuse unchanged API policy and audit evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-project python - <<'PY'
+          import subprocess
+          def diff(base, head):
+              data = subprocess.check_output(['git', 'diff', '--unified=0', base, head, '--', 'crates/haecceity/src/mass.rs'], text=True)
+              return [s for s in data.splitlines() if s.startswith(('+', '-')) and not s.startswith(('+++', '---'))]
+          assert diff('aacfdc5ca23268ab99de316753269f5364e2e8d3', 'c294e9b1f5ab93b68b8c26a319ccf299889ed000') == diff('44b6b16fa87ba7219202495418d4f6ca86eda2b8', 'HEAD')
+          PY
+          endpoint=repos/xu9299/quiddity-rust/actions/jobs/132311204208
+          conclusion=$(gh api "$endpoint" --jq '.steps[] | select(.name == "Reuse unchanged public API and dependency checks") | .conclusion')
+          test "$conclusion" = success
+          printf '%s\n' 'Exact private evaluator and one-line integration delta retained; API/semver/audit evidence reused.' | tee ../validation-logs/reused-checks.log
+      - name: Strict candidate snapshot reproduction
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          grep -Fx 'HEAD reproduces all 2702 snapshots byte for byte' ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Complete workspace and corpus regression
+        if: ${{ !cancelled() }}
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+          RUST_BACKTRACE: full
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+      - name: Snapshot coverage and provenance
+        if: ${{ !cancelled() }}
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: nurbs-integral-main-arm-evidence
+          path: validation-logs/
+          retention-days: 30
