@@ -21,6 +21,23 @@ in [docs/alpha1.md](docs/alpha1.md).
   the last digits of derived measurements. Unsupported degrees, high active weight
   contrasts, and unsafe evaluations retain the original evaluator. No public API or
   result-schema change.
+- Wire-seeded recess discovery follows the queried edges' face ownership instead of
+  repeatedly comparing every neighbour of a many-loop opening. Unique opposite-use
+  pairing and the resulting seed face sets are unchanged. From #282 (@xu9299).
+- Section passage mouths use the same query instead of a private copy of the old scan
+  (#283).
+
+### Fixed
+
+- Dimensioning measures straight hole depths from the axis intersection with a sloping
+  planar entry face, including counterbores, spotfaces and outer steps. Perpendicular
+  and nonplanar entries, recognition measurements and through traversal lengths are unchanged.
+- Recover refused trimmed spline face integrals using the file's explicit master trim curves,
+  with sampled 2D/3D agreement checks against both face diagonal and area/perimeter scales,
+  and bounded inner and outer quadrature errors (#245). STEP export now preserves source
+  `PCURVE_S1`/`PCURVE_S2` flags on raw B-spline/Bézier master slots even without recovery or a
+  mass query, while retaining source `CURVE_3D` flags. This changes 1,126 faces across the 11
+  flagged corpus files versus the previous writer on main.
 
 ## 0.5.2 (2026-11-13)
 
