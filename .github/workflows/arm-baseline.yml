@@ -1,0 +1,70 @@
+name: STEP memory upstream baseline
+
+on:
+  push:
+    branches: [validation/step-memory-baseline-20261116]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: step-memory-baseline-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  baseline:
+    runs-on: macos-15
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: 3da4a177eef002b6648f00f46add5a5261fdd77f
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Verify source, corpus and standard ARM environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = 3da4a177eef002b6648f00f46add5a5261fdd77f
+          test "$(git rev-parse HEAD^{tree})" = 1b6ef4d517014c23a5a0776c6919a5d5236fa956
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(uname -m)" = arm64
+          rustc -vV | grep -Fx 'release: 1.99.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: step-memory-review-macos-15
+      - name: Strict unchanged-upstream snapshot reproduction
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          grep -E '^HEAD reproduces all [0-9]+ snapshots byte for byte$' ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: step-memory-upstream-baseline-evidence
+          path: validation-logs/
+          retention-days: 30
