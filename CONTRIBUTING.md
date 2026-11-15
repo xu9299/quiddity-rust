@@ -20,6 +20,14 @@ as a full commit hash (an ancestor of HEAD). Releases are tagged by the maintain
 Normal tests cannot accept a changed output. Do not hand-edit snapshots or restore a Python
 oracle. Historical verdicts live in [the archive](docs/history/python-parity.md).
 
+When the required producer platform is available only remotely, the explicit local
+`snapshot-tool --record-verified DIR` workflow can record reviewed, already-compared
+output without rerunning recognition on a different platform. Verify the producing job,
+artifact digest and receipt as described in [the maintenance procedure](docs/development.md#recording-reviewed-remote-output).
+This changes expectations intentionally; it is never a substitute for independent
+checks, diff review or strict reproduction of the resulting HEAD. CI cannot record
+expectations with either recording command.
+
 Public integration tests under `tests/` are discovered automatically. Register private-engine
 unit tests in `tests/internal/mod.rs`; they can exercise caller-space algorithms without
 exposing a public feature. The engine uses ordinary Rust modules, so `cargo fmt --all` covers it.

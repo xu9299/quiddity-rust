@@ -6,6 +6,13 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+### Added
+
+- An explicit local `snapshot-tool --record-verified DIR` maintenance command records
+  reviewed output from a trusted remote producer with matching source, inputs, previous
+  expectations and output digests. It remains forbidden in CI and is separate from all
+  checking modes; recording still requires diff review and strict reproduction afterward.
+
 ### Changed
 
 - Evaluate low-degree NURBS face integrands using fixed-parameter homogeneous contraction

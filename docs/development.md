@@ -18,6 +18,40 @@ Do not remove output to improve metrics, lower a label/inventory floor, loosen a
 or regenerate expectations merely to make a failure pass. Investigate against the independent
 references, then review an intentional behavior change and its decompressed snapshot diff.
 
+## Recording reviewed remote output
+
+When the reproducible producer platform is remote, run the ordinary comparisons,
+complete workspace tests and snapshot coverage there first. Keep the unchanged
+comparison bands. Download the passing producer output and verify its artifact
+digest against the trusted job; inspect every changed value before recording it.
+Do not use failed or partial producer output. Strict byte comparison may differ
+for the intentional numerical change under review.
+
+The local-only command below avoids regenerating recognition on a different
+platform. The directory contains the complete `*.json.gz` producer inventory and
+`receipt.json`. The receipt is a transport manifest, not an authentication proof:
+the operator must establish the trusted job, successful checks and artifact digest.
+It contains `schema: 1`, `kind: "quiddity-verified-snapshots"`, full `source_commit`
+and `source_tree` Git IDs, `inputs`, `expected_snapshots` and `verified_snapshots`
+path-to-SHA-256 maps, and `ordinary_comparisons`, `coverage`, `workspace` all equal
+to `"passed"`. A nonempty `origin` object records job, artifact and command identity.
+
+```sh
+cargo run -p snapshot-tool --release -- --record-verified /path/to/reviewed-output
+cargo run -p snapshot-tool --release -- --diff BASE_REF
+```
+
+The tool requires unchanged inputs, exact old expectation and produced digests,
+complete inventory, and an identified ancestor source. Only snapshot-tool,
+documentation and expected-snapshot changes may follow that source; recognition,
+test, dependency or input changes require fresh verification. Recording is atomic
+and remains forbidden in CI. It preserves the actual producer commit and records
+the receipt's origin in provenance. It does not authenticate the receipt, rerun
+independent geometry checks, relax any comparator, or claim strict reproduction.
+After reviewing and committing the generated expectations and provenance, run
+strict `--check` on the required producer platform. Ordinary CI still only checks;
+it never records or accepts new expectations automatically.
+
 ## Regression snapshots
 
 Commit source and input changes before generating, so provenance identifies a reproducible

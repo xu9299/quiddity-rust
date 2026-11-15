@@ -14,6 +14,8 @@ type Digests = BTreeMap<String, String>;
 const PREFIX: &str = "tests/fixtures/rust-snapshot";
 const INVOCATION: &str = "cargo run -p snapshot-tool --release --";
 
+mod record_verified;
+
 #[derive(Default)]
 struct Args {
     check: bool,
@@ -21,6 +23,7 @@ struct Args {
     diff: Option<String>,
     file: Option<String>,
     verify_dir: Option<PathBuf>,
+    record_verified: Option<PathBuf>,
 }
 impl Args {
     fn parse(args: impl Iterator<Item = String>) -> Result<Self> {
@@ -34,6 +37,10 @@ impl Args {
                 "--file" => parsed.file = Some(args.next().ok_or("--file requires a suffix")?),
                 "--verify-dir" => {
                     parsed.verify_dir = Some(args.next().ok_or("--verify-dir requires DIR")?.into())
+                }
+                "--record-verified" => {
+                    parsed.record_verified =
+                        Some(args.next().ok_or("--record-verified requires DIR")?.into())
                 }
                 _ => return Err(format!("unknown argument: {arg}").into()),
             }
@@ -49,6 +56,15 @@ impl Args {
         }
         if parsed.verify_dir.is_some() && !(parsed.check && parsed.coverage_only) {
             return Err("--verify-dir requires --check --coverage-only".into());
+        }
+        if parsed.record_verified.is_some()
+            && (parsed.check
+                || parsed.coverage_only
+                || parsed.diff.is_some()
+                || parsed.file.is_some()
+                || parsed.verify_dir.is_some())
+        {
+            return Err("--record-verified cannot be combined with check or diff flags".into());
         }
         Ok(parsed)
     }
@@ -294,7 +310,7 @@ fn install(root: &Path, generated: &Path) -> Result<()> {
 fn run() -> Result<()> {
     if std::env::args().any(|s| s == "--help" || s == "-h") {
         println!(
-            "{INVOCATION} [--check [--coverage-only [--verify-dir DIR]] | --diff REF [--file SUFFIX]]\n\nWithout flags, regenerate (forbidden in CI). --verify-dir checks already-passing shard output without replaying tests."
+            "{INVOCATION} [--check [--coverage-only [--verify-dir DIR]] | --diff REF [--file SUFFIX] | --record-verified DIR]\n\nWithout flags, regenerate (forbidden in CI). --verify-dir checks already-passing shard output without replaying tests. --record-verified explicitly records reviewed output with a source/input/digest receipt (also forbidden in CI); see docs/development.md."
         );
         return Ok(());
     }
@@ -319,6 +335,9 @@ fn run() -> Result<()> {
     clean(&root)?;
     let source = git(&root, &["rev-parse", "HEAD"])?;
     let before_inputs = inputs(&root, &corpus)?;
+    if let Some(dir) = args.record_verified {
+        return record_verified::run(&root, &dir, &corpus, &before_inputs, &source);
+    }
     if let Some(dir) = args.verify_dir {
         return check(&root, &dir, &before_inputs, true);
     }
