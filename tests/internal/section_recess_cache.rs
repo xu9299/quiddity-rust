@@ -15,6 +15,9 @@ fn section_recess_cache_preserves_native_bytes_and_separates_modes() {
         "golden_triangular_and_hex_pockets.step",
         "golden_blind_pockets_and_pocket_patterns.step",
         "two_solids.step",
+        "unowned_recess_solid.step.gz",
+        "unowned_recess_shell.step.gz",
+        "unowned_recess_mixed.step.gz",
     ] {
         let part = quiddity::read_step_file(&common::fixtures().join(file)).unwrap();
         let ctx = Context::new(&part);

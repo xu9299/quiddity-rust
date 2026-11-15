@@ -819,9 +819,10 @@ pub(crate) fn document_from_view(
     frame: Option<crate::frames::PartFrame>,
     view: RecognitionEvidence<'_>,
 ) -> EvidenceDocument {
-    // A physical record previously serialized every family for each feature. Keep
-    // that exact JSON tree once for this document; recess records have their own
-    // projection and continue through the existing record accessor.
+    // Lazily serialize this immutable view.result once, only for physical records;
+    // select by the same family field and index as record(), in view.features order.
+    // The tree dies with this document build. Recesses and source refusals use
+    // their separate projection and accessor.
     let physical_records = std::sync::OnceLock::new();
     let features = view
         .features

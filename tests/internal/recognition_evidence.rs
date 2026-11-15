@@ -18,11 +18,15 @@ const KNOWN: &str = "references/recognition_evidence_motion.json";
 fn document_record_serialization_matches_the_individual_accessor_bytes() {
     let mut compared = 0;
     let mut recesses = 0;
+    let mut source_refusals = 0;
     for file in [
         "golden_blind_pockets_and_pocket_patterns.step",
         "golden_counterbored_and_countersunk_holes.step",
         "golden_open_channels.step",
         "held_side_knot.step",
+        "unowned_recess_solid.step.gz",
+        "unowned_recess_shell.step.gz",
+        "unowned_recess_mixed.step.gz",
     ] {
         let part = read_step_file(&common::fixtures().join(file)).unwrap();
         let view = build_recognition_evidence(&part).unwrap();
@@ -38,9 +42,10 @@ fn document_record_serialization_matches_the_individual_accessor_bytes() {
             assert_eq!(record.index, view.features[position].index);
             compared += 1;
             recesses += usize::from(record.family == "section_recesses");
+            source_refusals += usize::from(record.family == "section_recess_source_refusals");
         }
     }
-    assert!(compared > 0 && recesses > 0);
+    assert!(compared > 0 && recesses > 0 && source_refusals > 0);
 }
 
 fn corpus() -> Option<PathBuf> {

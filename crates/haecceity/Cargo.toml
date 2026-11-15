@@ -1,6 +1,6 @@
 [package]
 name = "haecceity"
-version = "0.5.0"
+version = "0.5.2"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/pzfreo/quiddity"
@@ -26,6 +26,7 @@ cadmpeg-codec-step = { version = "=0.6.7", optional = true }
 cadmpeg-core = { version = "=0.6.7", optional = true }
 cadmpeg-ir = { version = "=0.6.7", optional = true }
 flate2 = "1.1.10"
+libm = "0.2.16"
 i_overlay = "8.1.2"
 spade = "2.15.1"
 step-io = "0.3"

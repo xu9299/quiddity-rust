@@ -49,6 +49,38 @@ in [docs/alpha1.md](docs/alpha1.md).
   same context and ownership mode. Inventory projection, ordering and refusals are
   still evaluated for each caller's current inventory.
 
+## 0.5.2 (2026-11-13)
+
+A patch release: faster recognition with byte-identical output, contributed by xu9299. No API
+change. Measured against 0.5.1: about 18% less CPU on per-product assemblies, about 48%
+less memory when writing evidence, about 8% less CPU on large freeform parts.
+
+### Changed
+
+- Serialize physical evidence records once per document; existing output and refusal contracts are retained.
+- Reuse native recess discovery within one context and ownership mode; existing output and refusal contracts are retained.
+- Share immutable ray-query geometry within a part; existing output and refusal contracts are retained.
+- Reuse exact NURBS operands within a face integral; existing output and refusal contracts are retained.
+- Stop volume queries when their existing answer is already settled; existing output and refusal contracts are retained.
+
+## 0.5.1 (2026-11-13)
+
+A patch release: additive API, no breaking change.
+
+- **GD&T frames match CAD's native TOLERANCE.** New `haecceity::presentation::gdt::cad_control_frame`
+  and `cad_datum_frame` lay frames out as CAD does: 2.5 mm text (`gdt::TEXT_HEIGHT`, intended
+  pen `gdt::TEXT_PEN` 0.25 mm), a box twice the text height (5 mm, was 6 mm), each cell its ink
+  plus the text height. The symbols and text are strokes and arcs from QCAD's public-domain
+  `gdt` and `Standard` fonts (credited in `NOTICE`), so `Callout::letters` is empty for frames
+  and `strokes`/`arcs` after `frame_strokes` carry all the ink; `runs`, `cells` and `cell_boxes`
+  are unchanged in meaning. `gdt::cad_frame_missing` reports characters neither font has.
+  `presentation::tolerance` and `presentation::datum` now use them, so written presentations
+  change (the committed written fixtures were regenerated).
+- `control_frame` and `datum_frame` are unchanged and are superseded by the new functions;
+  they will be deprecated in the next minor release.
+- The text layer's coverage of the characteristic symbols (the private `glyph`) now draws
+  from the `gdt` font instead of the hand-made strokes.
+
 ## 0.5.0 (2026-11-12)
 
 Upgrading from 0.4.9:

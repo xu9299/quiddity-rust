@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "haecceity"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "cadmpeg-codec-f3d",
  "cadmpeg-codec-step",
@@ -434,6 +434,7 @@ dependencies = [
  "cadmpeg-ir",
  "flate2",
  "i_overlay",
+ "libm",
  "memmap2",
  "serde",
  "serde_json",
@@ -756,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "quiddity"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -772,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "quiddity-py"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "pyo3",
  "quiddity",

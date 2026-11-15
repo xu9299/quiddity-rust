@@ -237,7 +237,8 @@ pub fn fills_at_most(solid: &Classifier<'_>, probe: &Probe<'_>, limit: f64) -> b
             }
             true
         }
-        // Unanswered, or more material than *limit* already.
+        // Unanswered, or the exact-pass prefix strictly exceeds *limit*. Nonnegative
+        // lengths and positive weights cannot reduce it; equality does not reject.
         _ => false,
     }
 }
