@@ -1,0 +1,164 @@
+name: Independent volume candidates ARM validation
+
+on:
+  push:
+    branches: [validation/volume-candidates-20261115]
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        options: [candidates, baseline]
+        default: candidates
+      candidate:
+        type: choice
+        options: [both, edge, widest]
+        default: both
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  baseline:
+    if: github.event.created == true || inputs.target == 'baseline'
+    runs-on: macos-15
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: 5f54e25653a5f1110b8b763411f6251090bf0eb0
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: bd16a9a04f78c057e2247edbfc852649dfc18cd6
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record exact source and environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = 5f54e25653a5f1110b8b763411f6251090bf0eb0
+          test "$(git rev-parse HEAD^{tree})" = 8fe2aacee1040df01e84267821ebf5d04f1db3bc
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = bd16a9a04f78c057e2247edbfc852649dfc18cd6
+          test "$(uname -m)" = arm64
+          rustc -vV | grep -Fx 'release: 1.99.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: volume-candidates-macos-15
+      - name: Strict reproduction of unchanged upstream snapshots
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          grep -Fx 'HEAD reproduces all 2702 snapshots byte for byte' ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: volume-main-20261115-baseline-evidence
+          path: validation-logs/
+          retention-days: 30
+
+  review:
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'candidates'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(inputs.candidate == 'edge' && '[{"candidate":"edge","suite":"checks","commit":"a248aa5a04168c9508c59af873158099ea365622","tree":"f32685bd785a1ed0b96f1debb57d74728f134f82"},{"candidate":"edge","suite":"workspace","commit":"a248aa5a04168c9508c59af873158099ea365622","tree":"f32685bd785a1ed0b96f1debb57d74728f134f82"}]' || inputs.candidate == 'widest' && '[{"candidate":"widest","suite":"checks","commit":"52a4616b165ea73dce9f213df13eb4b0151ce19a","tree":"cc354618f96a5bd46e727d755cf7b03017f3b244"},{"candidate":"widest","suite":"workspace","commit":"52a4616b165ea73dce9f213df13eb4b0151ce19a","tree":"cc354618f96a5bd46e727d755cf7b03017f3b244"}]' || '[{"candidate":"edge","suite":"checks","commit":"a248aa5a04168c9508c59af873158099ea365622","tree":"f32685bd785a1ed0b96f1debb57d74728f134f82"},{"candidate":"edge","suite":"workspace","commit":"a248aa5a04168c9508c59af873158099ea365622","tree":"f32685bd785a1ed0b96f1debb57d74728f134f82"},{"candidate":"widest","suite":"checks","commit":"52a4616b165ea73dce9f213df13eb4b0151ce19a","tree":"cc354618f96a5bd46e727d755cf7b03017f3b244"},{"candidate":"widest","suite":"workspace","commit":"52a4616b165ea73dce9f213df13eb4b0151ce19a","tree":"cc354618f96a5bd46e727d755cf7b03017f3b244"}]') }}
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ${{ matrix.commit }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: bd16a9a04f78c057e2247edbfc852649dfc18cd6
+          path: quiddity-corpus
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Record exact source and environment
+        run: |
+          mkdir -p ../validation-logs/verified
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; sw_vers; rustc -vV; cargo -V; uv --version; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = ${{ matrix.commit }}
+          test "$(git rev-parse HEAD^{tree})" = ${{ matrix.tree }}
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = bd16a9a04f78c057e2247edbfc852649dfc18cd6
+          test "$(uname -m)" = arm64
+          rustc -vV | grep -Fx 'release: 1.99.1'
+          git diff --stat 5f54e25653a5f1110b8b763411f6251090bf0eb0 HEAD | tee ../validation-logs/scope.log
+          git diff --exit-code 5f54e25653a5f1110b8b763411f6251090bf0eb0 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: volume-candidates-macos-15
+      - name: Formatting and complete workspace lint
+        if: matrix.suite == 'checks'
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Supported feature-off builds
+        if: matrix.suite == 'checks'
+        run: |
+          cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
+      - name: Public API policy and dependency audit
+        if: matrix.suite == 'checks'
+        run: |
+          cargo install cargo-semver-checks --version 0.51.0 --locked
+          uv run --no-project --python 3.14 python -m unittest discover -s .github -p test_check_semver.py 2>&1 | tee ../validation-logs/semver-policy.log
+          uv run --no-project --python 3.14 python .github/check_semver.py 2>&1 | tee ../validation-logs/semver.log
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --file Cargo.lock 2>&1 | tee ../validation-logs/audit.log
+      - name: Strict candidate snapshot reproduction
+        if: matrix.suite == 'checks'
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          grep -Fx 'HEAD reproduces all 2702 snapshots byte for byte' ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Complete workspace and corpus regression
+        if: ${{ !cancelled() && matrix.suite == 'workspace' }}
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+          RUST_BACKTRACE: full
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+      - name: Snapshot coverage and provenance
+        if: ${{ !cancelled() && matrix.suite == 'workspace' }}
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: volume-${{ matrix.candidate }}-${{ matrix.suite }}-evidence
+          path: validation-logs/
+          retention-days: 30
