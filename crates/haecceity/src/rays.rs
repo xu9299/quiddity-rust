@@ -72,6 +72,7 @@ pub(super) struct RayEdges {
     boxes: Vec<Bounds>,
     runs: Vec<Vec<Bounds>>,
     cracks: Vec<std::sync::OnceLock<f64>>,
+    intervals: Vec<std::sync::OnceLock<EdgeInterval>>,
 }
 
 pub struct RayCaster<'a> {
@@ -93,6 +94,7 @@ pub struct RayCaster<'a> {
     /// Per part edge, once asked: the furthest it strays from any face's surface it bounds
     /// ([`Self::crack`]).
     cracks: &'a [std::sync::OnceLock<f64>],
+    intervals: &'a [std::sync::OnceLock<EdgeInterval>],
     /// Per part face: whether rays meet it (it is one of `faces`).
     member: Vec<bool>,
     /// Whether every face rays meet can be intersected, so that [`Self::hits`] never gives up.
@@ -157,6 +159,9 @@ impl<'a> RayCaster<'a> {
                 })
                 .collect(),
             runs: part.edges.iter().map(|e| runs(&e.samples)).collect(),
+            intervals: (0..part.edges.len())
+                .map(|_| std::sync::OnceLock::new())
+                .collect(),
             cracks: (0..part.edges.len())
                 .map(|_| std::sync::OnceLock::new())
                 .collect(),
@@ -182,6 +187,7 @@ impl<'a> RayCaster<'a> {
             root_box,
             edge_tol,
             cracks: &edges.cracks,
+            intervals: &edges.intervals,
             member,
             intersectable,
         }
@@ -490,7 +496,8 @@ impl<'a> RayCaster<'a> {
             let band = COORD_FLOOR + deviation;
             deviation > COORD_FLOOR
                 && self.edge_boxes[e].contains(q, OVERSHOOT_BANDS * band)
-                && geom::dist(nearest_on_edge(&part.edges[e], q).0, q) <= OVERSHOOT_BANDS * band
+                && geom::dist(nearest_on_edge(&part.edges[e], q, &self.intervals[e]).0, q)
+                    <= OVERSHOOT_BANDS * band
                 && self.past_neighbour(i, e, band, q)
         })
     }
@@ -511,7 +518,7 @@ impl<'a> RayCaster<'a> {
                 .parameters(p, None)
                 .map(|(u, v)| surface.value(u, v))
         };
-        let Some(foot) = onto(nearest_on_edge(&part.edges[e], q).0) else {
+        let Some(foot) = onto(nearest_on_edge(&part.edges[e], q, &self.intervals[e]).0) else {
             return false;
         };
         let Some(away) = geom::unit(geom::sub(q, foot)) else {
@@ -639,7 +646,7 @@ impl<'a> RayCaster<'a> {
             }
             // The polyline only finds the edges near; the distance that decides is the curve's,
             // at the tolerance OpenCascade's intersector is loaded with.
-            let (c, between_ends) = nearest_on_edge(edge, q);
+            let (c, between_ends) = nearest_on_edge(edge, q, &self.intervals[e]);
             let d = geom::dist(c, q);
             on_edge |= d <= COORD_FLOOR;
             if in_band.is_none() {
@@ -823,19 +830,33 @@ fn exact(surface: &Surface) -> bool {
     !matches!(surface, Surface::Freeform { .. } | Surface::Other { .. })
 }
 
+/// Fixed bounds of an open edge in its curve's parameter space. Inverting a spline's two
+/// vertices can be much more costly than testing a ray against its surface; reuse these
+/// geometry-only values across ray casters borrowing the same part. Query-point inversion,
+/// periodic wrapping and endpoint selection retain their original operations and order.
+#[derive(Debug)]
+struct EdgeInterval {
+    lo: f64,
+    hi: f64,
+    period: Option<f64>,
+}
+
 /// The point of an edge nearest *q*, and whether it lies between the edge's ends (else it is
 /// the nearer end).
-fn nearest_on_edge(edge: &Edge, q: V3) -> (V3, bool) {
+fn nearest_on_edge(edge: &Edge, q: V3, interval: &std::sync::OnceLock<EdgeInterval>) -> (V3, bool) {
     let t = edge.curve.parameter(q);
     if edge.is_closed() {
         return (edge.curve.value(t), true);
     }
-    let (a, b) = edge_interval(&edge.curve, edge.start, edge.end, edge.same_sense, false);
-    let (lo, hi) = (a.min(b), a.max(b));
-    let t = edge
-        .curve
-        .period()
-        .map_or(t, |period| lo + (t - lo).rem_euclid(period));
+    let &EdgeInterval { lo, hi, period } = interval.get_or_init(|| {
+        let (a, b) = edge_interval(&edge.curve, edge.start, edge.end, edge.same_sense, false);
+        EdgeInterval {
+            lo: a.min(b),
+            hi: a.max(b),
+            period: edge.curve.period(),
+        }
+    });
+    let t = period.map_or(t, |period| lo + (t - lo).rem_euclid(period));
     if (lo..=hi).contains(&t) {
         (edge.curve.value(t), true)
     } else if geom::dist(edge.start, q) <= geom::dist(edge.end, q) {
@@ -1097,6 +1118,10 @@ mod tests {
             second.edge_runs.as_ptr()
         ));
         assert!(std::ptr::eq(first.cracks.as_ptr(), second.cracks.as_ptr()));
+        assert!(std::ptr::eq(
+            first.intervals.as_ptr(),
+            second.intervals.as_ptr()
+        ));
         assert!(std::ptr::eq(
             first.edge_boxes.as_ptr(),
             custom.edge_boxes.as_ptr()
@@ -1362,3 +1387,7 @@ mod tests {
         assert_eq!(ts, [5.0, 35.0]);
     }
 }
+
+#[cfg(test)]
+#[path = "edge_interval_tests.rs"]
+mod edge_interval_tests;

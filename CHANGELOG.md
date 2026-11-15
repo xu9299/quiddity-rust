@@ -17,6 +17,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Ray boundary checks cache each immutable edge's trimmed parameter interval and period,
+  avoiding repeated endpoint inversion while retaining query-point projection and clipping.
 - Wire-seeded recess discovery follows the queried edges' face ownership instead of
   repeatedly comparing every neighbour of a many-loop opening. Unique opposite-use
   pairing and the resulting seed face sets are unchanged. From #282 (@xu9299).
