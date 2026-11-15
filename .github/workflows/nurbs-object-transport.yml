@@ -1,0 +1,33 @@
+name: Transport already-recorded NURBS Git objects
+on:
+  push:
+    branches: [transport/nurbs-integral-ready-052-20261115]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: maintenance
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 6cd82f8365720b82f0cf90764205cf9653f31b5c
+          path: source
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: "14099562262"
+          run-id: "43550362331"
+          github-token: ${{ github.token }}
+          path: evidence
+          merge-multiple: true
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Verify and send exact local Git objects
+        run: uv run --no-project --python 3.14 python maintenance/.github/transport/transport_objects.py
