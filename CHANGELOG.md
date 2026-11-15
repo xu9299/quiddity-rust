@@ -6,27 +6,6 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
-### Added
-
-- An explicit local `snapshot-tool --record-verified DIR` maintenance command records
-  reviewed output from a trusted remote producer with matching source, inputs, previous
-  expectations and output digests. It remains forbidden in CI and is separate from all
-  checking modes; recording still requires diff review and strict reproduction afterward.
-
-### Changed
-
-- Evaluate low-degree NURBS face integrands using fixed-parameter homogeneous contraction
-  and bounded, centered span polynomials. Integral directions, quadrature rules, and
-  acceptance tolerances are retained; reassociated floating-point arithmetic can change
-  the last digits of derived measurements. Unsupported degrees, high active weight
-  contrasts, and unsafe evaluations retain the original evaluator. No public API or
-  result-schema change.
-- Wire-seeded recess discovery follows the queried edges' face ownership instead of
-  repeatedly comparing every neighbour of a many-loop opening. Unique opposite-use
-  pairing and the resulting seed face sets are unchanged. From #282 (@xu9299).
-- Section passage mouths use the same query instead of a private copy of the old scan
-  (#283).
-
 ### Fixed
 
 - Dimensioning measures straight hole depths from the axis intersection with a sloping
@@ -38,6 +17,26 @@ in [docs/alpha1.md](docs/alpha1.md).
   `PCURVE_S1`/`PCURVE_S2` flags on raw B-spline/Bézier master slots even without recovery or a
   mass query, while retaining source `CURVE_3D` flags. This changes 1,126 faces across the 11
   flagged corpus files versus the previous writer on main.
+
+### Changed
+
+- Wire-seeded recess discovery follows the queried edges' face ownership instead of
+  repeatedly comparing every neighbour of a many-loop opening. Unique opposite-use
+  pairing and the resulting seed face sets are unchanged. From #282 (@xu9299).
+- Section passage mouths use the same query instead of a private copy of the old scan
+  (#283).
+
+- Evaluate low-degree NURBS face integrands using fixed-parameter homogeneous contraction
+  and bounded, centered span polynomials. Integral directions, quadrature rules, and
+  acceptance tolerances are retained; reassociated floating-point arithmetic can change
+  the last digits of derived measurements. Unsupported degrees, high active weight
+  contrasts, and unsafe evaluations retain the original evaluator. No public API or
+  result-schema change.
+
+- Extend snapshot maintenance with an explicit local `snapshot-tool --record-verified DIR` command to record
+  reviewed output from a trusted remote producer with matching source, inputs, previous
+  expectations and output digests. It remains forbidden in CI and is separate from all
+  checking modes; recording still requires diff review and strict reproduction afterward.
 
 ## 0.5.2 (2026-11-13)
 
