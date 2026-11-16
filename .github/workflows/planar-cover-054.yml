@@ -1,0 +1,101 @@
+name: Planar coverage 0.5.4 validation
+
+on:
+  push:
+    branches: [validation/planar-cover-054-20261116-r3]
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        options: [candidate]
+        default: candidate
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUST_MIN_STACK: "67108864"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - kind: candidate
+            commit: "9c4d7d32b84bb4636fe6bd0ffade4e2f66944c52"
+            tree: "33a54444fb802e79def12081a1e7230af3d620e2"
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: github.event_name == 'push' || inputs.target == 'both' || inputs.target == matrix.kind
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ${{ matrix.commit }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: github.event_name == 'push' || inputs.target == 'both' || inputs.target == matrix.kind
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record exact source and environment
+        if: github.event_name == 'push' || inputs.target == 'both' || inputs.target == matrix.kind
+        run: |
+          mkdir -p ../validation-logs/verified
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = '${{ matrix.commit }}'
+          test "$(git rev-parse HEAD^{tree})" = '${{ matrix.tree }}'
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(uname -m)" = arm64
+          rustc -vV | grep -Fx 'release: 1.99.1'
+          git diff --stat f7ed5825b260ecc64221ea5cc00bd7fe9e852bc6 HEAD | tee ../validation-logs/scope.log
+          git diff --exit-code f7ed5825b260ecc64221ea5cc00bd7fe9e852bc6 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        if: github.event_name == 'push' || inputs.target == 'both' || inputs.target == matrix.kind
+        with:
+          workspaces: source -> ../target
+          shared-key: planar-cover-054-macos-15
+      - name: Formatting and full workspace lint
+        if: ${{ !cancelled() && matrix.kind == 'candidate' && (github.event_name == 'push' || inputs.target == 'both' || inputs.target == 'candidate') }}
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Strict reproduction of unchanged snapshots
+        if: ${{ !cancelled() && (github.event_name == 'push' || inputs.target == 'both' || inputs.target == matrix.kind) }}
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Full candidate workspace and corpus regression
+        if: ${{ success() && matrix.kind == 'candidate' && (github.event_name == 'push' || inputs.target == 'both' || inputs.target == 'candidate') }}
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+          RUST_BACKTRACE: full
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+      - name: Snapshot coverage and provenance
+        if: ${{ !cancelled() && matrix.kind == 'candidate' && (github.event_name == 'push' || inputs.target == 'both' || inputs.target == 'candidate') }}
+        run: cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: planar-cover-${{ matrix.kind }}-evidence
+          path: validation-logs/
+          if-no-files-found: ignore
+          retention-days: 30
