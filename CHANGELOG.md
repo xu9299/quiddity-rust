@@ -13,6 +13,7 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Retain lossless packed STEP provenance and release owned input snapshots before B-rep construction.
 - Retain project-local integral sample and ordered-prefix reuse, thread candidate filtering,
   early wall eligibility checks and floor-proof ordering on the official 0.5.4 baseline.
 - Use the released widest-slab volume rejection and refusal checks in place of the local

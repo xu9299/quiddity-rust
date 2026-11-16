@@ -7,7 +7,7 @@ repository = "https://github.com/pzfreo/quiddity"
 keywords = ["cad", "step", "brep", "geometry", "ap242"]
 categories = ["science", "mathematics", "parser-implementations"]
 readme = "README.md"
-include = ["/examples", "/docs/pmi-json.md", "/schema", "/src", "/README.md", "/LICENSE", "/NOTICE", "/tests/fixtures/generated_unit_cube.f3d", "/tests/fixtures/README.md"]
+include = ["/examples", "/docs/pmi-json.md", "/docs/step-provenance-memory.md", "/schema", "/src", "/README.md", "/LICENSE", "/NOTICE", "/tests/fixtures/generated_unit_cube.f3d", "/tests/fixtures/README.md"]
 description = "An exact B-rep reader and geometry query library in pure Rust: STEP import, rays, classification, volumes, surface recovery and AP242 PMI."
 
 [features]
@@ -29,7 +29,7 @@ flate2 = "1.1.10"
 libm = "0.2.16"
 i_overlay = "8.1.2"
 spade = "2.15.1"
-step-io = "0.3"
+step-io = { git = "https://github.com/xu9299/step-io.git", rev = "2800c9ab1b69ee184a1c4cb25a794f342677122d" }
 sha2 = { version = "0.11.0", optional = true }
 tempfile = { version = "3", optional = true }
 memmap2 = { version = "0.9", optional = true }
