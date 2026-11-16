@@ -9,7 +9,8 @@
 //! analytic/control-hull box, including its vertices. Straight edges also account for the
 //! discrepancy between their vertices and their analytic line. These bounds bracket the
 //! uncovered area: only a decisive bracket uses this path, with the same acceptance budget.
-//! Ambiguous boundaries, cylinders and oversized arrangements retain the sampled path.
+//! Curved bounds above that budget, ambiguous boundaries, cylinders and oversized arrangements
+//! retain the sampled path; ineligible curves do not require constructing an arrangement.
 
 use super::{FaceRef, intervals, same_surface, subtract};
 use crate::brep::Edge;
@@ -19,6 +20,12 @@ use crate::sampling::{edge_interval, extremes_along};
 type Point = (f64, f64);
 type Segment = (Point, Point);
 type Loops = Vec<Vec<Point>>;
+
+struct Boundary {
+    loops: Loops,
+    line_error: f64,
+    curve_error: f64,
+}
 
 // Bound the quadratic arrangement work; this is an eligibility limit, not a geometric epsilon.
 const MAX_SEGMENTS: usize = 512;
@@ -65,7 +72,7 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
     let Surface::Plane { frame } = &patch.0.faces[patch.1].surface else {
         return None;
     };
-    let (mine, _) = loops(patch, frame, None)?;
+    let mine = loops(patch, frame, None)?.loops;
     let mut bounds = Box2::empty();
     for &p in mine.iter().flatten() {
         bounds.add(p)?;
@@ -74,7 +81,7 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
         .loops
         .iter()
         .flat_map(|lp| &lp.edges)
-        .map(|&(edge, _)| line_error(&patch.0.edges[edge], frame, bounds))
+        .map(|&(edge, _)| line_error(&patch.0.edges[edge], frame, None))
         .collect::<Option<Vec<_>>>()?
         .iter()
         .sum();
@@ -87,10 +94,15 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
         .iter()
         .copied()
         .filter(|(p, f)| same_surface(&patch.0.faces[patch.1].surface, &p.faces[*f].surface))
-        .map(|support| loops(support, frame, Some(bounds)))
+        .map(|support| loops(support, frame, Some((bounds, tolerance))))
         .collect::<Option<Vec<_>>>()?;
-    let uncertainty = target_error + bounded.iter().map(|(_, error)| error).sum::<f64>();
-    let theirs: Vec<_> = bounded.into_iter().map(|(loops, _)| loops).collect();
+    let curve_error: f64 = bounded.iter().map(|boundary| boundary.curve_error).sum();
+    if curve_error > tolerance {
+        return None;
+    }
+    let uncertainty =
+        target_error + curve_error + bounded.iter().map(|b| b.line_error).sum::<f64>();
+    let theirs: Vec<_> = bounded.into_iter().map(|boundary| boundary.loops).collect();
     let gap = uncovered_area(&mine, &theirs, bounds)?;
     if gap + uncertainty <= tolerance {
         Some(true)
@@ -106,9 +118,10 @@ fn project(frame: &Frame, p: V3) -> Point {
     (geom::dot(delta, frame.x), geom::dot(delta, frame.y))
 }
 
-fn loops((part, face): FaceRef<'_>, frame: &Frame, patch: Option<Box2>) -> Option<(Loops, f64)> {
+fn loops((part, face): FaceRef<'_>, frame: &Frame, patch: Option<(Box2, f64)>) -> Option<Boundary> {
     let mut out = Vec::new();
-    let mut uncertainty = 0.0;
+    let mut line_uncertainty = 0.0;
+    let mut curve_uncertainty = 0.0;
     for lp in &part.faces[face].loops {
         if lp.edges.is_empty() {
             continue;
@@ -122,11 +135,15 @@ fn loops((part, face): FaceRef<'_>, frame: &Frame, patch: Option<Box2>) -> Optio
             }
             let edge = &part.edges[index];
             if matches!(edge.curve, Curve::Line { .. }) {
-                if let Some(bounds) = patch {
-                    uncertainty += line_error(edge, frame, bounds)?;
+                if let Some((bounds, _)) = patch {
+                    line_uncertainty += line_error(edge, frame, Some(bounds))?;
                 }
             } else {
-                uncertainty += curve_error(edge, frame, patch?)?;
+                let (bounds, tolerance) = patch?;
+                curve_uncertainty += curve_error(edge, frame, bounds)?;
+                if curve_uncertainty > tolerance {
+                    return None;
+                }
             }
             let (a, b) = if forward {
                 (edge.start, edge.end)
@@ -150,10 +167,14 @@ fn loops((part, face): FaceRef<'_>, frame: &Frame, patch: Option<Box2>) -> Optio
         points.push(points[0]);
         out.push(points);
     }
-    Some((out, uncertainty))
+    Some(Boundary {
+        loops: out,
+        line_error: line_uncertainty,
+        curve_error: curve_uncertainty,
+    })
 }
 
-fn line_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
+fn line_error(edge: &Edge, frame: &Frame, patch: Option<Box2>) -> Option<f64> {
     let Curve::Line { origin, dir } = edge.curve else {
         return None;
     };
@@ -180,7 +201,10 @@ fn line_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
     let radius = error + 64.0 * f64::EPSILON * size;
     let length = (ends[1].0 - ends[0].0).hypot(ends[1].1 - ends[0].1);
     let capsule = 2.0 * radius * length + std::f64::consts::PI * radius * radius;
-    Some(capsule.min(bounds.intersection_area(patch, radius)))
+    // A target boundary can move outside its nominal box, so only support error is clipped.
+    Some(patch.map_or(capsule, |patch| {
+        capsule.min(bounds.intersection_area(patch, radius))
+    }))
 }
 
 fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
@@ -641,5 +665,31 @@ mod tests {
         };
         origin[1] += 1e-7;
         assert_eq!(covered((&patch, 0), &[(&support, 0)]), None);
+    }
+
+    #[test]
+    fn target_uncertainty_includes_the_outside_of_its_nominal_box() {
+        let patch = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        let Surface::Plane { frame } = &patch.faces[0].surface else {
+            unreachable!()
+        };
+        let mut edge = patch.edges[2].clone();
+        let Curve::Line { origin, .. } = &mut edge.curve else {
+            unreachable!()
+        };
+        origin[1] += 0.1;
+        let full = line_error(&edge, frame, None).unwrap();
+        let clipped = line_error(
+            &edge,
+            frame,
+            Some(Box2 {
+                low: (0.0, 0.0),
+                high: (1.0, 1.0),
+            }),
+        )
+        .unwrap();
+        let capsule = 0.2 + std::f64::consts::PI * 0.01;
+        assert!((full - capsule).abs() < 1e-12);
+        assert!(clipped < full - 0.1);
     }
 }
