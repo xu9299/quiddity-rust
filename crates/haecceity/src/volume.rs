@@ -482,8 +482,8 @@ fn shared_with_witness(
     stop: &dyn Fn(Pair) -> bool,
     witness: bool,
 ) -> Option<(Pair, bool)> {
-    let _timing = crate::timing::operation(volume.shared);
-    let setup_timing = crate::timing::operation(volume.setup);
+    let _timing = crate::timing::operation("volume.shared");
+    let setup_timing = crate::timing::operation("volume.setup");
     let rays = solid.rays();
     let (sb, pb) = (rays.bounds(), probe.bounds());
     let whole = probe_volume(probe)?;
@@ -500,7 +500,7 @@ fn shared_with_witness(
         };
     }
     drop(setup_timing);
-    let _sides_timing = crate::timing::operation(volume.sides);
+    let _sides_timing = crate::timing::operation("volume.sides");
     let mine = Side::of_solid(rays, &region);
     let theirs = match probe {
         Probe::Box(b) => Side::of_box(b),
@@ -598,7 +598,7 @@ fn shared_with_witness(
     // a sliver of material between such a curve and the nearest edge can be narrower than the
     // spacing of the Gauss points and be missed by both rules.
     let area = |h: f64| {
-        let _timing = crate::timing::operation(volume.slice);
+        let _timing = crate::timing::operation("volume.slice");
         if unresolved.get() {
             return [0.0, 0.0];
         }
@@ -620,7 +620,7 @@ fn shared_with_witness(
         }
         integrate(&|s| length(h, s), across, ss, rule.per(h1 - h0))
     };
-    let _integral = crate::timing::operation(volume.height_integral);
+    let _integral = crate::timing::operation("volume.height_integral");
     let total = if witness {
         let slab = |lo, hi| {
             let value = rule.interval(&area, lo, hi, h1 - h0);
@@ -945,7 +945,7 @@ fn integrate_witness_slabs(
     let breaks = integration_breaks(range, breaks);
     let count = breaks.len() - 1;
     let work = |index: usize| {
-        let _timing = crate::timing::face(volume.slab, index, None);
+        let _timing = crate::timing::face("volume.slab", index, None);
         slab(breaks[index], breaks[index + 1])
     };
     // One original slab already completes the pass. Keep that fact so an

@@ -1,7 +1,8 @@
 # Early rejection from original volume slabs
 
 The at-most material query with a limit in `[0, 1)` may reject from an individual
-original integration slab. It first checks at most eight spread-out slab indices,
+original integration slab. The official 0.5.4 implementation first visits the widest
+original slab, then up to eight distinct spread-out slab indices,
 sequentially on the calling thread. These are complete B-Rep integration slabs
 with the original world axes, arrangement breaks, quadrature, tolerances and ray
 queries. There are no new geometric approximations or added sampling points.
