@@ -1,0 +1,59 @@
+name: STEP memory supported consumer builds
+
+on:
+  push:
+    branches: [validation/step-memory-consumers-20261116]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: step-memory-consumers-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  supported:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: 1792cd365db6b7fe042acf5b7a111884b434252c
+          path: source
+          persist-credentials: false
+      - name: Record exact source and supported targets
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup target add wasm32-unknown-unknown
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = 1792cd365db6b7fe042acf5b7a111884b434252c
+          test "$(git rev-parse HEAD^{tree})" = 0c18eaf19b2441f8dcef340f6fcfe91c90f4bd66
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+      - name: Compile optional Fusion consumers without running additional corpus tests
+        run: cargo check --workspace --all-targets --release --locked --features f3d 2>&1 | tee ../validation-logs/f3d.log
+      - name: Build both supported WASM library surfaces
+        run: |
+          cargo build -p haecceity --release --locked --target wasm32-unknown-unknown --no-default-features --features presentation,json 2>&1 | tee ../validation-logs/haecceity-wasm.log
+          cargo build -p quiddity --lib --release --locked --target wasm32-unknown-unknown --no-default-features --features presentation,json 2>&1 | tee ../validation-logs/quiddity-wasm.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: step-memory-supported-consumers-evidence
+          path: validation-logs/
+          retention-days: 30
