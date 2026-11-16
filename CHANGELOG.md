@@ -6,6 +6,12 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+### Fixed
+
+- Check straight-bounded planar coverage without a scan-direction chord margin. Split
+  integration at boundary crossings and bound nearby conic/NURBS uncertainty within the
+  existing relative area tolerance; retain the sampled path for ineligible curved geometry.
+
 ### Added
 
 - Optional native stage and face timing, including the shared-analysis Python entry point.
