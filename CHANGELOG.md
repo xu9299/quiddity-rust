@@ -4,6 +4,16 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### Fixed
+
+- Check straight-bounded planar coverage without a scan-direction chord margin. Split
+  integration at boundary crossings and bracket nearby conic/NURBS and vertex-to-line
+  uncertainty against the existing area tolerance; retain the sampled path for ambiguous
+  boundaries and ineligible geometry. Bound straight-edge endpoint discrepancies over
+  subsegments without increasing the acceptance budget.
+
 ## 0.5.4 (2026-11-16)
 
 A patch release for Specify and draftwright 0.6.0-alpha.4: a hole's counterbore, spotface,

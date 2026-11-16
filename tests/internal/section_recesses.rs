@@ -17,6 +17,19 @@ fn dir() -> std::path::PathBuf {
     common::fixtures().join("captured/section_recesses")
 }
 
+#[test]
+fn bounded_cover_preserves_the_narrow_channel_document() {
+    let file = "parts/45d4d70ae8f31a88.step.gz";
+    let part = read_step_file(&dir().join(file)).unwrap();
+    let actual = serde_json::to_value(build_section_recess_document(&part).unwrap()).unwrap();
+    assert_eq!(actual["occurrences"].as_array().unwrap().len(), 1);
+    common::snapshot::check(
+        &common::fixtures(),
+        &format!("recess_documents/test/{file}"),
+        &actual,
+    );
+}
+
 fn captured() -> &'static Value {
     static CAPTURED: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
     CAPTURED.get_or_init(|| {
