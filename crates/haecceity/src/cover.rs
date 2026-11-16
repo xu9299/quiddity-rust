@@ -12,8 +12,9 @@
 //!
 //! Straight-bounded planar patches first use the bounded analytic path in `linear`: no chord
 //! margin is applied to a straight edge, boundary crossings split the area integral, and any
-//! nearby curved-boundary uncertainty is charged to the original relative area budget. The
-//! sampled path below remains for curved patches, cylinders and ineligible arrangements.
+//! nearby curved-boundary and vertex-to-line discrepancies bound the uncovered area against
+//! the original relative tolerance. The sampled path below remains for ambiguous boundaries,
+//! curved patches, cylinders and ineligible arrangements.
 
 use super::brep::Part;
 use super::geom::{self, Surface, V3};

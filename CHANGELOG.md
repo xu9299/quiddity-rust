@@ -9,8 +9,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 ### Fixed
 
 - Check straight-bounded planar coverage without a scan-direction chord margin. Split
-  integration at boundary crossings and bound nearby conic/NURBS uncertainty within the
-  existing relative area tolerance; retain the sampled path for ineligible curved geometry.
+  integration at boundary crossings and bracket nearby conic/NURBS and vertex-to-line
+  uncertainty against the existing area tolerance; retain the sampled path for ambiguous
+  boundaries and ineligible geometry.
 
 ### Added
 

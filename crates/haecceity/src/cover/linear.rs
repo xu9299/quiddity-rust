@@ -6,9 +6,10 @@
 //! which the uncovered length is affine, so midpoint integration gives its area. The relative
 //! area tolerance is unchanged. This path does not turn a chord into a proof of a curved edge:
 //! a curved support edge's replacement can change coverage only inside its conservative
-//! analytic/control-hull box, including its vertices. The area where this box meets the
-//! patch box is charged to the uncovered area, within the unchanged acceptance budget.
-//! Curves with a larger uncertainty, cylinders and oversized arrangements retain the old path.
+//! analytic/control-hull box, including its vertices. Straight edges also account for the
+//! discrepancy between their vertices and their analytic line. These bounds bracket the
+//! uncovered area: only a decisive bracket uses this path, with the same acceptance budget.
+//! Ambiguous boundaries, cylinders and oversized arrangements retain the sampled path.
 
 use super::{FaceRef, intervals, same_surface, subtract};
 use crate::brep::Edge;
@@ -69,6 +70,14 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
     for &p in mine.iter().flatten() {
         bounds.add(p)?;
     }
+    let target_error: f64 = patch.0.faces[patch.1]
+        .loops
+        .iter()
+        .flat_map(|lp| &lp.edges)
+        .map(|&(edge, _)| line_error(&patch.0.edges[edge], frame, bounds))
+        .collect::<Option<Vec<_>>>()?
+        .iter()
+        .sum();
     let area = patch.0.face_mass(patch.1)?[0];
     if !area.is_finite() || area <= 0.0 {
         return Some(false);
@@ -78,14 +87,18 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
         .iter()
         .copied()
         .filter(|(p, f)| same_surface(&patch.0.faces[patch.1].surface, &p.faces[*f].surface))
-        .map(|support| loops(support, frame, Some((bounds, tolerance))))
+        .map(|support| loops(support, frame, Some(bounds)))
         .collect::<Option<Vec<_>>>()?;
-    let uncertainty: f64 = bounded.iter().map(|(_, error)| error).sum();
-    if uncertainty > tolerance {
-        return None;
-    }
+    let uncertainty = target_error + bounded.iter().map(|(_, error)| error).sum::<f64>();
     let theirs: Vec<_> = bounded.into_iter().map(|(loops, _)| loops).collect();
-    Some(uncovered_area(&mine, &theirs, bounds)? + uncertainty <= tolerance)
+    let gap = uncovered_area(&mine, &theirs, bounds)?;
+    if gap + uncertainty <= tolerance {
+        Some(true)
+    } else if gap > tolerance + uncertainty {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn project(frame: &Frame, p: V3) -> Point {
@@ -93,11 +106,7 @@ fn project(frame: &Frame, p: V3) -> Point {
     (geom::dot(delta, frame.x), geom::dot(delta, frame.y))
 }
 
-fn loops(
-    (part, face): FaceRef<'_>,
-    frame: &Frame,
-    patch: Option<(Box2, f64)>,
-) -> Option<(Loops, f64)> {
+fn loops((part, face): FaceRef<'_>, frame: &Frame, patch: Option<Box2>) -> Option<(Loops, f64)> {
     let mut out = Vec::new();
     let mut uncertainty = 0.0;
     for lp in &part.faces[face].loops {
@@ -112,12 +121,12 @@ fn loops(
                 return None;
             }
             let edge = &part.edges[index];
-            if !matches!(edge.curve, Curve::Line { .. }) {
-                let (bounds, tolerance) = patch?;
-                uncertainty += curve_error(edge, frame, bounds)?;
-                if uncertainty > tolerance {
-                    return None;
+            if matches!(edge.curve, Curve::Line { .. }) {
+                if let Some(bounds) = patch {
+                    uncertainty += line_error(edge, frame, bounds)?;
                 }
+            } else {
+                uncertainty += curve_error(edge, frame, patch?)?;
             }
             let (a, b) = if forward {
                 (edge.start, edge.end)
@@ -142,6 +151,36 @@ fn loops(
         out.push(points);
     }
     Some((out, uncertainty))
+}
+
+fn line_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
+    let Curve::Line { origin, dir } = edge.curve else {
+        return None;
+    };
+    if !geom::norm(dir).is_finite() || geom::norm(dir) == 0.0 {
+        return None;
+    }
+    let mut bounds = Box2::empty();
+    let mut size = frame.origin.into_iter().map(f64::abs).fold(1.0, f64::max);
+    let mut error: f64 = 0.0;
+    for p in [origin, edge.start, edge.end] {
+        size = p.into_iter().map(f64::abs).fold(size, f64::max);
+    }
+    let ends = [edge.start, edge.end].map(|p| project(frame, p));
+    for (p, uv) in [edge.start, edge.end].into_iter().zip(ends) {
+        bounds.add(uv)?;
+        let q = project(frame, edge.curve.value(edge.curve.parameter(p)));
+        if !q.0.is_finite() || !q.1.is_finite() {
+            return None;
+        }
+        error = error.max((q.0 - uv.0).hypot(q.1 - uv.1));
+    }
+    // The swept segment lies inside this capsule and its expanded axis-aligned box.
+    // Neither bound enlarges the support: an indecisive area bracket falls back.
+    let radius = error + 64.0 * f64::EPSILON * size;
+    let length = (ends[1].0 - ends[0].0).hypot(ends[1].1 - ends[0].1);
+    let capsule = 2.0 * radius * length + std::f64::consts::PI * radius * radius;
+    Some(capsule.min(bounds.intersection_area(patch, radius)))
 }
 
 fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
@@ -571,5 +610,36 @@ mod tests {
                 assert_eq!(error, 1.0);
             }
         }
+    }
+
+    #[test]
+    fn off_line_vertices_do_not_establish_a_tiny_gap() {
+        let mut square = rectangle(0.0, 0.0, 1.0, 1.0);
+        for gap in [1e-8, 1e-4] {
+            let mut support = face(&[rectangle(0.0, 0.0, 1.0, 1.0 - gap)]);
+            let Curve::Line { origin, .. } = &mut support.edges[2].curve else {
+                unreachable!()
+            };
+            origin[1] += 2e-8;
+            for _ in 0..4 {
+                let patch = face(&[square.clone()]);
+                assert_eq!(
+                    covered((&patch, 0), &[(&support, 0)]),
+                    if gap == 1e-8 { None } else { Some(false) }
+                );
+                square.rotate_left(1);
+            }
+        }
+    }
+
+    #[test]
+    fn target_line_discrepancies_are_also_uncertainty() {
+        let support = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        let mut patch = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        let Curve::Line { origin, .. } = &mut patch.edges[2].curve else {
+            unreachable!()
+        };
+        origin[1] += 1e-7;
+        assert_eq!(covered((&patch, 0), &[(&support, 0)]), None);
     }
 }
