@@ -183,28 +183,50 @@ fn line_error(edge: &Edge, frame: &Frame, patch: Option<Box2>) -> Option<f64> {
     }
     let mut bounds = Box2::empty();
     let mut size = frame.origin.into_iter().map(f64::abs).fold(1.0, f64::max);
-    let mut error: f64 = 0.0;
+    let mut errors = [0.0_f64; 2];
     for p in [origin, edge.start, edge.end] {
         size = p.into_iter().map(f64::abs).fold(size, f64::max);
     }
     let ends = [edge.start, edge.end].map(|p| project(frame, p));
-    for (p, uv) in [edge.start, edge.end].into_iter().zip(ends) {
+    for (i, (p, uv)) in [edge.start, edge.end].into_iter().zip(ends).enumerate() {
         bounds.add(uv)?;
         let q = project(frame, edge.curve.value(edge.curve.parameter(p)));
         if !q.0.is_finite() || !q.1.is_finite() {
             return None;
         }
-        error = error.max((q.0 - uv.0).hypot(q.1 - uv.1));
+        errors[i] = (q.0 - uv.0).hypot(q.1 - uv.1);
     }
     // The swept segment lies inside this capsule and its expanded axis-aligned box.
     // Neither bound enlarges the support: an indecisive area bracket falls back.
-    let radius = error + 64.0 * f64::EPSILON * size;
+    let radius = errors[0].max(errors[1]) + 64.0 * f64::EPSILON * size;
     let length = (ends[1].0 - ends[0].0).hypot(ends[1].1 - ends[0].1);
     let capsule = 2.0 * radius * length + std::f64::consts::PI * radius * radius;
     // A target boundary can move outside its nominal box, so only support error is clipped.
-    Some(patch.map_or(capsule, |patch| {
-        capsule.min(bounds.intersection_area(patch, radius))
-    }))
+    let Some(patch) = patch else {
+        return Some(capsule);
+    };
+    let full = capsule.min(bounds.intersection_area(patch, radius));
+    // The displacement between two straight segments is affine. On each half its norm is
+    // bounded by the larger interpolated endpoint bound. Their two capsules therefore still
+    // contain the entire boundary sweep, without charging the largest error along all of it.
+    // The extra eight epsilons cover midpoint interpolation; target uncertainty stays full.
+    let middle = (
+        ends[0].0 + 0.5 * (ends[1].0 - ends[0].0),
+        ends[0].1 + 0.5 * (ends[1].1 - ends[0].1),
+    );
+    let points = [ends[0], middle, ends[1]];
+    let deviations = [errors[0], 0.5 * errors[0] + 0.5 * errors[1], errors[1]];
+    let mut split = 0.0;
+    for i in 0..2 {
+        let radius = deviations[i].max(deviations[i + 1]) + 72.0 * f64::EPSILON * size;
+        let mut bounds = Box2::empty();
+        bounds.add(points[i])?;
+        bounds.add(points[i + 1])?;
+        let length = (points[i + 1].0 - points[i].0).hypot(points[i + 1].1 - points[i].1);
+        let capsule = 2.0 * radius * length + std::f64::consts::PI * radius * radius;
+        split += capsule.min(bounds.intersection_area(patch, radius));
+    }
+    Some(full.min(split))
 }
 
 fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
@@ -691,5 +713,20 @@ mod tests {
         let capsule = 0.2 + std::f64::consts::PI * 0.01;
         assert!((full - capsule).abs() < 1e-12);
         assert!(clipped < full - 0.1);
+    }
+
+    #[test]
+    fn endpoint_varying_error_can_resolve_a_near_budget_gap() {
+        let mut support = face(&[rectangle(0.0, 0.0, 1.0, 1.0 - 1.036e-9)]);
+        support.edges[2].curve = Curve::Line {
+            origin: [0.0, 1.0 - 1.036e-9 + 0.8e-11, 0.0],
+            dir: geom::unit([1.0, 1.2e-11, 0.0]).unwrap(),
+        };
+        let mut square = rectangle(0.0, 0.0, 1.0, 1.0);
+        for _ in 0..4 {
+            let patch = face(&[square.clone()]);
+            assert_eq!(covered((&patch, 0), &[(&support, 0)]), Some(false));
+            square.rotate_left(1);
+        }
     }
 }

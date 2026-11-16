@@ -11,7 +11,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 - Check straight-bounded planar coverage without a scan-direction chord margin. Split
   integration at boundary crossings and bracket nearby conic/NURBS and vertex-to-line
   uncertainty against the existing area tolerance; retain the sampled path for ambiguous
-  boundaries and ineligible geometry.
+  boundaries and ineligible geometry. Bound straight-edge endpoint discrepancies over
+  subsegments without increasing the acceptance budget.
 
 ### Added
 
