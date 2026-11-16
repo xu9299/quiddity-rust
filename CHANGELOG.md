@@ -4,6 +4,14 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### Fixed
+
+- Check straight-bounded planar coverage without a scan-direction chord margin. Split
+  integration at boundary crossings and bound nearby conic/NURBS uncertainty within the
+  existing relative area tolerance; retain the sampled path for ineligible curved geometry.
+
 ## 0.5.3 (2026-11-15)
 
 A patch release for draftwright, Specify and build123d-mcp: each part's declared length unit

@@ -9,16 +9,26 @@
 //! heights of the loops' vertices. Two faces sharing a curved edge sample it differently, so a
 //! support's intervals are widened by the samples' chordal error either side; a gap narrower
 //! than that is no gap.
+//!
+//! Straight-bounded planar patches first use the bounded analytic path in `linear`: no chord
+//! margin is applied to a straight edge, boundary crossings split the area integral, and any
+//! nearby curved-boundary uncertainty is charged to the original relative area budget. The
+//! sampled path below remains for curved patches, cylinders and ineligible arrangements.
 
 use super::brep::Part;
 use super::geom::{self, Surface, V3};
 use super::sampling::CHORD_TOLERANCE;
+
+mod linear;
 
 /// A face of a part.
 pub type FaceRef<'a> = (&'a Part, usize);
 
 /// `covered_patch`: whether the supports leave at most 1e-9 of the patch's area uncovered.
 pub fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> bool {
+    if let Some(answer) = linear::covered(patch, supports) {
+        return answer;
+    }
     let (part, face) = patch;
     let surface = &part.faces[face].surface;
     let (scale, widen) = match *surface {
