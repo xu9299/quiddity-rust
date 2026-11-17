@@ -241,3 +241,17 @@ constituent source faces, or an existing refusal already retains the same eviden
 The suppression is recomputed for each inventory, so an earlier accepted projection cannot
 hide the pending floor when the independent accepted reader is later absent. No global
 or thread-local query recorder participates in production discovery.
+
+## Cyclic starts inside finite edges
+
+A closed loop may start at a subdivision point inside the other loop's finite edge.
+Rotating only whole edges does not align that case. For each cyclic ordering and sense,
+the closest parameter to the target start can propose an interior split of the first
+support edge. Its suffix starts the reordered loop and its prefix finishes it, preserving
+the complete original interval and orientation. This is only candidate generation: the
+same finite homotopy tubes must bound every paired segment, both loops must be completely
+consumed, and the original area budget still applies. No endpoint tolerance merges a gap.
+
+The directed controls cover every cyclic origin and both senses of a subdivided elliptical
+cap, with a genuinely smaller cap retained as a negative case. A captured public triangular
+passage also exercises a split ellipse across the loop's start in its complete caller.

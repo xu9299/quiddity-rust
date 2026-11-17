@@ -471,6 +471,19 @@ fn correspondence(a: &Boundary, b: &Boundary, surface: &Surface) -> Option<f64> 
 
 fn loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
     let mut best: Option<f64> = None;
+    let anchor = a.first()?;
+    let anchor = anchor.curve.value(anchor.a);
+    let cost = |other: &[Trim]| {
+        if a.len() == other.len() {
+            a.iter().zip(other).try_fold(0.0, |sum, (mine, other)| {
+                Some(sum + tube(mine, surface, displacement(mine, other, surface)?)?)
+            })
+        } else if a.len() + other.len() <= 64 {
+            subdivided_loop_error(a, other, surface)
+        } else {
+            None
+        }
+    };
     for reverse in [false, true] {
         for shift in 0..b.len() {
             let ordered: Vec<_> = (0..b.len())
@@ -487,17 +500,20 @@ fn loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
                     }
                 })
                 .collect();
-            let cost = if a.len() == b.len() {
-                a.iter().zip(&ordered).try_fold(0.0, |sum, (mine, other)| {
-                    Some(sum + tube(mine, surface, displacement(mine, other, surface)?)?)
-                })
-            } else if a.len() + b.len() <= 64 {
-                subdivided_loop_error(a, &ordered, surface)
-            } else {
-                None
-            };
-            if let Some(cost) = cost {
+            if let Some(cost) = cost(&ordered) {
                 best = Some(best.map_or(cost, |x| x.min(cost)));
+            }
+            // A loop's start can lie inside the other's first finite edge. Split that
+            // edge and move its prefix to the end, preserving its complete parameter
+            // interval and cyclic order. The same tubes still prove every match.
+            if let Some((first, last)) = ordered[0].split_near(anchor) {
+                let anchored: Vec<_> = std::iter::once(last)
+                    .chain(ordered.iter().skip(1).cloned())
+                    .chain(std::iter::once(first))
+                    .collect();
+                if let Some(cost) = cost(&anchored) {
+                    best = Some(best.map_or(cost, |x| x.min(cost)));
+                }
             }
         }
     }
@@ -1033,6 +1049,56 @@ mod tests {
         let ring = Part::new(ring.faces.clone(), ring.edges.clone(), vec![]);
         assert_ne!(assess((&patch, 0), &[(&ring, 0)]), Coverage::Covered);
         assert_eq!(assess((&ring, 0), &[(&ring, 0)]), Coverage::Covered);
+    }
+
+    #[test]
+    fn finite_loop_matching_retains_an_interior_cyclic_start() {
+        let cap = |radius, split: Option<f64>| {
+            let curve = Curve::Ellipse {
+                frame: frame(0.37),
+                major: 2.0 * radius,
+                minor: radius,
+            };
+            let (start, end) = (curve.value(0.0), curve.value(std::f64::consts::PI));
+            let chord = Curve::Line {
+                origin: end,
+                dir: geom::unit(geom::sub(start, end)).unwrap(),
+            };
+            let curves = if let Some(t) = split {
+                let middle = curve.value(t);
+                vec![
+                    (curve.clone(), middle, end, true),
+                    (chord, end, start, true),
+                    (curve, start, middle, true),
+                ]
+            } else {
+                vec![(curve, start, end, true), (chord, end, start, true)]
+            };
+            part(Surface::Plane { frame: frame(0.37) }, curves)
+        };
+        let support = cap(1.0, None);
+        let smaller = cap(0.999, None);
+        for split in [0.2, 0.7, 1.3, 2.8] {
+            let target = cap(1.0, Some(split));
+            let surface = &target.faces[0].surface;
+            let mine = boundary((&target, 0), surface).unwrap();
+            let theirs = boundary((&support, 0), surface).unwrap();
+            for shift in 0..mine.loops[0].len() {
+                let mut rotated = mine.loops[0].clone();
+                rotated.rotate_left(shift);
+                for reverse in [false, true] {
+                    let ordered: Vec<_> = if reverse {
+                        rotated.iter().rev().map(Trim::reversed).collect()
+                    } else {
+                        rotated.clone()
+                    };
+                    let error = loop_error(&ordered, &theirs.loops[0], surface).unwrap();
+                    assert!(error < 1e-10);
+                }
+            }
+            assert_eq!(assess((&target, 0), &[(&support, 0)]), Coverage::Covered);
+            assert_ne!(assess((&target, 0), &[(&smaller, 0)]), Coverage::Covered);
+        }
     }
 
     #[test]

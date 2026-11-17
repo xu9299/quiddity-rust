@@ -8,6 +8,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Match complete finite loops whose cyclic start lies inside the other boundary's edge,
+  retaining both pieces of the split interval and charging the same homotopy bounds.
 - Retain exact equal-axis ellipse representations of circular contours in full cylindrical
   band proofs, including preferred planar pcurves used to prove a native wall aperture.
 - Bound finite polynomial cylinder pcurves projected onto a held plane through analytic
