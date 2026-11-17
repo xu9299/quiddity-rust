@@ -57,6 +57,65 @@ pub(super) enum Representation {
     Hull(Vec<geom::V3>),
 }
 
+pub(super) enum CorrespondingRepresentation {
+    Curve(Curve),
+    CylindricalBezier {
+        frame: Frame,
+        radius: f64,
+        points: Vec<[f64; 2]>,
+    },
+}
+
+/// Retain an eligible cylindrical polynomial as a finite UV path, not a fitted 3D curve.
+pub(super) fn corresponding_alternatives(
+    face: FaceRef<'_>,
+    edge: usize,
+) -> Option<Vec<CorrespondingRepresentation>> {
+    collect_alternatives(face, edge, |raw, surface, units| {
+        if let Some(curve) = mapped(raw, surface, units) {
+            return Some(CorrespondingRepresentation::Curve(curve));
+        }
+        let Surface::Cylinder { frame, radius } = surface else {
+            return None;
+        };
+        let RawCurve2d::BSpline {
+            degree,
+            points,
+            multiplicities,
+            knots,
+            weights,
+        } = raw
+        else {
+            return None;
+        };
+        let degree = usize::try_from(*degree).ok()?;
+        if !(2..=8).contains(&degree)
+            || points.len() != degree + 1
+            || multiplicities != &[degree as i64 + 1, degree as i64 + 1]
+            || knots.len() != 2
+            || !knots.iter().all(|x| x.is_finite())
+            || knots[0] >= knots[1]
+            || weights.as_ref().is_some_and(|w| {
+                w.len() != points.len()
+                    || w.is_empty()
+                    || !w[0].is_finite()
+                    || w[0] <= 0.0
+                    || w.iter().any(|v| *v != w[0])
+            })
+        {
+            return None;
+        }
+        Some(CorrespondingRepresentation::CylindricalBezier {
+            frame: *frame,
+            radius: *radius,
+            points: points
+                .iter()
+                .map(|p| [p[0] * units.1, p[1] * units.0])
+                .collect(),
+        })
+    })
+}
+
 /// Bound the image of a finite positive pcurve in the native spline parameterization.
 /// Converted swept parameterizations and unbounded parameter lines cannot use this fallback.
 fn bounded(raw: &RawCurve2d, surface: &Surface, units: (f64, f64)) -> Option<Representation> {
@@ -172,15 +231,20 @@ fn surface_hull(
     )
 }
 
-pub(super) fn bounded_alternatives(
+pub(super) fn bounded_alternatives(face: FaceRef<'_>, edge: usize) -> Option<Vec<Representation>> {
+    collect_alternatives(face, edge, bounded)
+}
+
+fn collect_alternatives<T>(
     (part, face): FaceRef<'_>,
     edge: usize,
-) -> Option<Vec<Representation>> {
+    mut convert: impl FnMut(&RawCurve2d, &Surface, (f64, f64)) -> Option<T>,
+) -> Option<Vec<T>> {
     let mut out = Vec::new();
     let units = part.file_units().unwrap_or((1.0, 1.0));
     for &(index, ref curve) in part.file_pcurves(face) {
         if index == edge {
-            out.push(bounded(curve, &part.faces[face].surface, units)?);
+            out.push(convert(curve, &part.faces[face].surface, units)?);
         }
     }
     if part.file_pcurves(face).is_empty() {
@@ -189,7 +253,7 @@ pub(super) fn bounded_alternatives(
                 let Pcurve::Line { point, dir } = curve else {
                     return None;
                 };
-                out.push(bounded(
+                out.push(convert(
                     &RawCurve2d::Line {
                         point: [point.0, point.1],
                         direction: [dir.0, dir.1],
@@ -207,7 +271,7 @@ pub(super) fn bounded_alternatives(
         }
         for (index, curve) in part.primary_pcurves(adjacent) {
             if *index == edge {
-                out.push(bounded(curve, &part.faces[adjacent].surface, units)?);
+                out.push(convert(curve, &part.faces[adjacent].surface, units)?);
             }
         }
     }

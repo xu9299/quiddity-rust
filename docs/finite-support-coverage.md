@@ -200,6 +200,19 @@ area bound remain conservative. Pure radial offsets then have no tangential disp
 finite endpoint coherence is still checked in 3D against the original eligibility condition.
 Opposite branches, approach to the axis, axial and angular gaps are not erased.
 
+For a finite non-rational Bezier pcurve on a cylinder, a held plane supplies an analytic
+plane/cylinder intersection when its normal has a bounded nonzero axial component. At fixed
+angle the projected pcurve differs from that intersection in the projected axial direction.
+Its homotopy Jacobian is the axial residual times the transverse intersection derivative;
+the quadratic term vanishes because both displacement and its derivative are axial.
+Restricted positive Bernstein nets and trigonometric Taylor remainders enclose the full
+finite integral. Non-affine angular control residuals receive a separate complete-path tube
+charge. The nominal conic/intersection difference, evaluated finite endpoint joins and
+arithmetic bounds are charged separately. The file precision remains an endpoint eligibility
+guard only. Reversed preferred sense, unresolved angular order, multiple turns, unsupported
+weights and a nearly axial held plane refuse this proof. Endpoint agreement alone cannot
+hide an interior pcurve bulge, and no sampled residual establishes acceptance.
+
 ## Unanswered support in native discovery
 
 The mixed-floor section reader evaluates every required swept-face support until one is

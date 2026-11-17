@@ -17,6 +17,7 @@ mod caller_controls;
 mod conic_bounds;
 mod containment;
 mod corresponding;
+mod cylinder_pcurves;
 mod linear;
 mod representations;
 mod spline_bounds;

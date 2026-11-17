@@ -6,6 +6,15 @@ use haecceity::cover::{Coverage, assess};
 use haecceity::geom::{Curve, Frame, Surface};
 
 #[test]
+fn public_planar_end_with_a_preferred_cylindrical_polynomial() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/captured/section_geometry/parts/0883f49ece1bde7d.step.gz");
+    let source = haecceity::step::read_step_file(&file).unwrap();
+    // The preferred adjacent cylinder pcurve must participate even on this planar end.
+    assert_eq!(assess((&source, 3), &[(&source, 3)]), Coverage::Covered);
+}
+
+#[test]
 fn public_mixed_pocket_cylindrical_generatrices() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
         "../../tests/fixtures/captured/section_recess_geometry/parts/0262e62c10a5adb5.step.gz",

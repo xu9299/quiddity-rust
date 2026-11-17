@@ -206,9 +206,33 @@ fn boundary((part, face): FaceRef<'_>, surface: &Surface) -> Option<Boundary> {
                 let d = 4.0 * (geom::dist(v, trim.curve.value(t)) + pad);
                 error += 4.0 * d * d;
             }
-            for curve in representations::alternatives((part, face), index)? {
-                let alternate = Trim::new(edge, curve, forward, uncertainty + pad)?;
-                error += tube(&trim, surface, displacement(&trim, &alternate, surface)?)?;
+            for representation in representations::corresponding_alternatives((part, face), index)?
+            {
+                match representation {
+                    representations::CorrespondingRepresentation::Curve(curve) => {
+                        let alternate = Trim::new(edge, curve, forward, uncertainty + pad)?;
+                        error += tube(&trim, surface, displacement(&trim, &alternate, surface)?)?;
+                    }
+                    representations::CorrespondingRepresentation::CylindricalBezier {
+                        frame,
+                        radius,
+                        points,
+                    } => {
+                        let Surface::Plane { frame: plane } = surface else {
+                            return None;
+                        };
+                        let (area, distance) = super::cylinder_pcurves::planar_error(
+                            &trim.curve,
+                            (trim.a, trim.b),
+                            [trim.start, trim.end],
+                            plane,
+                            (&frame, radius),
+                            &points,
+                            uncertainty + pad,
+                        )?;
+                        error += area + tube(&trim, surface, distance)?;
+                    }
+                }
             }
             trims.push(trim);
         }
@@ -220,7 +244,7 @@ fn boundary((part, face): FaceRef<'_>, surface: &Surface) -> Option<Boundary> {
     (!loops.is_empty() && error.is_finite()).then_some(Boundary { loops, error })
 }
 
-fn conic(curve: &Curve) -> Option<(V3, V3, V3)> {
+pub(super) fn conic(curve: &Curve) -> Option<(V3, V3, V3)> {
     match curve {
         Curve::Circle { frame, radius } => Some((
             frame.origin,
