@@ -684,18 +684,20 @@ mod tests {
             support.faces.push(Face {
                 surface: Surface::Freeform {
                     kind: "BSPLINE",
-                    surface: NurbsSurface::new(
-                        1,
-                        1,
-                        vec![
-                            vec![[lower, lower, 0.0], [lower, 11.0, 0.0]],
-                            vec![[11.0, lower, 0.0], [11.0, 11.0, 0.0]],
-                        ],
-                        vec![vec![1.0; 2]; 2],
-                        vec![0.0, 0.0, 1.0, 1.0],
-                        vec![0.0, 0.0, 1.0, 1.0],
-                    )
-                    .unwrap(),
+                    surface: Box::new(
+                        NurbsSurface::new(
+                            1,
+                            1,
+                            vec![
+                                vec![[lower, lower, 0.0], [lower, 11.0, 0.0]],
+                                vec![[11.0, lower, 0.0], [11.0, 11.0, 0.0]],
+                            ],
+                            vec![vec![1.0; 2]; 2],
+                            vec![0.0, 0.0, 1.0, 1.0],
+                            vec![0.0, 0.0, 1.0, 1.0],
+                        )
+                        .unwrap(),
+                    ),
                 },
                 reversed: false,
                 solid: None,
