@@ -67,6 +67,21 @@ charging unrelated spans. Invalid intervals or unsuccessful extraction retain th
 Temporary knot insertion and subdivision operate on copied control data; the input B-Rep
 remains unchanged.
 
+For a finite positive pcurve on a native B-spline or Bezier surface, the complete UV control
+hull bounds the parameter domain. Inside the original domain, the surface's positive control
+net bounds its entire image. A small excursion past a clamped domain end uses the end
+polynomial's Bernstein extension: its basis total variation is bounded by
+`(1+2*excursion/span)^degree`. The tensor product gives a bound on negative coefficient mass,
+and the positive weight range bounds the rational denominator away from zero. The complete
+control box is expanded by that normalized negative mass times each coordinate range.
+This is a geometric enclosure of the extension, not a precision or acceptance margin.
+An excessive excursion or a nonpositive denominator refuses the bound.
+A planar support may charge the intersection of that full projected
+box, including the edge's vertices, with the queried region. A proved remote hull has zero
+local area charge. An intersecting hull remains charged even if the nominal 3D edge is
+remote. This bound does not assume an exact curve composition, use samples, extend an
+unbounded parameter line, or reuse a converted swept surface's different parameter units.
+
 ## Sufficient containment
 
 A straight convex planar support admits a second acceptance proof. Its vertex polygon is

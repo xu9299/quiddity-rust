@@ -43,11 +43,144 @@ pub(super) fn straight_origin(curve: &Curve) -> Option<geom::V3> {
 /// The 3D curve is held separately by the edge. A preferred representation can have another
 /// parameter speed, but STEP requires its sense to agree with the 3D representation.
 pub(super) fn alternatives((part, face): FaceRef<'_>, edge: usize) -> Option<Vec<Curve>> {
+    bounded_alternatives((part, face), edge)?
+        .into_iter()
+        .map(|r| match r {
+            Representation::Exact(curve) => Some(curve),
+            Representation::Hull(_) => None,
+        })
+        .collect()
+}
+
+pub(super) enum Representation {
+    Exact(Curve),
+    Hull(Vec<geom::V3>),
+}
+
+/// Bound the image of a finite positive pcurve in the native spline parameterization.
+/// Converted swept parameterizations and unbounded parameter lines cannot use this fallback.
+fn bounded(raw: &RawCurve2d, surface: &Surface, units: (f64, f64)) -> Option<Representation> {
+    if let Some(curve) = mapped(raw, surface, units) {
+        return Some(Representation::Exact(curve));
+    }
+    let Surface::Freeform {
+        surface,
+        kind: "BSPLINE" | "BEZIER",
+    } = surface
+    else {
+        return None;
+    };
+    let identity = Frame {
+        origin: [0.0; 3],
+        x: [1.0, 0.0, 0.0],
+        y: [0.0, 1.0, 0.0],
+        z: [0.0, 0.0, 1.0],
+    };
+    let Curve::Nurbs(pc) = mapped(raw, &Surface::Plane { frame: identity }, (1.0, 1.0))? else {
+        return None;
+    };
+    Some(Representation::Hull(surface_hull(surface, &pc)?))
+}
+
+fn surface_hull(
+    surface: &crate::nurbs::NurbsSurface,
+    pc: &crate::nurbs::NurbsCurve,
+) -> Option<Vec<geom::V3>> {
+    let mut uv_low = [f64::INFINITY; 2];
+    let mut uv_high = [f64::NEG_INFINITY; 2];
+    for p in pc.control_points() {
+        if p.iter().any(|x| !x.is_finite()) {
+            return None;
+        }
+        for k in 0..2 {
+            uv_low[k] = uv_low[k].min(p[k]);
+            uv_high[k] = uv_high[k].max(p[k]);
+        }
+    }
+    let mut variation = 1.0;
+    for (k, degree, knots) in [
+        (0, surface.degree_u, &surface.knots_u),
+        (1, surface.degree_v, &surface.knots_v),
+    ] {
+        let (a, b) = (knots[degree], knots[knots.len() - degree - 1]);
+        if ![a, b].into_iter().all(f64::is_finite) || a >= b {
+            return None;
+        }
+        let distance = (a - uv_low[k]).max(uv_high[k] - b).max(0.0);
+        if distance == 0.0 {
+            continue;
+        }
+        if !knots[..=degree].iter().all(|t| *t == a)
+            || !knots[knots.len() - degree - 1..].iter().all(|t| *t == b)
+        {
+            return None;
+        }
+        let span = knots
+            .windows(2)
+            .filter_map(|w| (w[1] > w[0]).then_some(w[1] - w[0]))
+            .fold(f64::INFINITY, f64::min);
+        if !span.is_finite() || distance > 0.01 * span {
+            return None;
+        }
+        // On an end Bezier span, sum |B_i(s)| = (|s|+|1-s|)^degree. Knot insertion
+        // keeps every homogeneous control in the original positive control hull.
+        variation *= (1.0 + 2.0 * distance / span).powi(degree as i32)
+            * (1.0 + 64.0 * f64::EPSILON * (degree + 1) as f64);
+    }
+    let mut low = [f64::INFINITY; 3];
+    let mut high = [f64::NEG_INFINITY; 3];
+    let mut w_low = f64::INFINITY;
+    let mut w_high = 0.0_f64;
+    let count: usize = surface.control_points.iter().map(Vec::len).sum();
+    if count == 0 || count > 16384 {
+        return None;
+    }
+    for (points, weights) in surface.control_points.iter().zip(&surface.weights) {
+        for (&p, &w) in points.iter().zip(weights) {
+            if p.into_iter().any(|x| !x.is_finite()) || !w.is_finite() || w <= 0.0 {
+                return None;
+            }
+            w_low = w_low.min(w);
+            w_high = w_high.max(w);
+            for k in 0..3 {
+                low[k] = low[k].min(p[k]);
+                high[k] = high[k].max(p[k]);
+            }
+        }
+    }
+    let round = 128.0 * f64::EPSILON * (surface.degree_u + surface.degree_v + 2).pow(2) as f64;
+    let negative = 0.5 * (variation - 1.0).max(0.0) + round;
+    let denominator = w_low - negative * (w_high - w_low) - round * w_high;
+    if !variation.is_finite() || !denominator.is_finite() || denominator <= 0.0 {
+        return None;
+    }
+    // Signed normalized coefficients have total one. Their negative mass is at most
+    // negative*w_high/denominator, so each coordinate extends by at most that times its range.
+    let expansion = negative * w_high / denominator;
+    for k in 0..3 {
+        let pad = expansion * (high[k] - low[k]) + round * low[k].abs().max(high[k].abs()).max(1.0);
+        low[k] -= pad;
+        high[k] += pad;
+        if !low[k].is_finite() || !high[k].is_finite() {
+            return None;
+        }
+    }
+    Some(
+        (0..8)
+            .map(|i| std::array::from_fn(|k| if i & (1 << k) == 0 { low[k] } else { high[k] }))
+            .collect(),
+    )
+}
+
+pub(super) fn bounded_alternatives(
+    (part, face): FaceRef<'_>,
+    edge: usize,
+) -> Option<Vec<Representation>> {
     let mut out = Vec::new();
     let units = part.file_units().unwrap_or((1.0, 1.0));
     for &(index, ref curve) in part.file_pcurves(face) {
         if index == edge {
-            out.push(mapped(curve, &part.faces[face].surface, units)?);
+            out.push(bounded(curve, &part.faces[face].surface, units)?);
         }
     }
     if part.file_pcurves(face).is_empty() {
@@ -56,7 +189,7 @@ pub(super) fn alternatives((part, face): FaceRef<'_>, edge: usize) -> Option<Vec
                 let Pcurve::Line { point, dir } = curve else {
                     return None;
                 };
-                out.push(mapped(
+                out.push(bounded(
                     &RawCurve2d::Line {
                         point: [point.0, point.1],
                         direction: [dir.0, dir.1],
@@ -74,7 +207,7 @@ pub(super) fn alternatives((part, face): FaceRef<'_>, edge: usize) -> Option<Vec
         }
         for (index, curve) in part.primary_pcurves(adjacent) {
             if *index == edge {
-                out.push(mapped(curve, &part.faces[adjacent].surface, units)?);
+                out.push(bounded(curve, &part.faces[adjacent].surface, units)?);
             }
         }
     }
@@ -244,6 +377,46 @@ mod tests {
             y: [0.0, 1.0, 0.0],
             z: [0.0, 0.0, 1.0],
         }
+    }
+
+    #[test]
+    fn clamped_native_surface_extensions_remain_enclosed() {
+        use crate::nurbs::{NurbsCurve, NurbsSurface};
+        let surface = NurbsSurface::new(
+            1,
+            1,
+            vec![
+                vec![[0.0, 0.0, 0.0], [0.0, 1.0, 2.0]],
+                vec![[1.0, 0.0, 1.0], [1.0, 1.0, 3.0]],
+            ],
+            vec![vec![1.0; 2]; 2],
+            vec![0.0, 0.0, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        let pc = NurbsCurve::new(
+            1,
+            vec![[-1e-6, -2e-6, 0.0], [1.0 + 1e-6, 1.0 + 2e-6, 0.0]],
+            vec![1.0; 2],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        let hull = surface_hull(&surface, &pc).unwrap();
+        // This independent bilinear surface is exactly (u,v,u+2v), including its extension.
+        for p in [[-1e-6, -2e-6, -5e-6], [1.0 + 1e-6, 1.0 + 2e-6, 3.0 + 5e-6]] {
+            for k in 0..3 {
+                assert!(hull.iter().map(|q| q[k]).fold(f64::INFINITY, f64::min) <= p[k]);
+                assert!(hull.iter().map(|q| q[k]).fold(f64::NEG_INFINITY, f64::max) >= p[k]);
+            }
+        }
+        let far = NurbsCurve::new(
+            1,
+            vec![[-1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+            vec![1.0; 2],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        assert!(surface_hull(&surface, &far).is_none());
     }
 
     #[test]

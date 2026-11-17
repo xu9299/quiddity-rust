@@ -185,7 +185,47 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
             first.get_or_insert(a);
             last = Some(b);
             let vertices = [a, b].map(|p| project(frame, p));
-            let alternatives = super::representations::alternatives((part, face), index)?;
+            use super::representations::{Representation, bounded_alternatives};
+            let representations = bounded_alternatives((part, face), index)?;
+            if representations
+                .iter()
+                .any(|r| matches!(r, Representation::Hull(_)))
+            {
+                let patch = clip?;
+                error += curve_error(edge, frame, patch)?;
+                for r in representations {
+                    match r {
+                        Representation::Exact(curve) => {
+                            error += curve_error(
+                                &Edge {
+                                    curve,
+                                    ..edge.clone()
+                                },
+                                frame,
+                                patch,
+                            )?;
+                        }
+                        Representation::Hull(hull) => {
+                            let mut bounds = Box2::empty();
+                            let mut size = base_size;
+                            for p in [a, b].into_iter().chain(hull) {
+                                size = p.into_iter().map(f64::abs).fold(size, f64::max);
+                                bounds.add(project(frame, p))?;
+                            }
+                            error += bounds.intersection_area(patch, 256.0 * f64::EPSILON * size);
+                        }
+                    }
+                }
+                points.extend(vertices);
+                continue;
+            }
+            let alternatives: Vec<_> = representations
+                .into_iter()
+                .filter_map(|r| match r {
+                    Representation::Exact(curve) => Some(curve),
+                    Representation::Hull(_) => None,
+                })
+                .collect();
             if straight_origin(&edge.curve).is_none() {
                 let patch = clip?;
                 error += curve_error(edge, frame, patch)?;
@@ -581,6 +621,87 @@ mod tests {
             .iter()
             .map(|&(x, y)| (c * x - s * y, s * x + c * y))
             .collect()
+    }
+
+    #[test]
+    fn a_remote_native_surface_pcurve_keeps_its_complete_control_hull() {
+        use crate::brep::RawCurve2d;
+        use crate::nurbs::{NurbsCurve, NurbsSurface};
+        let patch = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        for near in [false, true] {
+            let mut support = face(&[rectangle(-1.0, -1.0, 20.0, 20.0)]);
+            let curve = Curve::Nurbs(
+                NurbsCurve::new(
+                    2,
+                    vec![
+                        [10.0, 10.0, 0.0],
+                        [10.0, 11.0, 0.0],
+                        [11.0, 10.0, 0.0],
+                        [10.0, 10.0, 0.0],
+                    ],
+                    vec![1.0; 4],
+                    vec![0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0],
+                )
+                .unwrap(),
+            );
+            support.edges.push(Edge {
+                curve,
+                start: [10.0, 10.0, 0.0],
+                end: [10.0, 10.0, 0.0],
+                vertices: (4, 4),
+                same_sense: true,
+                samples: vec![],
+            });
+            support.faces[0].loops.push(Loop {
+                edges: vec![(4, false)],
+                vertex: None,
+            });
+            let lower = if near { 0.0 } else { 9.0 };
+            support.faces.push(Face {
+                surface: Surface::Freeform {
+                    kind: "BSPLINE",
+                    surface: NurbsSurface::new(
+                        1,
+                        1,
+                        vec![
+                            vec![[lower, lower, 0.0], [lower, 11.0, 0.0]],
+                            vec![[11.0, lower, 0.0], [11.0, 11.0, 0.0]],
+                        ],
+                        vec![vec![1.0; 2]; 2],
+                        vec![0.0, 0.0, 1.0, 1.0],
+                        vec![0.0, 0.0, 1.0, 1.0],
+                    )
+                    .unwrap(),
+                },
+                reversed: false,
+                solid: None,
+                pcurves: vec![],
+                loops: vec![Loop {
+                    edges: vec![(4, true)],
+                    vertex: None,
+                }],
+            });
+            let support = Part::new(support.faces.clone(), support.edges.clone(), vec![])
+                .with_file_pcurves(
+                    std::collections::BTreeMap::from([(
+                        1,
+                        vec![(
+                            4,
+                            RawCurve2d::BSpline {
+                                degree: 2,
+                                points: vec![[0.5, 0.5], [0.5, 1.0 + 1e-8], [1.0, 0.5], [0.5, 0.5]],
+                                multiplicities: vec![3, 1, 3],
+                                knots: vec![0.0, 1.0, 2.0],
+                                weights: None,
+                            },
+                        )],
+                    )]),
+                    std::collections::BTreeMap::from([(1, vec![0])]),
+                    (1.0, 1.0),
+                    Some(1e-7),
+                );
+            assert_eq!(super::super::covered((&patch, 0), &[(&support, 0)]), !near);
+        }
     }
 
     #[test]

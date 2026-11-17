@@ -19,6 +19,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   guarded radius-dependent cylindrical parameter bounds without increasing the area budget.
 - Prove curved targets strictly inside a convex planar support, and local cutouts inside
   a complete cylindrical band, using finite boundary bounds and retained pcurves.
+- Retain a finite native spline-surface pcurve's complete positive control hull when its
+  exact composition is unavailable, so a proved remote boundary need not block local coverage.
 
 ### Added
 
