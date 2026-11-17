@@ -10,7 +10,7 @@
 //! discrepancy between their vertices and their analytic line. These bounds bracket the
 //! uncovered area: only a decisive bracket uses this path, with the same acceptance budget.
 //! Curved bounds above that budget, ambiguous boundaries, cylinders and oversized arrangements
-//! retain the sampled path; ineligible curves do not require constructing an arrangement.
+//! remain indeterminate; ineligible curves do not require constructing an arrangement.
 
 use super::{FaceRef, intervals, same_surface, subtract};
 use crate::brep::Edge;
@@ -235,7 +235,7 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
                 continue;
             }
             let Curve::Line { origin, .. } = edge.curve else {
-                unreachable!()
+                return None;
             };
             let mut size = origin.into_iter().map(f64::abs).fold(base_size, f64::max);
             for (_, pcurve) in part.faces[face].pcurves.iter().filter(|(e, _)| *e == index) {
