@@ -123,6 +123,25 @@ unbounded parameter line, or reuse a converted swept surface's different paramet
 
 ## Sufficient containment
 
+An inconclusive planar area bracket admits an additional rejection bound when every
+eligible support has only finite straight representations. Collect each original vertex,
+each finite nominal endpoint projection and every retained straight pcurve endpoint.
+Their convex hull contains every complete closed boundary path and therefore its entire
+parity region, including nonconvex loops, holes and crossings. The union of these hulls
+is a superset of every admitted support region; its uncovered target area is a lower bound.
+In-plane projection roundoff expands each point to an outward-rounded box before adaptive
+orientation predicates construct the hull. The predicate dependency was already present
+transitively through `spade`; it is now also a direct dependency. No triangulation, sampled
+curve, infinite line extension or changed geometric budget enters this proof.
+
+Subtract the complete target boundary error, its relative-area uncertainty and the clipped
+envelope-edge arithmetic allowance before comparing that lower bound with the original
+budget. Other eligible supports must all participate; an unsupported or curved representation
+disables this extra rejection path. A hull's interior never proves actual coverage, and this
+path is not used after removing a loop for the separate filler acceptance proof. An outward
+representation change on one side cannot consume a genuine missing strip on the opposite
+side. An alternative that can fill that strip or an uncertain target still prevents rejection.
+
 A straight convex planar support admits a second acceptance proof. Its vertex polygon is
 checked for strict convexity, and every finite straight representation stays within a
 bounded displacement of that polygon. Every target edge, including complete conics,

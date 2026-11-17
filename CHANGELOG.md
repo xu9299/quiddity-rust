@@ -30,6 +30,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 - Retain an eligible mixed-floor candidate with indeterminate finite support as a section
   refusal, unless another reader proves its complete body-local source region. A proved
   missing required support still rejects it.
+- Resolve additional planar rejections outside enclosing hulls of every finite straight
+  representation, retaining the complete target uncertainty and original area budget.
 
 ### Added
 

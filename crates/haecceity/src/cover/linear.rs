@@ -25,6 +25,15 @@ type Loops = Vec<Vec<Point>>;
 struct Boundary {
     loops: Loops,
     line_error: f64,
+    straight_points: Option<Vec<Point>>,
+    size: f64,
+}
+
+struct AreaBracket {
+    gap: f64,
+    error: f64,
+    tolerance: f64,
+    outer_gap_lower: Option<f64>,
 }
 
 // Bound the quadratic arrangement work; this is an eligibility limit, not a geometric epsilon.
@@ -69,10 +78,12 @@ impl Box2 {
 
 /// `None` means this path cannot establish the boundary representation it needs.
 pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bool> {
-    let (gap, error, tolerance) = finite_area(patch, supports, &[])?;
-    if gap + error <= tolerance {
+    let area = finite_area(patch, supports, &[])?;
+    if area.gap + area.error <= area.tolerance {
         Some(true)
-    } else if gap > tolerance + error {
+    } else if area.gap > area.tolerance + area.error
+        || area.outer_gap_lower.is_some_and(|g| g > area.tolerance)
+    {
         Some(false)
     } else {
         None
@@ -84,8 +95,8 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
 /// integrate that reduced region alone, so the filler never pays a coarse curved box.
 pub(super) fn covered_filled(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bool> {
     for &owner in supports {
-        if let Some((gap, error, tolerance)) = finite_area(patch, &[owner], supports)
-            && gap + error <= tolerance
+        if let Some(area) = finite_area(patch, &[owner], supports)
+            && area.gap + area.error <= area.tolerance
         {
             return Some(true);
         }
@@ -131,7 +142,7 @@ fn finite_area(
     patch: FaceRef<'_>,
     supports: &[FaceRef<'_>],
     fillers: &[FaceRef<'_>],
-) -> Option<(f64, f64, f64)> {
+) -> Option<AreaBracket> {
     let frame = canonical_frame(patch)?;
     let target = finite_loops(patch, &frame, None, &[])?;
     let mut bounds = Box2::empty();
@@ -146,6 +157,7 @@ fn finite_area(
     // uses the lower area bound for acceptance and the upper one for rejection.
     let mut error = target.line_error * (1.0 + 1e-9);
     let mut theirs = Vec::new();
+    let mut boundaries = Vec::new();
     for &support in supports {
         if same_surface(
             &patch.0.faces[patch.1].surface,
@@ -153,14 +165,94 @@ fn finite_area(
         ) {
             let boundary = finite_loops(support, &frame, Some(bounds), fillers)?;
             error += boundary.line_error;
-            theirs.push(boundary.loops);
+            theirs.push(boundary.loops.clone());
+            boundaries.push(boundary);
         }
     }
-    Some((
-        uncovered_area(&target.loops, &theirs, bounds)?,
+    let gap = uncovered_area(&target.loops, &theirs, bounds)?;
+    let tolerance = 1e-9 * area;
+    let outer_gap_lower =
+        if fillers.is_empty() && gap + error > tolerance && gap <= tolerance + error {
+            outside_straight_envelopes(&target, &boundaries, bounds)
+        } else {
+            None
+        };
+    Some(AreaBracket {
+        gap,
         error,
-        1e-9 * area,
-    ))
+        tolerance,
+        outer_gap_lower,
+    })
+}
+
+/// Every finite straight boundary path, including its vertex joins, lies in this hull.
+/// The parity region of any closed path also lies there, even with holes or crossings.
+/// Enlarging all supports can only decrease the uncovered area. This is rejection-only:
+/// no area inside an envelope establishes actual support or restores a removed loop.
+fn outside_straight_envelopes(
+    target: &Boundary,
+    supports: &[Boundary],
+    bounds: Box2,
+) -> Option<f64> {
+    let mut envelopes = Vec::new();
+    let mut error = target.line_error * (1.0 + 1e-9);
+    for support in supports {
+        let polygon = straight_outer(support.straight_points.as_ref()?, support.size)?;
+        for ends in polygon.windows(2) {
+            error += segment_error([ends[0], ends[1]], [0.0; 2], support.size, Some(bounds))?;
+        }
+        envelopes.push(vec![polygon]);
+    }
+    Some(uncovered_area(&target.loops, &envelopes, bounds)? - error)
+}
+
+fn straight_outer(points: &[Point], size: f64) -> Option<Vec<Point>> {
+    // Keep adaptive orientation away from overflow and subnormal products. This only
+    // limits eligibility; it is neither a geometric tolerance nor an acceptance margin.
+    if points.len() > 4096
+        || !size.is_finite()
+        || size > 1e75
+        || points.iter().any(|p| {
+            [p.0, p.1]
+                .into_iter()
+                .any(|x| !x.is_finite() || x.abs() > 1e75 || (x != 0.0 && x.abs() < 1e-75))
+        })
+    {
+        return None;
+    }
+    let pad = 64.0 * f64::EPSILON * size;
+    let mut expanded = Vec::new();
+    for &(x, y) in points {
+        for a in [(x - pad).next_down(), (x + pad).next_up()] {
+            for b in [(y - pad).next_down(), (y + pad).next_up()] {
+                expanded.push((a, b));
+            }
+        }
+    }
+    expanded.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    expanded.dedup();
+    let turn = |a: Point, b: Point, c: Point| {
+        let coord = |p: Point| robust::Coord { x: p.0, y: p.1 };
+        robust::orient2d(coord(a), coord(b), coord(c))
+    };
+    let half = |ordered: Vec<Point>| {
+        let mut hull = Vec::new();
+        for p in ordered {
+            while hull.len() >= 2 && turn(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
+                hull.pop();
+            }
+            hull.push(p);
+        }
+        hull.pop();
+        hull
+    };
+    let mut hull = half(expanded.clone());
+    hull.extend(half(expanded.into_iter().rev().collect()));
+    if hull.len() < 3 || hull.len() > MAX_SEGMENTS {
+        return None;
+    }
+    hull.push(hull[0]);
+    Some(hull)
 }
 
 fn finite_loops(
@@ -171,6 +263,7 @@ fn finite_loops(
 ) -> Option<Boundary> {
     let mut contours = Vec::new();
     let mut error = 0.0;
+    let mut straight_points = Some(Vec::new());
     let surface = &part.faces[face].surface;
     let mut base_size = frame.origin.into_iter().map(f64::abs).fold(1.0, f64::max);
     if let Surface::Plane { frame } = surface {
@@ -185,6 +278,7 @@ fn finite_loops(
             base_size = p.into_iter().map(f64::abs).fold(base_size, f64::max);
         }
     }
+    let mut outer_size = base_size;
     for (loop_index, lp) in part.faces[face].loops.iter().enumerate() {
         if lp.edges.is_empty() {
             return None;
@@ -198,6 +292,7 @@ fn finite_loops(
             && let Some(cost) =
                 super::corresponding::loop_match_error((part, face), loop_index, fillers)
         {
+            straight_points = None;
             error += cost;
             continue;
         }
@@ -226,6 +321,7 @@ fn finite_loops(
                 .iter()
                 .any(|r| matches!(r, Representation::Hull(_)))
             {
+                straight_points = None;
                 let patch = clip?;
                 error += curve_error(edge, frame, patch)?;
                 for r in representations {
@@ -262,6 +358,7 @@ fn finite_loops(
                 })
                 .collect();
             if straight_origin(&edge.curve).is_none() {
+                straight_points = None;
                 let patch = clip?;
                 error += curve_error(edge, frame, patch)?;
                 for curve in alternatives {
@@ -286,6 +383,11 @@ fn finite_loops(
                 straight_foot(&edge.curve, b)?,
             ];
             let feet = world.map(|p| project(frame, p));
+            outer_size = outer_size.max(size);
+            if let Some(points) = &mut straight_points {
+                points.extend(vertices);
+                points.extend(feet);
+            }
             let mut radii = std::array::from_fn::<_, 2, _>(|i| {
                 (vertices[i].0 - feet[i].0).hypot(vertices[i].1 - feet[i].1) + pad
             });
@@ -308,6 +410,9 @@ fn finite_loops(
                 for curve in &alternatives {
                     let projected = [straight_foot(curve, a)?, straight_foot(curve, b)?]
                         .map(|p| project(frame, p));
+                    if let Some(points) = &mut straight_points {
+                        points.extend(projected);
+                    }
                     error += paired_error(vertices, projected, size, clip)?;
                 }
                 points.extend(vertices);
@@ -323,6 +428,9 @@ fn finite_loops(
                     return None;
                 };
                 let alternate = [c, d];
+                if let Some(points) = &mut straight_points {
+                    points.extend(alternate);
+                }
                 for i in 0..2 {
                     radii[i] = radii[i].max(
                         (vertices[i].0 - alternate[i].0).hypot(vertices[i].1 - alternate[i].1)
@@ -353,6 +461,8 @@ fn finite_loops(
     Some(Boundary {
         loops: contours,
         line_error: error,
+        straight_points,
+        size: outer_size,
     })
 }
 
@@ -1105,6 +1215,99 @@ mod tests {
                 square.rotate_left(1);
             }
         }
+    }
+
+    fn outward_alternate(gap: f64, angle: f64) -> Part {
+        use crate::brep::RawCurve2d;
+        let support = face(&[rotate(&rectangle(gap, -1.0, 1.0, 2.0), angle)]);
+        support.with_file_pcurves(
+            std::collections::BTreeMap::from([(
+                0,
+                vec![(
+                    1,
+                    RawCurve2d::Line {
+                        point: [2.0 - gap, 0.0],
+                        direction: [0.0, 1.0],
+                        magnitude: 1.0,
+                    },
+                )],
+            )]),
+            Default::default(),
+            (1.0, 1.0),
+            None,
+        )
+    }
+
+    #[test]
+    fn an_outward_alternate_cannot_hide_a_gap_on_the_opposite_side() {
+        use crate::cover::{Coverage, assess};
+        for angle in [0.0, 0.37, 1.2] {
+            let support = outward_alternate(5e-9, angle);
+            let mut square = rotate(&rectangle(0.0, 0.0, 1.0, 1.0), angle);
+            for _ in 0..4 {
+                let patch = face(&[square.clone()]);
+                let bracket = finite_area((&patch, 0), &[(&support, 0)], &[]).unwrap();
+                assert!(bracket.gap <= bracket.tolerance + bracket.error);
+                assert_eq!(assess((&patch, 0), &[(&support, 0)]), Coverage::Uncovered);
+                square.rotate_left(1);
+            }
+        }
+    }
+
+    #[test]
+    fn outer_envelopes_retain_other_supports_and_target_uncertainty() {
+        use crate::cover::{Coverage, assess};
+        let gap = 5e-9;
+        let support = outward_alternate(gap, 0.0);
+        let patch = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        let filler = face(&[rectangle(-1.0, -1.0, 2.0 * gap, 2.0)]);
+        assert_ne!(
+            assess((&patch, 0), &[(&support, 0), (&filler, 0)]),
+            Coverage::Uncovered
+        );
+        let complete = face(&[rectangle(-1.0, -1.0, 2.0, 2.0)]);
+        assert_eq!(
+            assess((&patch, 0), &[(&support, 0), (&complete, 0)]),
+            Coverage::Covered
+        );
+        let mut uncertain = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        let Curve::Line { origin, .. } = &mut uncertain.edges[3].curve else {
+            unreachable!()
+        };
+        origin[0] += 2.0 * gap;
+        assert_eq!(
+            assess((&uncertain, 0), &[(&support, 0)]),
+            Coverage::Indeterminate
+        );
+    }
+
+    #[test]
+    fn an_alternate_that_can_cover_the_gap_stays_indeterminate() {
+        use crate::brep::RawCurve2d;
+        use crate::cover::{Coverage, assess};
+        let gap = 5e-9;
+        let base = outward_alternate(gap, 0.0);
+        let support = base.with_file_pcurves(
+            std::collections::BTreeMap::from([(
+                0,
+                vec![(
+                    3,
+                    RawCurve2d::Line {
+                        point: [-gap, 0.0],
+                        direction: [0.0, -1.0],
+                        magnitude: 1.0,
+                    },
+                )],
+            )]),
+            Default::default(),
+            (1.0, 1.0),
+            None,
+        );
+        let patch = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        assert_eq!(
+            assess((&patch, 0), &[(&support, 0)]),
+            Coverage::Indeterminate
+        );
     }
 
     #[test]
