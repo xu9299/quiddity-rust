@@ -214,6 +214,51 @@ pub(super) fn bounded_alternatives(
     Some(out)
 }
 
+/// A monotone, two-pole horizontal cylindrical pcurve describes a finite circular arc.
+/// Quadratic rational Bezier spans retain its domain and winding; an untrimmed circle
+/// would lose that evidence. The parameter speed need not match the source spline.
+fn cylindrical_arc(surface: &Surface, first: [f64; 2], last: [f64; 2]) -> Option<Curve> {
+    let Surface::Cylinder { frame, radius } = surface else {
+        return None;
+    };
+    let angle = last[0] - first[0];
+    if !first.into_iter().chain(last).all(f64::is_finite)
+        || !radius.is_finite()
+        || *radius <= 0.0
+        || first[1] != last[1]
+        || angle == 0.0
+        || angle.abs() > std::f64::consts::TAU
+    {
+        return None;
+    }
+    let count = (angle.abs() / std::f64::consts::FRAC_PI_2).ceil() as usize;
+    let mut points = Vec::new();
+    let mut weights = Vec::new();
+    let mut knots = vec![0.0; 3];
+    for i in 0..count {
+        let a = first[0] + angle * i as f64 / count as f64;
+        let b = first[0] + angle * (i + 1) as f64 / count as f64;
+        let middle = 0.5 * (a + b);
+        let weight = (0.5 * (b - a)).cos();
+        if i == 0 {
+            points.push(surface.value(a, first[1]));
+            weights.push(1.0);
+        }
+        points.extend([
+            frame.to_world([
+                radius * middle.cos() / weight,
+                radius * middle.sin() / weight,
+                first[1],
+            ]),
+            surface.value(b, first[1]),
+        ]);
+        weights.extend([weight, 1.0]);
+        knots.extend(std::iter::repeat_n((i + 1) as f64 / count as f64, 2));
+    }
+    knots.push(1.0);
+    crate::nurbs::NurbsCurve::new(2, points, weights, knots).map(Curve::Nurbs)
+}
+
 pub(super) fn mapped(raw: &RawCurve2d, surface: &Surface, (mm, rad): (f64, f64)) -> Option<Curve> {
     match surface {
         Surface::Plane { frame } => {
@@ -306,14 +351,24 @@ pub(super) fn mapped(raw: &RawCurve2d, surface: &Surface, (mm, rad): (f64, f64))
                 weights,
             } = raw
                 && points.len() == 2
-                && points[0][0] == points[1][0]
                 && multiplicities == &[2, 2]
                 && knots.len() == 2
+                && knots.iter().all(|x| x.is_finite())
                 && knots[0] < knots[1]
                 && weights
                     .as_ref()
                     .is_none_or(|w| w.len() == 2 && w.iter().all(|x| x.is_finite() && *x > 0.0))
             {
+                if points[0][1] == points[1][1] && points[0][0] != points[1][0] {
+                    return cylindrical_arc(
+                        surface,
+                        [points[0][0] * rad, points[0][1] * mm],
+                        [points[1][0] * rad, points[1][1] * mm],
+                    );
+                }
+                if points[0][0] != points[1][0] {
+                    return None;
+                }
                 return crate::nurbs::NurbsCurve::new(
                     1,
                     points
@@ -376,6 +431,59 @@ mod tests {
             x: [1.0, 0.0, 0.0],
             y: [0.0, 1.0, 0.0],
             z: [0.0, 0.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn horizontal_cylinder_pcurves_keep_their_finite_arc_and_sense() {
+        let surface = Surface::Cylinder {
+            frame: frame(),
+            radius: 71.5,
+        };
+        let reference = Curve::Circle {
+            frame: Frame {
+                origin: [0.0, 0.0, 60.0],
+                ..frame()
+            },
+            radius: 71.5,
+        };
+        for (a, b) in [(180.0, 360.0), (360.0, 180.0)] {
+            let pc = RawCurve2d::BSpline {
+                degree: 1,
+                points: vec![[a, 30.0], [b, 30.0]],
+                multiplicities: vec![2, 2],
+                knots: vec![3.0, 7.0],
+                weights: Some(vec![1.0, 3.0]),
+            };
+            let rad = std::f64::consts::PI / 180.0;
+            let image = mapped(&pc, &surface, (2.0, rad)).unwrap();
+            let bound = super::super::conic_bounds::deviation(
+                &reference,
+                (a * rad, b * rad),
+                &image,
+                (0.0, 1.0),
+            )
+            .unwrap();
+            assert!(bound < 1e-7);
+            assert!(
+                super::super::conic_bounds::deviation(
+                    &reference,
+                    (b * rad, a * rad),
+                    &image,
+                    (0.0, 1.0),
+                )
+                .is_none()
+            );
+        }
+        for (a, b) in [([0.0, 0.0], [0.1, 1.0]), ([0.0, 0.0], [7.0, 0.0])] {
+            let pc = RawCurve2d::BSpline {
+                degree: 1,
+                points: vec![a, b],
+                multiplicities: vec![2, 2],
+                knots: vec![0.0, 1.0],
+                weights: None,
+            };
+            assert!(mapped(&pc, &surface, (1.0, 1.0)).is_none());
         }
     }
 

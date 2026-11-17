@@ -63,6 +63,25 @@ impl Trim {
         }
     }
 
+    fn split_near(&self, point: V3) -> Option<(Self, Self)> {
+        let mut t = self.curve.parameter(point);
+        if conic(&self.curve).is_some() {
+            t = geom::nearest_turn(t, 0.5 * (self.a + self.b));
+        }
+        let fraction = (t - self.a) / (self.b - self.a);
+        if !fraction.is_finite() || fraction <= 0.0 || fraction >= 1.0 {
+            return None;
+        }
+        let middle = self.curve.value(t);
+        let mut first = self.clone();
+        first.b = t;
+        first.end = middle;
+        let mut last = self.clone();
+        last.a = t;
+        last.start = middle;
+        Some((first, last))
+    }
+
     fn length(&self) -> Option<f64> {
         if let Some(a) = representations::straight_foot(&self.curve, self.start) {
             return Some(geom::dist(
@@ -106,7 +125,7 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
             return Some(true);
         }
     }
-    None
+    cylindrical_union(patch, supports)
 }
 
 /// Removing one loop changes a parity region only inside that loop. A complete one-loop
@@ -355,25 +374,32 @@ fn correspondence(a: &Boundary, b: &Boundary, surface: &Surface) -> Option<f64> 
 }
 
 fn loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
-    if a.len() != b.len() {
-        return None;
-    }
     let mut best: Option<f64> = None;
     for reverse in [false, true] {
         for shift in 0..b.len() {
-            let cost = a.iter().enumerate().try_fold(0.0, |sum, (i, mine)| {
-                let index = if reverse {
-                    (shift + b.len() - i) % b.len()
-                } else {
-                    (shift + i) % b.len()
-                };
-                let other = if reverse {
-                    b[index].reversed()
-                } else {
-                    b[index].clone()
-                };
-                Some(sum + tube(mine, surface, displacement(mine, &other, surface)?)?)
-            });
+            let ordered: Vec<_> = (0..b.len())
+                .map(|i| {
+                    let index = if reverse {
+                        (shift + b.len() - i) % b.len()
+                    } else {
+                        (shift + i) % b.len()
+                    };
+                    if reverse {
+                        b[index].reversed()
+                    } else {
+                        b[index].clone()
+                    }
+                })
+                .collect();
+            let cost = if a.len() == b.len() {
+                a.iter().zip(&ordered).try_fold(0.0, |sum, (mine, other)| {
+                    Some(sum + tube(mine, surface, displacement(mine, other, surface)?)?)
+                })
+            } else if a.len() + b.len() <= 64 {
+                subdivided_loop_error(a, &ordered, surface)
+            } else {
+                None
+            };
             if let Some(cost) = cost {
                 best = Some(best.map_or(cost, |x| x.min(cost)));
             }
@@ -382,18 +408,67 @@ fn loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
     best
 }
 
+/// Splits only reparameterize the original finite curves. Every step consumes at least
+/// one whole remaining edge; the final correspondence must consume both closed loops.
+/// Closest parameters propose splits, while the complete homotopy tubes prove the bound.
+fn subdivided_loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
+    let (mut i, mut j) = (0, 0);
+    let (mut mine, mut other) = (a.first()?.clone(), b.first()?.clone());
+    let mut error = 0.0;
+    loop {
+        let cost = |x: &Trim, y: &Trim| tube(x, surface, displacement(x, y, surface)?);
+        let mut choices = Vec::new();
+        if let Some(c) = cost(&mine, &other) {
+            choices.push((c, None, None));
+        }
+        if let Some((first, last)) = mine.split_near(other.curve.value(other.b))
+            && let Some(c) = cost(&first, &other)
+        {
+            choices.push((c, Some(last), None));
+        }
+        if let Some((first, last)) = other.split_near(mine.curve.value(mine.b))
+            && let Some(c) = cost(&mine, &first)
+        {
+            choices.push((c, None, Some(last)));
+        }
+        let (bound, rest_a, rest_b) = choices.into_iter().min_by(|x, y| x.0.total_cmp(&y.0))?;
+        error += bound;
+        if let Some(rest) = rest_a {
+            mine = rest;
+        } else {
+            i += 1;
+            if let Some(next) = a.get(i) {
+                mine = next.clone();
+            }
+        }
+        if let Some(rest) = rest_b {
+            other = rest;
+        } else {
+            j += 1;
+            if let Some(next) = b.get(j) {
+                other = next.clone();
+            }
+        }
+        if i == a.len() || j == b.len() {
+            return (i == a.len() && j == b.len() && error.is_finite()).then_some(error);
+        }
+    }
+}
+
 /// Coarse chord/control error is subtracted from the denominator, never added to coverage.
-fn lower_area(boundary: &Boundary, patch: FaceRef<'_>) -> Option<f64> {
-    let surface = &patch.0.faces[patch.1].surface;
+fn parameter_polygon(
+    boundary: &Boundary,
+    surface: &Surface,
+    plane: Option<&crate::geom::Frame>,
+) -> Option<(Vec<Vec<(f64, f64)>>, f64)> {
     let mut error = boundary.error;
     let mut loops = Vec::new();
-    let plane = linear::canonical_frame(patch);
     for lp in &boundary.loops {
         let mut points: Vec<(f64, f64)> = Vec::new();
         for trim in lp {
             match surface {
                 Surface::Plane { .. } => {
-                    let frame = plane.as_ref()?;
+                    let frame = plane?;
                     let project = |p| {
                         let q = geom::sub(p, frame.origin);
                         (geom::dot(q, frame.x), geom::dot(q, frame.y))
@@ -493,6 +568,13 @@ fn lower_area(boundary: &Boundary, patch: FaceRef<'_>) -> Option<f64> {
         points.push(first);
         loops.push(points);
     }
+    Some((loops, error))
+}
+
+fn lower_area(boundary: &Boundary, patch: FaceRef<'_>) -> Option<f64> {
+    let surface = &patch.0.faces[patch.1].surface;
+    let plane = linear::canonical_frame(patch);
+    let (mut loops, mut error) = parameter_polygon(boundary, surface, plane.as_ref())?;
     let count = loops.iter().map(Vec::len).sum::<usize>() as f64;
     let low = loops
         .iter()
@@ -509,6 +591,94 @@ fn lower_area(boundary: &Boundary, patch: FaceRef<'_>) -> Option<f64> {
     error += 256.0 * f64::EPSILON * count * count * extent * extent;
     let lower = linear::polygon_area(&loops)? - error;
     (lower.is_finite() && lower > 0.0).then_some(lower)
+}
+
+/// A finite cylindrical parameter cut is an isometry in (R*u,v). Each retained boundary
+/// has its independent representation and projection error charged before polygon union.
+/// Only single-loop regions narrower than a turn are eligible, so the cut is injective;
+/// copied support turns establish coverage but never erase a hole or prove a rejection.
+fn cylindrical_union(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bool> {
+    let surface @ Surface::Cylinder { radius, .. } = &patch.0.faces[patch.1].surface else {
+        return None;
+    };
+    let period = std::f64::consts::TAU * radius;
+    if !period.is_finite() || period <= 0.0 {
+        return None;
+    }
+    let footprint = |face| {
+        let b = boundary(face, surface)?;
+        if b.loops.len() != 1 {
+            return None;
+        }
+        let (mut loops, error) = parameter_polygon(&b, surface, None)?;
+        for lp in &mut loops {
+            lp.dedup();
+        }
+        let low = loops
+            .iter()
+            .flatten()
+            .fold((f64::INFINITY, f64::INFINITY), |a, p| {
+                (a.0.min(p.0), a.1.min(p.1))
+            });
+        let high = loops
+            .iter()
+            .flatten()
+            .fold((f64::NEG_INFINITY, f64::NEG_INFINITY), |a, p| {
+                (a.0.max(p.0), a.1.max(p.1))
+            });
+        (high.0 - low.0 < period * (1.0 - 256.0 * f64::EPSILON))
+            .then_some((loops, error, low, high))
+    };
+    let (mut mine, mine_error, low, high) = footprint(patch)?;
+    let centre = 0.5 * (low.0 + high.0);
+    let mut theirs = Vec::new();
+    let mut error = mine_error;
+    for &support in supports {
+        if !same_surface(surface, &support.0.faces[support.1].surface) {
+            continue;
+        }
+        let Some((loops, bound, a, b)) = footprint(support) else {
+            continue;
+        };
+        let turn = ((centre - 0.5 * (a.0 + b.0)) / period).round();
+        if !turn.is_finite() || turn.abs() > 16.0 {
+            continue;
+        }
+        for k in [-1.0, 0.0, 1.0] {
+            let shift = (turn + k) * period;
+            if b.0 + shift < low.0 || a.0 + shift > high.0 || b.1 < low.1 || a.1 > high.1 {
+                continue;
+            }
+            let mut copy = loops.clone();
+            for p in copy.iter_mut().flatten() {
+                p.0 += shift;
+            }
+            theirs.push(copy);
+            error += bound;
+        }
+    }
+    let count = mine
+        .iter()
+        .chain(theirs.iter().flatten())
+        .map(Vec::len)
+        .sum::<usize>();
+    if count > 512 {
+        return None;
+    }
+    let mut extent = 1.0_f64;
+    let mut magnitude = period.max(low.0.abs()).max(low.1.abs());
+    for p in mine.iter_mut().chain(theirs.iter_mut().flatten()).flatten() {
+        magnitude = magnitude.max(p.0.abs()).max(p.1.abs());
+        p.0 -= low.0;
+        p.1 -= low.1;
+        extent = extent.max(p.0.abs()).max(p.1.abs());
+    }
+    let count = count as f64;
+    let round =
+        256.0 * f64::EPSILON * (count * count * extent * extent + count * extent * magnitude);
+    let lower = linear::polygon_area(&mine)? - mine_error - round;
+    let gap = linear::polygon_difference_area(&mine, &theirs)?;
+    (lower > 0.0 && gap + error + round <= 1e-9 * lower).then_some(true)
 }
 
 #[cfg(test)]

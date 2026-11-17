@@ -12,6 +12,8 @@ use super::geom::{self, Surface};
 #[cfg(test)]
 use super::sampling::CHORD_TOLERANCE;
 
+#[cfg(test)]
+mod caller_controls;
 mod conic_bounds;
 mod containment;
 mod corresponding;

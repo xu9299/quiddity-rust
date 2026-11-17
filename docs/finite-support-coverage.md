@@ -62,6 +62,27 @@ This path does not establish arbitrary unions of curved support regions, compare
 spline boundaries, or infer a gap when no correspondence is found. It makes no changes to
 the input geometry or to saved recognition evidence.
 
+When complete loops have different edge counts, finite curve splits may propose a common
+walk. Every step consumes at least one remaining edge, and both closed loops must be fully
+consumed. Closest parameters only propose the splits: the same full-path homotopy tubes
+bound every paired piece. No closest-point or sampled distance is accepted as a proof.
+This bounded search currently considers loops with at most 64 edges in total.
+
+Single-loop cylindrical regions narrower than a complete turn also admit a union proof.
+Finite axial lines and coaxial conics are mapped to the physical parameters `(R*u,v)`;
+their ideal parameter segments retain the complete representation, endpoint and projection
+error bounds. Nearby support turns are copied across the cut and integrated by the finite
+straight arrangement. The target cut must be injective. The summed error and numerical
+allowance must fit the original relative budget against a conservative target area lower
+bound. Holes, unresolved winding and unavailable boundaries refuse this path; no rejected
+union establishes a physical gap.
+
+A horizontal, clamped two-pole degree-one positive rational cylindrical pcurve traces a
+finite circular arc monotonically. Quadratic rational Bezier spans of at most a quarter
+turn represent its image while retaining its endpoints and winding. Their parameter speed
+can differ from the original pcurve; the rational/conic proof still establishes angular
+order and displacement. Helical pcurves and more than one turn remain unsupported here.
+
 Positive rational splines may correspond to a finite conic at a different parameter speed.
 Homogeneous Bezier nets bound the Bernstein coefficients of `X^2+Y^2-W^2` in the conic's
 affine coordinates. A positive denominator converts that residual to a radial distance bound;

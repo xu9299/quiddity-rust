@@ -8,6 +8,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Prove finite cylindrical support unions across subdivisions and parameter seams, retaining
+  all representation and projection area bounds. Match subdivided complete boundaries through
+  bounded finite homotopies, and retain two-pole horizontal cylindrical pcurves as finite arcs.
 - Keep support coverage indeterminate when finite boundary evidence is insufficient, instead
   of falling back to a directional sampling margin. Bound finite straight-edge trims and their
   vertex connections in a canonical plane frame.

@@ -708,11 +708,18 @@ fn uncovered_area(mine: &Loops, theirs: &[Loops], bounds: Box2) -> Option<f64> {
 }
 
 pub(super) fn polygon_area(loops: &Vec<Vec<(f64, f64)>>) -> Option<f64> {
+    polygon_difference_area(loops, &[])
+}
+
+pub(super) fn polygon_difference_area(
+    loops: &Vec<Vec<(f64, f64)>>,
+    supports: &[Vec<Vec<(f64, f64)>>],
+) -> Option<f64> {
     let mut bounds = Box2::empty();
     for &p in loops.iter().flatten() {
         bounds.add(p)?;
     }
-    uncovered_area(loops, &[], bounds)
+    uncovered_area(loops, supports, bounds)
 }
 
 fn crossing_height((a, b): Segment, (c, d): Segment) -> Option<f64> {
