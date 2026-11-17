@@ -713,7 +713,7 @@ mod tests {
             p
         };
         let filler = disk(1.0, 0.0);
-        let mut wall = patch.clone();
+        let mut wall = face(&[rectangle(-2.0, -2.0, 2.0, 2.0)]);
         let hole_index = wall.edges.len();
         wall.edges.push(filler.edges[0].clone());
         wall.faces[0].loops.push(Loop {
@@ -732,7 +732,7 @@ mod tests {
                 Coverage::Covered
             );
         }
-        let mut perforated = filler.clone();
+        let mut perforated = disk(1.0, 0.0);
         perforated.edges.push(disk(0.1, 0.0).edges.remove(0));
         perforated.faces[0].loops.push(Loop {
             edges: vec![(1, true)],
