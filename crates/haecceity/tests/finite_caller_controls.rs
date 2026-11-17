@@ -6,6 +6,24 @@ use haecceity::cover::{Coverage, assess};
 use haecceity::geom::{Curve, Frame, Surface};
 
 #[test]
+fn public_mixed_pocket_cylindrical_generatrices() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/fixtures/captured/section_recess_geometry/parts/0262e62c10a5adb5.step.gz",
+    );
+    let source = haecceity::step::read_step_file(&file).unwrap();
+    let swept = haecceity::sweep::extrude_face(&source, 14, [0.0; 3], [0.0, 0.0, 19.0]).unwrap();
+    let mut supports: Vec<_> = (6..=14).map(|face| (&source, face)).collect();
+    supports.push((&swept, 1));
+    for face in 0..swept.faces.len() {
+        assert_eq!(
+            assess((&swept, face), &supports),
+            Coverage::Covered,
+            "face {face}"
+        );
+    }
+}
+
+#[test]
 fn public_split_cylindrical_seat() {
     let patch = Part::new(
         vec![Face {

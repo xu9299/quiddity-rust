@@ -8,6 +8,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Bound finite straight cylindrical correspondences in physical angular/axial parameters,
+  retaining endpoint coherence and the original area budget without charging pure radial
+  representation offsets as tangential displacement.
 - Prove finite cylindrical support unions across subdivisions and parameter seams, retaining
   all representation and projection area bounds. Match subdivided complete boundaries through
   bounded finite homotopies, and retain two-pole horizontal cylindrical pcurves as finite arcs.

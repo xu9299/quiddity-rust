@@ -240,6 +240,73 @@ fn conic(curve: &Curve) -> Option<(V3, V3, V3)> {
     }
 }
 
+/// A complete bound in physical cylinder parameters for two finite straight segments.
+/// Their transverse cross and dot products are quadratic Bernstein polynomials. A positive
+/// dot lower bound fixes the relative angular branch; the cross bound then bounds every
+/// angular displacement. Axial displacement is affine. Pure radial motion has no angular
+/// or axial area cost, while endpoint coherence is still checked in three dimensions.
+fn cylindrical_segment_displacement(
+    a: [V3; 2],
+    b: [V3; 2],
+    frame: &crate::geom::Frame,
+    radius: f64,
+    pad: f64,
+) -> Option<f64> {
+    let local = |p| {
+        let q = geom::sub(p, frame.origin);
+        [
+            geom::dot(q, frame.x),
+            geom::dot(q, frame.y),
+            geom::dot(q, frame.z),
+        ]
+    };
+    let (p, q) = (a.map(local), b.map(local));
+    if radius <= 0.0 || !p.iter().chain(&q).flatten().all(|x| x.is_finite()) {
+        return None;
+    }
+    let extent = p
+        .iter()
+        .chain(&q)
+        .flat_map(|p| [p[0].abs(), p[1].abs()])
+        .fold(1.0_f64, f64::max);
+    let magnitude = a
+        .iter()
+        .chain(&b)
+        .flatten()
+        .chain(&frame.origin)
+        .map(|x| x.abs())
+        .fold(1.0_f64, f64::max);
+    let axes = [frame.x, frame.y, frame.z]
+        .map(|v| v.into_iter().map(f64::abs).sum::<f64>())
+        .into_iter()
+        .fold(1.0_f64, f64::max);
+    let coordinate_error = 64.0 * f64::EPSILON * magnitude * axes;
+    let round = 64.0 * f64::EPSILON * extent * extent
+        + 4.0 * coordinate_error * extent
+        + 2.0 * coordinate_error * coordinate_error;
+    let dot = |a: V3, b: V3| a[0] * b[0] + a[1] * b[1];
+    let cross = |a: V3, b: V3| a[0] * b[1] - a[1] * b[0];
+    let coefficients = |product: fn(V3, V3) -> f64| {
+        [
+            product(p[0], q[0]),
+            0.5 * (product(p[0], q[1]) + product(p[1], q[0])),
+            product(p[1], q[1]),
+        ]
+    };
+    let lower = coefficients(dot).into_iter().fold(f64::INFINITY, f64::min) - round;
+    if lower <= 0.0 {
+        return None;
+    }
+    let across = coefficients(cross)
+        .into_iter()
+        .map(f64::abs)
+        .fold(0.0_f64, f64::max)
+        + round;
+    let axial = (p[0][2] - q[0][2]).abs().max((p[1][2] - q[1][2]).abs()) + 2.0 * coordinate_error;
+    let bound = (radius * across.atan2(lower)).hypot(axial) + pad;
+    bound.is_finite().then_some(bound)
+}
+
 /// Compare equal fractions of the finite intervals, rather than untrimmed conic boxes.
 fn displacement(a: &Trim, b: &Trim, surface: &Surface) -> Option<f64> {
     let pad = 128.0 * f64::EPSILON * size(&a.curve).max(size(&b.curve));
@@ -261,12 +328,15 @@ fn displacement(a: &Trim, b: &Trim, surface: &Surface) -> Option<f64> {
         representations::straight_foot(&a.curve, a.start),
         representations::straight_foot(&b.curve, b.start),
     ) {
-        return Some(
-            distance(a0, b0).max(distance(
-                representations::straight_foot(&a.curve, a.end)?,
-                representations::straight_foot(&b.curve, b.end)?,
-            )) + pad,
-        );
+        let a1 = representations::straight_foot(&a.curve, a.end)?;
+        let b1 = representations::straight_foot(&b.curve, b.end)?;
+        let original = distance(a0, b0).max(distance(a1, b1)) + pad;
+        return Some(if let Surface::Cylinder { frame, radius } = surface {
+            cylindrical_segment_displacement([a0, a1], [b0, b1], frame, *radius, pad)
+                .map_or(original, |bound| bound.min(original))
+        } else {
+            original
+        });
     }
     let mut aligned = b.clone();
     let whole_conic = |t: &Trim| {
@@ -939,6 +1009,38 @@ mod tests {
         let ring = Part::new(ring.faces.clone(), ring.edges.clone(), vec![]);
         assert_ne!(assess((&patch, 0), &[(&ring, 0)]), Coverage::Covered);
         assert_eq!(assess((&ring, 0), &[(&ring, 0)]), Coverage::Covered);
+    }
+
+    #[test]
+    fn finite_cylinder_segments_keep_angular_and_axial_motion() {
+        let a = [[2.0, 0.0, -3.0], [2.0, 0.0, 5.0]];
+        let radial = [[2.00000003, 0.0, -3.0], [2.00000003, 0.0, 5.0]];
+        let bound = cylindrical_segment_displacement(a, radial, &frame(0.0), 2.0, 0.0).unwrap();
+        assert!(bound < 1e-10);
+        for angle in [-0.001_f64, 0.001] {
+            for axial in [-0.002_f64, 0.002] {
+                let b = radial.map(|p| [p[0] * angle.cos(), p[0] * angle.sin(), p[2] + axial]);
+                let expected = (2.0 * angle).hypot(axial);
+                let bound = cylindrical_segment_displacement(a, b, &frame(0.0), 2.0, 0.0).unwrap();
+                assert!(bound >= expected && bound < expected * 1.00001);
+            }
+        }
+        let opposite = a.map(|p| [-p[0], p[1], p[2]]);
+        assert!(cylindrical_segment_displacement(a, opposite, &frame(0.0), 2.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn finite_cylinder_segment_bounds_enclose_the_complete_parameter_paths() {
+        let a = [[1.9, -0.2, -3.0], [2.1, 0.3, 5.0]];
+        let b = [[2.0, -0.15, -3.01], [2.25, 0.25, 4.98]];
+        let bound = cylindrical_segment_displacement(a, b, &frame(0.0), 2.0, 0.0).unwrap();
+        for i in 0..=128 {
+            let t = i as f64 / 128.0;
+            let point = |p: [V3; 2]| geom::add(geom::scale(p[0], 1.0 - t), geom::scale(p[1], t));
+            let (p, q) = (point(a), point(b));
+            let angle = q[1].atan2(q[0]) - p[1].atan2(p[0]);
+            assert!((2.0 * angle).hypot(q[2] - p[2]) <= bound);
+        }
     }
 
     #[test]

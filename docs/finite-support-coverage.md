@@ -190,6 +190,16 @@ The resulting lower target area and upper missing band area use the unchanged re
 budget. A shorter support, an unresolved boundary or a hole outside the band cannot be
 accepted by this path. Neither containment proof establishes rejection.
 
+For two finite straight boundaries on a cylinder, compare their physical `(R*u,v)` paths.
+Under an affine walk, transverse cross and dot products are quadratic Bernstein polynomials.
+A strictly positive dot lower bound fixes one continuous relative angular branch, and the
+cross upper bound bounds its complete angle. The axial difference is affine and attains its
+maximum absolute value at an endpoint. Include local projection and coefficient arithmetic
+allowances before forming the distance bound. The existing cylindrical length guard and tube
+area bound remain conservative. Pure radial offsets then have no tangential displacement;
+finite endpoint coherence is still checked in 3D against the original eligibility condition.
+Opposite branches, approach to the axis, axial and angular gaps are not erased.
+
 ## Unanswered support in native discovery
 
 The mixed-floor section reader evaluates every required swept-face support until one is
