@@ -212,6 +212,10 @@ arithmetic bounds are charged separately. The file precision remains an endpoint
 guard only. Reversed preferred sense, unresolved angular order, multiple turns, unsupported
 weights and a nearly axial held plane refuse this proof. Endpoint agreement alone cannot
 hide an interior pcurve bulge, and no sampled residual establishes acceptance.
+The two restrictions and degree elevations have linear affine operation depth; their
+arithmetic allowance uses that depth with bounded frame axes and the guarded plane division.
+If a nominal endpoint lies beyond a finite pcurve end, retain that end and charge the entire
+angular phase discrepancy through the conic derivative bound. No small angle is discarded.
 
 ## Unanswered support in native discovery
 

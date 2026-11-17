@@ -117,9 +117,9 @@ pub(super) fn planar_error(
         .chain(&frame.y)
         .chain(&frame.z)
         .any(|x| !x.is_finite())
-        || [frame.x, frame.y, frame.z]
+        || [plane.z, frame.x, frame.y, frame.z]
             .into_iter()
-            .any(|v| geom::norm(v) > 2.0)
+            .any(|v| !(0.5..=2.0).contains(&geom::norm(v)))
         || eligibility.is_nan()
         || eligibility < 0.0
     {
@@ -148,13 +148,16 @@ pub(super) fn planar_error(
     let sense = determinant.signum();
     let start_u = geom::nearest_turn(alpha + sense * interval.0, 0.5 * (u[0] + u[degree]));
     let end_u = start_u + sense * (interval.1 - interval.0);
-    let ta = (start_u - u[0]) / width;
-    let tb = (end_u - u[0]) / width;
-    if ![ta, tb].into_iter().all(|t| (0.0..=1.0).contains(&t))
-        || (tb - ta) * (interval.1 - interval.0) <= 0.0
-    {
+    let ta = ((start_u - u[0]) / width).clamp(0.0, 1.0);
+    let tb = ((end_u - u[0]) / width).clamp(0.0, 1.0);
+    if (tb - ta) * (interval.1 - interval.0) <= 0.0 {
         return None;
     }
+    // Retain a finite spline end when the nominal conic extends beyond it. The
+    // complete angular phase difference is charged, rather than rounded to zero.
+    let phase_error = (start_u - (u[0] + width * ta))
+        .abs()
+        .max((end_u - (u[0] + width * tb)).abs());
     let (low, high) = (ta.min(tb), ta.max(tb));
     let magnitude = endpoints
         .iter()
@@ -167,7 +170,13 @@ pub(super) fn planar_error(
         .chain(points.iter().flatten())
         .map(|x| x.abs())
         .fold(radius.max(1.0), f64::max);
-    let round = 1024.0 * f64::EPSILON * magnitude * (degree + 1).pow(2) as f64 / denominator.abs();
+    // Two de Casteljau restrictions and degree elevation have linear affine depth.
+    // Frame transforms and the guarded plane division add fixed depth. With the
+    // bounded frame axes above, 64*(degree+1) error units enclose these operations;
+    // the factor two includes their coordinate sums and conversion to a distance.
+    let operations = 64.0 * (degree + 1) as f64;
+    let gamma = operations * f64::EPSILON / (1.0 - operations * f64::EPSILON);
+    let round = 2.0 * gamma * magnitude / denominator.abs();
     let surface = Surface::Cylinder {
         frame: *frame,
         radius,
@@ -199,6 +208,7 @@ pub(super) fn planar_error(
     let conic_distance = projected_length(geom::sub(origin, ideal_origin))
         + projected_length(geom::sub(nominal_x, ideal_x))
         + projected_length(geom::sub(nominal_y, ideal_y))
+        + (geom::norm(x) + geom::norm(y)) * phase_error
         + round;
     let factor_sine = -radius * geom::dot(normal, geom::cross(frame.z, frame.x));
     let factor_cosine = radius * geom::dot(normal, geom::cross(frame.z, frame.y));
