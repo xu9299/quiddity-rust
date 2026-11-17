@@ -8,6 +8,10 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Keep support coverage indeterminate when finite boundary evidence is insufficient, instead
+  of falling back to a directional sampling margin. Bound finite straight-edge trims and their
+  vertex connections in a canonical plane frame.
+
 - Check straight-bounded planar coverage without a scan-direction chord margin. Split
   integration at boundary crossings and bracket nearby conic/NURBS and vertex-to-line
   uncertainty against the existing area tolerance; retain the sampled path for ambiguous
@@ -15,6 +19,10 @@ in [docs/alpha1.md](docs/alpha1.md).
   subsegments without increasing the acceptance budget.
 
 ### Added
+
+- `cover::assess` and its non-exhaustive `Coverage` result distinguish established coverage,
+  an established gap, and an indeterminate geometric query. `cover::covered` remains available
+  as a conservative boolean convenience.
 
 - Optional native stage and face timing, including the shared-analysis Python entry point.
 - A document-only recognition entry that omits correspondence fingerprints.

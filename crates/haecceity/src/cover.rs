@@ -1,23 +1,15 @@
-//! Whether faces cover a face — what the Python implementation asks of repeated face booleans
-//! (`_support_patches.covered_patch`): cut the patch by each support and see whether the area
-//! left is at most 1e-9 of it.
+//! Conservative support coverage on a shared surface, with the original relative area budget.
 //!
-//! A support cuts area from the patch only where it lies on the patch's surface, so only
-//! supports on the same plane or cylinder count. In the patch's parameter space the question is
-//! two-dimensional: along each line `v = c` the patch's intervals, less every support's, leave
-//! a length uncovered, and the uncovered area is that length integrated over `v`, between the
-//! heights of the loops' vertices. Two faces sharing a curved edge sample it differently, so a
-//! support's intervals are widened by the samples' chordal error either side; a gap narrower
-//! than that is no gap.
-//!
-//! Straight-bounded planar patches first use the bounded analytic path in `linear`: no chord
-//! margin is applied to a straight edge, boundary crossings split the area integral, and any
-//! nearby curved-boundary and vertex-to-line discrepancies bound the uncovered area against
-//! the original relative tolerance. The sampled path below remains for ambiguous boundaries,
-//! curved patches, cylinders and ineligible arrangements.
+//! Finite analytic boundary intervals and their representation discrepancies establish a
+//! decision only when the resulting area bracket is decisive. Unsupported or ambiguous trims
+//! remain indeterminate. The former one-axis sampling margin is a test-only regression control;
+//! it cannot turn an indeterminate query into accepted coverage.
 
 use super::brep::Part;
-use super::geom::{self, Surface, V3};
+#[cfg(test)]
+use super::geom::V3;
+use super::geom::{self, Surface};
+#[cfg(test)]
 use super::sampling::CHORD_TOLERANCE;
 
 mod linear;
@@ -25,11 +17,34 @@ mod linear;
 /// A face of a part.
 pub type FaceRef<'a> = (&'a Part, usize);
 
-/// `covered_patch`: whether the supports leave at most 1e-9 of the patch's area uncovered.
-pub fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> bool {
-    if let Some(answer) = linear::covered(patch, supports) {
-        return answer;
+/// A conservative support-coverage decision. An indeterminate boundary is not evidence of
+/// either coverage or a physical gap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Coverage {
+    Covered,
+    Uncovered,
+    Indeterminate,
+}
+
+/// Decide coverage from bounded finite geometry. Geometry outside the supported proof paths
+/// remains indeterminate; it never falls back to the scan-direction chord margin.
+pub fn assess(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Coverage {
+    match linear::covered(patch, supports) {
+        Some(true) => Coverage::Covered,
+        Some(false) => Coverage::Uncovered,
+        None => Coverage::Indeterminate,
     }
+}
+
+/// Whether coverage is established. Both uncovered and indeterminate geometry return false;
+/// callers needing that distinction use [`assess`].
+pub fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> bool {
+    assess(patch, supports) == Coverage::Covered
+}
+
+#[cfg(test)]
+fn sampled_legacy(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> bool {
     let (part, face) = patch;
     let surface = &part.faces[face].surface;
     let (scale, widen) = match *surface {
@@ -124,6 +139,7 @@ fn same_surface(a: &Surface, b: &Surface) -> bool {
 
 /// A face's loops as closed polygons in the parameters of *surface* (the patch's), each
 /// periodic parameter unwrapped along the loop.
+#[cfg(test)]
 fn loops_in(part: &Part, face: usize, surface: &Surface) -> Vec<Vec<(f64, f64)>> {
     let periodic_u = matches!(surface, Surface::Cylinder { .. });
     let mut out = Vec::new();

@@ -59,6 +59,13 @@ possible: keep every face and edge traceable to its source.
 (feature recognition, and PMI from design intent) need none of it. The parts worth owning are
 reading real files faithfully, answering geometric questions about them exactly, and AP242 PMI.
 
+## Support coverage
+
+Use `cover::assess(patch, supports)` to distinguish `Coverage::Covered`,
+`Coverage::Uncovered` and `Coverage::Indeterminate`. The latter leaves the geometric question
+unproved; callers must not interpret it as established coverage or a measured gap.
+`cover::covered` returns true only for `Covered`. Unsupported trims remain indeterminate.
+
 ## Selected assembly bodies
 
 Use `step::read_step_owned(bytes)` when transferring a `Vec<u8>` to the reader,
