@@ -368,4 +368,27 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn a_finite_spline_end_keeps_the_entire_nominal_phase_difference() {
+        let frame = Frame {
+            origin: [0.0; 3],
+            x: [1.0, 0.0, 0.0],
+            y: [0.0, 1.0, 0.0],
+            z: [0.0, 0.0, 1.0],
+        };
+        let reference = Curve::Circle { frame, radius: 1.0 };
+        let points = [[0.0, 0.0], [0.5, 0.0], [1.0, 0.0]];
+        let (_, distance) = planar_error(
+            &reference,
+            (-1e-6, 1.0),
+            [reference.value(-1e-6), reference.value(1.0)],
+            &frame,
+            (&frame, 1.0),
+            &points,
+            1e-5,
+        )
+        .unwrap();
+        assert!(distance >= 1e-6);
+    }
 }

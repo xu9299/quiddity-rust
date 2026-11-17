@@ -216,6 +216,8 @@ The two restrictions and degree elevations have linear affine operation depth; t
 arithmetic allowance uses that depth with bounded frame axes and the guarded plane division.
 If a nominal endpoint lies beyond a finite pcurve end, retain that end and charge the entire
 angular phase discrepancy through the conic derivative bound. No small angle is discarded.
+Five public caller patches exercise this path with their actual finite planes, conics and
+vertices. A separate self-coverage query retains the preferred adjacent representation too.
 
 ## Unanswered support in native discovery
 
