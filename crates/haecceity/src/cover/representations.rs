@@ -259,7 +259,7 @@ mod tests {
                 .any(|(_, p)| matches!(p, RawCurve2d::Ellipse { .. }))
         );
         let (bytes, _) =
-            crate::brep_write::write_step(&part, &crate::brep_write::WriteOptions::default())
+            crate::brep_write::write_step(&part, &crate::brep_write::WriteOptions::new("coverage"))
                 .unwrap();
         let reopened = crate::read_step(&bytes).unwrap();
         assert_eq!(part.file_pcurves(0), reopened.file_pcurves(0));
