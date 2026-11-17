@@ -214,17 +214,34 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
             let mut radii = std::array::from_fn::<_, 2, _>(|i| {
                 (vertices[i].0 - feet[i].0).hypot(vertices[i].1 - feet[i].1) + pad
             });
-            let limit = part
+            let uncertainty = part
                 .file_uncertainty()
-                .filter(|x| x.is_finite() && *x >= 0.0)
-                .unwrap_or(0.0)
-                + pad;
+                .filter(|x| x.is_finite() && *x >= 0.0);
+            let limit = uncertainty.map_or(f64::INFINITY, |x| x + pad);
             if [a, b]
                 .into_iter()
                 .zip(world)
                 .any(|(p, q)| geom::dist(p, q) > limit)
             {
                 return None;
+            }
+            if uncertainty.is_none() {
+                // Constructed parts need not declare a modelling precision. Retain both
+                // the vertex path and finite analytic segment in their area bracket; an
+                // absent declaration is neither zero uncertainty nor a licence to heal.
+                let deviations = std::array::from_fn(|i| {
+                    (vertices[i].0 - feet[i].0).hypot(vertices[i].1 - feet[i].1)
+                });
+                error += segment_error(vertices, deviations, size, clip)?;
+                for curve in &alternatives {
+                    let projected = [a, b].map(|p| project(frame, curve.value(curve.parameter(p))));
+                    let deviations = std::array::from_fn(|i| {
+                        (vertices[i].0 - projected[i].0).hypot(vertices[i].1 - projected[i].1)
+                    });
+                    error += segment_error(vertices, deviations, size, clip)?;
+                }
+                points.extend(vertices);
+                continue;
             }
             error += segment_error(feet, [0.0; 2], size, clip)?;
             for curve in &alternatives {

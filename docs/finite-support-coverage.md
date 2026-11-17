@@ -18,6 +18,9 @@ containing the entire finite curve and that chord. Analytic extrema bound conics
 rational weights allow the control hull to bound a spline. Independent pcurves must also be
 bounded. An unsupported representation makes this path indeterminate. File uncertainty only
 guards endpoint coherence; it is not an acceptance margin.
+Constructed parts without a declared modelling precision retain the vertex path and analytic
+segment together in the area bracket. Missing metadata is not interpreted as zero precision
+and does not permit silently replacing an inconsistent boundary.
 
 ## Corresponding complete boundaries
 
