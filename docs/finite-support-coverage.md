@@ -53,3 +53,10 @@ support coverage. Acceptance requires the complete boundary correspondence error
 This path does not establish arbitrary unions of curved support regions, compare unsupported
 spline boundaries, or infer a gap when no correspondence is found. It makes no changes to
 the input geometry or to saved recognition evidence.
+
+Two-pole degree-one positive rational pcurves retain their finite straight segment, including
+endpoint clamping. Axial cylindrical pcurves of this form map to the same finite segment in
+3D. For other positive rational splines, a finite parameter interval can use a derivative
+bound to enclose each complete panel. The combined box encloses that finite curve and its
+vertex chord; it does not charge unrelated spans of the whole spline's control hull. The
+full hull remains the bound when periodic wrapping or invalid intervals prevent refinement.

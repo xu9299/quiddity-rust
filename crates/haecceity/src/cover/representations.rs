@@ -7,6 +7,38 @@ use super::FaceRef;
 use crate::brep::{Pcurve, RawCurve2d};
 use crate::geom::{self, Curve, Frame, Surface};
 
+/// A degree-one, two-pole positive rational spline is a finite straight segment.
+/// Clamp its foot to that domain instead of extending a file pcurve as an infinite line.
+pub(super) fn straight_foot(curve: &Curve, p: geom::V3) -> Option<geom::V3> {
+    let (origin, direction, extent) = match curve {
+        Curve::Line { origin, dir } => (*origin, *dir, None),
+        Curve::Nurbs(c)
+            if c.degree() == 1
+                && c.control_points().len() == 2
+                && c.weights().iter().all(|w| w.is_finite() && *w > 0.0) =>
+        {
+            let p = c.control_points();
+            let dir = geom::sub(p[1], p[0]);
+            (p[0], dir, Some(geom::norm(dir)))
+        }
+        _ => return None,
+    };
+    let dir = geom::unit(direction)?;
+    let mut t = geom::dot(geom::sub(p, origin), dir);
+    if let Some(extent) = extent {
+        t = t.clamp(0.0, extent);
+    }
+    Some(geom::add(origin, geom::scale(dir, t)))
+}
+
+pub(super) fn straight_origin(curve: &Curve) -> Option<geom::V3> {
+    match curve {
+        Curve::Line { origin, .. } => straight_foot(curve, *origin),
+        Curve::Nurbs(c) => straight_foot(curve, c.control_points()[0]),
+        _ => None,
+    }
+}
+
 /// The queried face's pcurves, and an explicitly preferred pcurve on an adjacent face.
 /// The 3D curve is held separately by the edge. A preferred representation can have another
 /// parameter speed, but STEP requires its sense to agree with the 3D representation.
@@ -133,6 +165,33 @@ fn mapped(raw: &RawCurve2d, surface: &Surface, (mm, rad): (f64, f64)) -> Option<
             }
         }
         Surface::Cylinder { frame, radius } => {
+            if let RawCurve2d::BSpline {
+                degree: 1,
+                points,
+                multiplicities,
+                knots,
+                weights,
+            } = raw
+                && points.len() == 2
+                && points[0][0] == points[1][0]
+                && multiplicities == &[2, 2]
+                && knots.len() == 2
+                && knots[0] < knots[1]
+                && weights
+                    .as_ref()
+                    .is_none_or(|w| w.len() == 2 && w.iter().all(|x| x.is_finite() && *x > 0.0))
+            {
+                return crate::nurbs::NurbsCurve::new(
+                    1,
+                    points
+                        .iter()
+                        .map(|p| surface.value(p[0] * rad, p[1] * mm))
+                        .collect(),
+                    weights.clone().unwrap_or_else(|| vec![1.0; 2]),
+                    vec![knots[0], knots[0], knots[1], knots[1]],
+                )
+                .map(Curve::Nurbs);
+            }
             let RawCurve2d::Line {
                 point,
                 direction,
@@ -266,6 +325,53 @@ mod tests {
         assert_eq!(
             part.primary_pcurves(0).collect::<Vec<_>>(),
             reopened.primary_pcurves(0).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn straight_rational_pcurves_keep_their_finite_domain() {
+        let curve = mapped(
+            &RawCurve2d::BSpline {
+                degree: 1,
+                points: vec![[0.0, 0.0], [1.0, 0.0]],
+                multiplicities: vec![2, 2],
+                knots: vec![0.0, 1.0],
+                weights: Some(vec![1.0, 3.0]),
+            },
+            &Surface::Plane { frame: frame() },
+            (1.0, 1.0),
+        )
+        .unwrap();
+        assert_eq!(
+            straight_foot(&curve, [2.0, 0.0, 0.0]),
+            Some([1.0, 0.0, 0.0])
+        );
+        assert_eq!(
+            straight_foot(&curve, [-1.0, 0.0, 0.0]),
+            Some([0.0, 0.0, 0.0])
+        );
+        assert_eq!(
+            straight_foot(&curve, [0.5, 1.0, 0.0]),
+            Some([0.5, 0.0, 0.0])
+        );
+        let cylinder = mapped(
+            &RawCurve2d::BSpline {
+                degree: 1,
+                points: vec![[0.0, 0.0], [0.0, 2.0]],
+                multiplicities: vec![2, 2],
+                knots: vec![0.0, 1.0],
+                weights: None,
+            },
+            &Surface::Cylinder {
+                frame: frame(),
+                radius: 1.0,
+            },
+            (1.0, 1.0),
+        )
+        .unwrap();
+        assert_eq!(
+            straight_foot(&cylinder, [1.0, 0.0, 3.0]),
+            Some([1.0, 0.0, 2.0])
         );
     }
 }

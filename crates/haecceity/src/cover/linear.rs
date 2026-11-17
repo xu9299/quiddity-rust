@@ -12,6 +12,7 @@
 //! Curved bounds above that budget, ambiguous boundaries, cylinders and oversized arrangements
 //! remain indeterminate; ineligible curves do not require constructing an arrangement.
 
+use super::representations::{straight_foot, straight_origin};
 use super::{FaceRef, intervals, same_surface, subtract};
 use crate::brep::Edge;
 use crate::geom::{self, Curve, Frame, Surface, V3};
@@ -185,7 +186,7 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
             last = Some(b);
             let vertices = [a, b].map(|p| project(frame, p));
             let alternatives = super::representations::alternatives((part, face), index)?;
-            if !matches!(edge.curve, Curve::Line { .. }) {
+            if straight_origin(&edge.curve).is_none() {
                 let patch = clip?;
                 error += curve_error(edge, frame, patch)?;
                 for curve in alternatives {
@@ -198,18 +199,17 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
                 points.extend(vertices);
                 continue;
             }
-            let Curve::Line { origin, .. } = edge.curve else {
-                return None;
-            };
+            let origin = straight_origin(&edge.curve)?;
             let mut size = origin.into_iter().map(f64::abs).fold(base_size, f64::max);
             for curve in &alternatives {
-                let Curve::Line { origin, .. } = curve else {
-                    return None;
-                };
+                let origin = straight_origin(curve)?;
                 size = origin.iter().copied().map(f64::abs).fold(size, f64::max);
             }
             let pad = 64.0 * f64::EPSILON * size;
-            let world = [a, b].map(|p| edge.curve.value(edge.curve.parameter(p)));
+            let world = [
+                straight_foot(&edge.curve, a)?,
+                straight_foot(&edge.curve, b)?,
+            ];
             let feet = world.map(|p| project(frame, p));
             let mut radii = std::array::from_fn::<_, 2, _>(|i| {
                 (vertices[i].0 - feet[i].0).hypot(vertices[i].1 - feet[i].1) + pad
@@ -234,7 +234,8 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
                 });
                 error += segment_error(vertices, deviations, size, clip)?;
                 for curve in &alternatives {
-                    let projected = [a, b].map(|p| project(frame, curve.value(curve.parameter(p))));
+                    let projected = [straight_foot(curve, a)?, straight_foot(curve, b)?]
+                        .map(|p| project(frame, p));
                     let deviations = std::array::from_fn(|i| {
                         (vertices[i].0 - projected[i].0).hypot(vertices[i].1 - projected[i].1)
                     });
@@ -246,7 +247,7 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
             error += segment_error(feet, [0.0; 2], size, clip)?;
             for curve in &alternatives {
                 let param_feet = [a, b].map(|p| {
-                    let q = curve.value(curve.parameter(p));
+                    let q = straight_foot(curve, p)?;
                     (geom::dist(p, q) <= limit).then_some(project(frame, q))
                 });
                 let [Some(c), Some(d)] = param_feet else {
@@ -393,6 +394,12 @@ fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
             for &p in curve.control_points() {
                 add(p)?;
             }
+            if let Some(mut trimmed) = finite_spline_bounds(edge, frame) {
+                for p in [edge.start, edge.end] {
+                    trimmed.add(project(frame, p))?;
+                }
+                return Some(trimmed.intersection_area(patch, 64.0 * f64::EPSILON * size));
+            }
         }
         Curve::Circle { .. } | Curve::Ellipse { .. } => {
             let interval = edge_interval(
@@ -414,6 +421,59 @@ fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
     }
     // Projection roundoff enlarges the error bound, never the support or acceptance budget.
     Some(bounds.intersection_area(patch, 64.0 * f64::EPSILON * size))
+}
+
+/// Positive rational weights bound the derivative by 2*p*range/min_span*(wmax/wmin)^2.
+/// Midpoint values plus that bound enclose each entire parameter panel. The combined box
+/// encloses the finite curve and its vertex chord, rather than the whole spline's hull.
+fn finite_spline_bounds(edge: &Edge, frame: &Frame) -> Option<Box2> {
+    let Curve::Nurbs(curve) = &edge.curve else {
+        return None;
+    };
+    let interval = edge_interval(
+        &edge.curve,
+        edge.start,
+        edge.end,
+        edge.same_sense,
+        edge.vertices.0 == edge.vertices.1,
+    );
+    let (a, b) = (interval.0.min(interval.1), interval.0.max(interval.1));
+    let domain = curve.domain();
+    if a < domain.0 || b > domain.1 || !a.is_finite() || !b.is_finite() {
+        return None;
+    }
+    let mut hull = Box2::empty();
+    for &p in curve.control_points() {
+        hull.add(project(frame, p))?;
+    }
+    let span = curve
+        .knots()
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|x| *x > 0.0)
+        .min_by(f64::total_cmp)?;
+    let low = curve.weights().iter().copied().min_by(f64::total_cmp)?;
+    let high = curve.weights().iter().copied().max_by(f64::total_cmp)?;
+    if low <= 0.0 || !high.is_finite() {
+        return None;
+    }
+    let factor = 2.0 * curve.degree() as f64 / span
+        * (high / low).powi(2)
+        * (1.0 + 128.0 * f64::EPSILON * curve.control_points().len() as f64);
+    let rate = (
+        (hull.high.0 - hull.low.0) * factor,
+        (hull.high.1 - hull.low.1) * factor,
+    );
+    let panels = 128;
+    let half = 0.5 * (b - a) / panels as f64;
+    let mut bounds = Box2::empty();
+    for i in 0..panels {
+        let t = a + (b - a) * (i as f64 + 0.5) / panels as f64;
+        let p = project(frame, curve.value(t));
+        bounds.add((p.0 - rate.0 * half, p.1 - rate.1 * half))?;
+        bounds.add((p.0 + rate.0 * half, p.1 + rate.1 * half))?;
+    }
+    Some(bounds)
 }
 
 fn uncovered_area(mine: &Loops, theirs: &[Loops], bounds: Box2) -> Option<f64> {
@@ -964,5 +1024,39 @@ mod tests {
             super::super::assess((&patch, 0), &[(&support, 0)]),
             super::super::Coverage::Covered
         );
+    }
+
+    #[test]
+    fn a_finite_spline_box_does_not_use_other_parameter_spans() {
+        let frame = Frame {
+            origin: [0.0; 3],
+            x: [1.0, 0.0, 0.0],
+            y: [0.0, 1.0, 0.0],
+            z: [0.0, 0.0, 1.0],
+        };
+        let curve = Curve::Nurbs(
+            crate::nurbs::NurbsCurve::new(
+                2,
+                vec![[0.0, 10.0, 0.0], [2.0, 10.0, 0.0], [2.0, 0.0, 0.0]],
+                vec![1.0; 3],
+                vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            )
+            .unwrap(),
+        );
+        let mut edge = Edge {
+            start: curve.value(0.0),
+            end: curve.value(0.1),
+            curve,
+            vertices: (0, 1),
+            same_sense: true,
+            samples: vec![],
+        };
+        let patch = Box2 {
+            low: (0.0, 0.0),
+            high: (1.0, 1.0),
+        };
+        assert_eq!(curve_error(&edge, &frame, patch), Some(0.0));
+        edge.end = edge.curve.value(1.0);
+        assert!(curve_error(&edge, &frame, patch).unwrap() > 0.9);
     }
 }

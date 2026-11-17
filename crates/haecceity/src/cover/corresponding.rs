@@ -31,8 +31,15 @@ impl Trim {
             edge.vertices.0 == edge.vertices.1,
         );
         if ![a, b].into_iter().all(f64::is_finite)
-            || geom::dist(edge.start, curve.value(a)) > limit
-            || geom::dist(edge.end, curve.value(b)) > limit
+            || geom::dist(
+                edge.start,
+                representations::straight_foot(&curve, edge.start)
+                    .unwrap_or_else(|| curve.value(a)),
+            ) > limit
+            || geom::dist(
+                edge.end,
+                representations::straight_foot(&curve, edge.end).unwrap_or_else(|| curve.value(b)),
+            ) > limit
         {
             return None;
         }
@@ -57,6 +64,12 @@ impl Trim {
     }
 
     fn length(&self) -> Option<f64> {
+        if let Some(a) = representations::straight_foot(&self.curve, self.start) {
+            return Some(geom::dist(
+                a,
+                representations::straight_foot(&self.curve, self.end)?,
+            ));
+        }
         Some(match &self.curve {
             Curve::Line { .. } => geom::dist(self.curve.value(self.a), self.curve.value(self.b)),
             _ => {
@@ -179,11 +192,15 @@ fn conic(curve: &Curve) -> Option<(V3, V3, V3)> {
 /// Compare equal fractions of the finite intervals, rather than untrimmed conic boxes.
 fn displacement(a: &Trim, b: &Trim) -> Option<f64> {
     let pad = 128.0 * f64::EPSILON * size(&a.curve).max(size(&b.curve));
-    if matches!(a.curve, Curve::Line { .. }) && matches!(b.curve, Curve::Line { .. }) {
+    if let (Some(a0), Some(b0)) = (
+        representations::straight_foot(&a.curve, a.start),
+        representations::straight_foot(&b.curve, b.start),
+    ) {
         return Some(
-            geom::dist(a.curve.value(a.a), b.curve.value(b.a))
-                .max(geom::dist(a.curve.value(a.b), b.curve.value(b.b)))
-                + pad,
+            geom::dist(a0, b0).max(geom::dist(
+                representations::straight_foot(&a.curve, a.end)?,
+                representations::straight_foot(&b.curve, b.end)?,
+            )) + pad,
         );
     }
     let mut aligned = b.clone();
@@ -224,9 +241,12 @@ fn radial_lower(trim: &Trim, surface: &Surface) -> Option<f64> {
         return Some(f64::INFINITY);
     };
     let across = |p| geom::sub(p, geom::scale(frame.z, geom::dot(p, frame.z)));
-    if matches!(trim.curve, Curve::Line { .. }) {
-        let a = across(geom::sub(trim.curve.value(trim.a), frame.origin));
-        let b = across(geom::sub(trim.curve.value(trim.b), frame.origin));
+    if let Some(p) = representations::straight_foot(&trim.curve, trim.start) {
+        let a = across(geom::sub(p, frame.origin));
+        let b = across(geom::sub(
+            representations::straight_foot(&trim.curve, trim.end)?,
+            frame.origin,
+        ));
         let d = geom::sub(b, a);
         let t = if geom::dot(d, d) > 0.0 {
             (-geom::dot(a, d) / geom::dot(d, d)).clamp(0.0, 1.0)
@@ -359,7 +379,7 @@ fn lower_area(boundary: &Boundary, patch: FaceRef<'_>) -> Option<f64> {
                     points.push(vertex);
                     let start = trim.curve.value(trim.a);
                     let end = trim.curve.value(trim.b);
-                    if matches!(trim.curve, Curve::Line { .. }) {
+                    if representations::straight_origin(&trim.curve).is_some() {
                         let a = surface.parameters(start, None)?;
                         let b = surface.parameters(end, None)?;
                         let ideal_a = surface.value(a.0, a.1);
