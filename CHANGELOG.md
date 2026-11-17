@@ -23,6 +23,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   exact composition is unavailable, so a proved remote boundary need not block local coverage.
 - Bound straight representation sweeps by their affine homotopy Jacobian, retaining the
   existing capsule and clipping bounds as independent upper bounds.
+- Bound finite positive rational/conic correspondences through implicit Bernstein residuals
+  and proved angular order, and charge complete loop matches when one support fills another.
 
 ### Added
 

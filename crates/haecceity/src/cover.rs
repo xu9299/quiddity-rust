@@ -12,6 +12,7 @@ use super::geom::{self, Surface};
 #[cfg(test)]
 use super::sampling::CHORD_TOLERANCE;
 
+mod conic_bounds;
 mod containment;
 mod corresponding;
 mod linear;
@@ -37,7 +38,8 @@ pub fn assess(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Coverage {
     match linear::covered(patch, supports) {
         Some(true) => Coverage::Covered,
         Some(false) => Coverage::Uncovered,
-        None if corresponding::covered(patch, supports) == Some(true)
+        None if linear::covered_filled(patch, supports) == Some(true)
+            || corresponding::covered(patch, supports) == Some(true)
             || containment::covered(patch, supports) == Some(true) =>
         {
             Coverage::Covered

@@ -7,7 +7,7 @@ use crate::nurbs::NurbsCurve;
 type H = [f64; 3];
 type Point = (f64, f64);
 
-fn mix(a: H, b: H, t: f64) -> H {
+fn mix<const N: usize>(a: [f64; N], b: [f64; N], t: f64) -> [f64; N] {
     std::array::from_fn(|i| (1.0 - t) * a[i] + t * b[i])
 }
 
@@ -17,7 +17,7 @@ fn point(p: H) -> Option<Point> {
         .filter(|p| p.0.is_finite() && p.1.is_finite())
 }
 
-fn split(net: &[H], t: f64) -> (Vec<H>, Vec<H>) {
+pub(super) fn split<const N: usize>(net: &[[f64; N]], t: f64) -> (Vec<[f64; N]>, Vec<[f64; N]>) {
     let mut work = net.to_vec();
     let mut left = vec![work[0]];
     let mut right = vec![work[work.len() - 1]];
@@ -32,7 +32,12 @@ fn split(net: &[H], t: f64) -> (Vec<H>, Vec<H>) {
     (left, right)
 }
 
-fn insert(points: &mut Vec<H>, knots: &mut Vec<f64>, degree: usize, t: f64) -> Option<()> {
+fn insert<const N: usize>(
+    points: &mut Vec<[f64; N]>,
+    knots: &mut Vec<f64>,
+    degree: usize,
+    t: f64,
+) -> Option<()> {
     let multiplicity = knots.iter().filter(|&&u| u == t).count();
     if multiplicity > degree {
         return Some(());
@@ -41,7 +46,7 @@ fn insert(points: &mut Vec<H>, knots: &mut Vec<f64>, degree: usize, t: f64) -> O
     if k < degree || k < multiplicity || k - multiplicity >= points.len() {
         return None;
     }
-    let mut out = vec![[0.0; 3]; points.len() + 1];
+    let mut out = vec![[0.0; N]; points.len() + 1];
     out[..=k - degree].copy_from_slice(&points[..=k - degree]);
     out[k - multiplicity + 1..].copy_from_slice(&points[k - multiplicity..]);
     for i in k - degree + 1..=k - multiplicity {
@@ -52,7 +57,10 @@ fn insert(points: &mut Vec<H>, knots: &mut Vec<f64>, degree: usize, t: f64) -> O
         }
         out[i] = mix(points[i - 1], points[i], alpha);
     }
-    if out.iter().copied().any(|p| point(p).is_none()) {
+    if out
+        .iter()
+        .any(|p| p[N - 1] <= 0.0 || p.iter().any(|x| !x.is_finite()))
+    {
         return None;
     }
     knots.insert(k + 1, t);
@@ -71,12 +79,14 @@ fn hull(net: &[H]) -> Option<(Point, Point)> {
     Some((low, high))
 }
 
-pub(super) fn bounds(
+/// Return homogeneous Bezier nets in the finite interval's directed path order. The final
+/// coordinate of `project` is one; it becomes the normalized positive rational weight.
+/// A wrapped closed interval retains its starting phase and every traversed domain piece.
+pub(super) fn beziers<const N: usize>(
     curve: &NurbsCurve,
     interval: (f64, f64),
-    project: impl Fn(V3) -> Point,
-    accuracy: f64,
-) -> Option<(Point, Point)> {
+    project: impl Fn(V3) -> [f64; N],
+) -> Option<Vec<Vec<[f64; N]>>> {
     let degree = curve.degree();
     if degree == 0
         || curve.control_points().len() > 4096
@@ -84,25 +94,22 @@ pub(super) fn bounds(
     {
         return None;
     }
+    let maximum_weight = curve.weights().iter().copied().fold(0.0, f64::max);
     let mut points: Vec<_> = curve
         .control_points()
         .iter()
         .zip(curve.weights())
         .map(|(&p, &w)| {
             let q = project(p);
-            [q.0 * w, q.1 * w, w]
+            q.map(|x| x * (w / maximum_weight))
         })
         .collect();
-    let (original_low, original_high) = hull(&points)?;
-    let size = [
-        original_low.0,
-        original_low.1,
-        original_high.0,
-        original_high.1,
-    ]
-    .into_iter()
-    .map(f64::abs)
-    .fold(1.0, f64::max);
+    if points
+        .iter()
+        .any(|p| p[N - 1] <= 0.0 || p.iter().any(|x| !x.is_finite()))
+    {
+        return None;
+    }
     let (lo, hi) = curve.domain();
     let (a, b) = (interval.0.min(interval.1), interval.0.max(interval.1));
     if !a.is_finite() || !b.is_finite() || hi <= lo {
@@ -112,17 +119,25 @@ pub(super) fn bounds(
         vec![(a, b)]
     } else if curve.is_closed() {
         let period = hi - lo;
-        if b - a >= period * (1.0 - 64.0 * f64::EPSILON) {
-            vec![(lo, hi)]
-        } else {
-            let start = lo + (a - lo).rem_euclid(period);
-            let end = start + (b - a);
-            if end <= hi {
-                vec![(start, end)]
-            } else {
-                vec![(start, hi), (lo, (lo + end - hi).min(hi))]
-            }
+        if b - a > 2.0 * period || (a - lo).abs() > 4.0 * period {
+            return None;
         }
+        let mut start = lo + (a - lo).rem_euclid(period);
+        let mut remaining = b - a;
+        let mut ranges = Vec::new();
+        for _ in 0..3 {
+            let length = remaining.min(hi - start);
+            ranges.push((start, start + length));
+            remaining -= length;
+            if remaining <= 0.0 {
+                break;
+            }
+            start = lo;
+        }
+        if remaining > 0.0 {
+            return None;
+        }
+        ranges
     } else {
         return None;
     };
@@ -146,15 +161,15 @@ pub(super) fn bounds(
             }
         }
     }
-    let mut queue = Vec::new();
-    for k in degree..points.len() {
-        let (u, v) = (knots[k], knots[k + 1]);
-        if u >= v || u < lo || v > hi {
-            continue;
-        }
-        for &(a, b) in &ranges {
+    let mut nets = Vec::new();
+    for &(a, b) in &ranges {
+        for k in degree..points.len() {
+            let (u, v) = (knots[k], knots[k + 1]);
+            if u >= v || u < lo || v > hi {
+                continue;
+            }
             let (a, b) = (a.max(u), b.min(v));
-            if a > b {
+            if a > b || (a == b && interval.0 != interval.1) {
                 continue;
             }
             let mut net = points[k - degree..=k].to_vec();
@@ -165,10 +180,40 @@ pub(super) fn bounds(
             if alpha > 0.0 && beta > 0.0 {
                 net = split(&net, alpha / beta).1;
             }
-            queue.push((net, 0));
+            nets.push(net);
         }
     }
-    if queue.is_empty() {
+    if interval.1 < interval.0 {
+        nets.reverse();
+        for net in &mut nets {
+            net.reverse();
+        }
+    }
+    (!nets.is_empty()).then_some(nets)
+}
+
+pub(super) fn bounds(
+    curve: &NurbsCurve,
+    interval: (f64, f64),
+    project: impl Fn(V3) -> Point,
+    accuracy: f64,
+) -> Option<(Point, Point)> {
+    let degree = curve.degree();
+    let mut queue: Vec<_> = beziers(curve, interval, |p| {
+        let q = project(p);
+        [q.0, q.1, 1.0]
+    })?
+    .into_iter()
+    .map(|net| (net, 0))
+    .collect();
+    let size = curve
+        .control_points()
+        .iter()
+        .copied()
+        .map(project)
+        .flat_map(|p| [p.0.abs(), p.1.abs()])
+        .fold(1.0, f64::max);
+    if !size.is_finite() {
         return None;
     }
     let mut known_low = (f64::INFINITY, f64::INFINITY);

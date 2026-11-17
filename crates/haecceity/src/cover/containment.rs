@@ -1,7 +1,7 @@
 //! Sufficient finite containment proofs for a curved target in a convex planar support,
 //! and for local cutouts in a full cylindrical band. Neither path proves a gap.
 
-use super::{FaceRef, linear, representations, same_surface};
+use super::{FaceRef, conic_bounds, linear, representations, same_surface};
 use crate::brep::{Edge, Loop};
 use crate::geom::{self, Curve, Frame, Surface, V3};
 use crate::sampling::{edge_interval, extremes_along};
@@ -217,6 +217,26 @@ fn closed_contour(
     let mut high = f64::NEG_INFINITY;
     let mut winding = None;
     for curve in curves {
+        if matches!(curve, Curve::Nurbs(_)) {
+            let interval = |c| edge_interval(c, edge.start, edge.end, edge.same_sense, true);
+            let d = conic_bounds::deviation(
+                &edge.curve,
+                interval(&edge.curve),
+                &curve,
+                interval(&curve),
+            )?;
+            let Curve::Circle { radius, .. } = edge.curve else {
+                return None;
+            };
+            if d >= 0.25 * radius {
+                return None;
+            }
+            let r = range(edge, &edge.curve, frame)?;
+            let axial = d * geom::norm(frame.z);
+            low = low.min(r.0 - axial);
+            high = high.max(r.1 + axial);
+            continue;
+        }
         let Curve::Circle {
             frame: circle,
             radius,

@@ -7,7 +7,7 @@
 //! charged separately. A coarse polygon supplies only a conservative lower area bound for
 //! the original relative budget; it is never the coverage evidence.
 
-use super::{FaceRef, linear, representations, same_surface};
+use super::{FaceRef, conic_bounds, linear, representations, same_surface};
 use crate::brep::Edge;
 use crate::geom::{self, Curve, Surface, V3};
 use crate::sampling::edge_interval;
@@ -109,6 +109,32 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
     None
 }
 
+/// Removing one loop changes a parity region only inside that loop. A complete one-loop
+/// support matching that finite boundary fills the change, up to this charged area bound.
+/// This helper never recursively removes loops or treats an unmatched loop as filled.
+pub(super) fn loop_match_error(
+    owner: FaceRef<'_>,
+    loop_index: usize,
+    supports: &[FaceRef<'_>],
+) -> Option<f64> {
+    let surface = &owner.0.faces[owner.1].surface;
+    let mine = boundary(owner, surface)?;
+    let contour = mine.loops.get(loop_index)?;
+    supports
+        .iter()
+        .copied()
+        .filter(|s| !(std::ptr::eq(s.0, owner.0) && s.1 == owner.1))
+        .filter(|s| {
+            s.0.faces[s.1].loops.len() == 1 && same_surface(surface, &s.0.faces[s.1].surface)
+        })
+        .filter_map(|s| {
+            let other = boundary(s, surface)?;
+            let error = mine.error + other.error + loop_error(contour, &other.loops[0], surface)?;
+            error.is_finite().then_some(error)
+        })
+        .min_by(f64::total_cmp)
+}
+
 fn size(curve: &Curve) -> f64 {
     let magnitude = |p: V3| p.into_iter().map(f64::abs).fold(1.0, f64::max);
     match curve {
@@ -134,7 +160,7 @@ fn boundary((part, face): FaceRef<'_>, surface: &Surface) -> Option<Boundary> {
     let uncertainty = part
         .file_uncertainty()
         .filter(|x| x.is_finite() && *x >= 0.0)
-        .unwrap_or(0.0);
+        .unwrap_or(f64::INFINITY);
     for lp in &part.faces[face].loops {
         if lp.edges.is_empty() || lp.edges.len() > 512 {
             return None;
@@ -196,6 +222,9 @@ fn conic(curve: &Curve) -> Option<(V3, V3, V3)> {
 /// Compare equal fractions of the finite intervals, rather than untrimmed conic boxes.
 fn displacement(a: &Trim, b: &Trim) -> Option<f64> {
     let pad = 128.0 * f64::EPSILON * size(&a.curve).max(size(&b.curve));
+    if matches!(b.curve, Curve::Nurbs(_)) && conic(&a.curve).is_some() {
+        return conic_bounds::deviation(&a.curve, (a.a, a.b), &b.curve, (b.a, b.b));
+    }
     if let (Some(a0), Some(b0)) = (
         representations::straight_foot(&a.curve, a.start),
         representations::straight_foot(&b.curve, b.start),

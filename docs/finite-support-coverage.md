@@ -58,9 +58,34 @@ uncertainty and numerical allowance are subtracted from its area. This polygon n
 support coverage. Acceptance requires the complete boundary correspondence error to fit
 `1e-9` times that lower bound. A nonpositive lower bound refuses the proof.
 
-This path does not establish arbitrary unions of curved support regions, compare unsupported
+This path does not establish arbitrary unions of curved support regions, compare unproved
 spline boundaries, or infer a gap when no correspondence is found. It makes no changes to
 the input geometry or to saved recognition evidence.
+
+Positive rational splines may correspond to a finite conic at a different parameter speed.
+Homogeneous Bezier nets bound the Bernstein coefficients of `X^2+Y^2-W^2` in the conic's
+affine coordinates. A positive denominator converts that residual to a radial distance bound;
+the normal control hull bounds off-plane distance. The Bernstein coefficients of `XY'-YX'`
+must have the requested strict sign, and every net must stay in an open radial hemisphere.
+These conditions prove monotone angular order, resolve each piece's winding, and retain the
+directed finite interval, including periodic phase and joins. Angular reparameterization then
+bounds complete-path displacement from the radial, normal and finite endpoint phase errors.
+Equal rational/conic parameter fractions and sampled fitting are never assumed. Failed
+extraction, an unproved derivative sign or excessive subdivision refuses the proof.
+
+An absent file precision does not mean a constructed part has zero endpoint uncertainty.
+Complete boundary correspondence retains its finite endpoint connectors and charges their
+actual area bounds, as the straight arrangement does. A declared precision remains a
+coherence guard; neither case enlarges the acceptance budget.
+
+For a planar union, another sufficient proof can remove a closed loop from one support's
+parity region when a separate one-loop support matches that complete finite boundary. If the
+loop region is H and the original support is A, the reduced region A' satisfies
+`A' = A XOR H`, hence `A' minus A` is contained in H. Complete boundary correspondence
+bounds the part of H missing from the filler. That error is charged against the queried
+target's original area budget, while the reduced support alone enters the straight
+arrangement. Fillers with additional loops are refused, no recursive filling is performed,
+and no rejection is inferred from a reduced support. The input loops remain unchanged.
 
 Two-pole degree-one positive rational pcurves retain their finite straight segment, including
 endpoint clamping. Axial cylindrical pcurves of this form map to the same finite segment in

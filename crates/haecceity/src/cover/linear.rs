@@ -69,7 +69,7 @@ impl Box2 {
 
 /// `None` means this path cannot establish the boundary representation it needs.
 pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bool> {
-    let (gap, error, tolerance) = finite_area(patch, supports)?;
+    let (gap, error, tolerance) = finite_area(patch, supports, &[])?;
     if gap + error <= tolerance {
         Some(true)
     } else if gap > tolerance + error {
@@ -77,6 +77,20 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
     } else {
         None
     }
+}
+
+/// An acceptance-only union proof. A matched one-loop support can fill a loop removed
+/// from another support's parity region. Charge the complete boundary correspondence;
+/// integrate that reduced region alone, so the filler never pays a coarse curved box.
+pub(super) fn covered_filled(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bool> {
+    for &owner in supports {
+        if let Some((gap, error, tolerance)) = finite_area(patch, &[owner], supports)
+            && gap + error <= tolerance
+        {
+            return Some(true);
+        }
+    }
+    None
 }
 
 /// Integrate finite analytic segments, retaining uncertainty only at their common vertices
@@ -113,9 +127,13 @@ pub(super) fn canonical_frame((part, face): FaceRef<'_>) -> Option<Frame> {
     })
 }
 
-fn finite_area(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<(f64, f64, f64)> {
+fn finite_area(
+    patch: FaceRef<'_>,
+    supports: &[FaceRef<'_>],
+    fillers: &[FaceRef<'_>],
+) -> Option<(f64, f64, f64)> {
     let frame = canonical_frame(patch)?;
-    let target = finite_loops(patch, &frame, None)?;
+    let target = finite_loops(patch, &frame, None, &[])?;
     let mut bounds = Box2::empty();
     for &p in target.loops.iter().flatten() {
         bounds.add(p)?;
@@ -133,7 +151,7 @@ fn finite_area(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<(f64, f64
             &patch.0.faces[patch.1].surface,
             &support.0.faces[support.1].surface,
         ) {
-            let boundary = finite_loops(support, &frame, Some(bounds))?;
+            let boundary = finite_loops(support, &frame, Some(bounds), fillers)?;
             error += boundary.line_error;
             theirs.push(boundary.loops);
         }
@@ -145,7 +163,12 @@ fn finite_area(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<(f64, f64
     ))
 }
 
-fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) -> Option<Boundary> {
+fn finite_loops(
+    (part, face): FaceRef<'_>,
+    frame: &Frame,
+    clip: Option<Box2>,
+    fillers: &[FaceRef<'_>],
+) -> Option<Boundary> {
     let mut contours = Vec::new();
     let mut error = 0.0;
     let surface = &part.faces[face].surface;
@@ -162,9 +185,21 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
             base_size = p.into_iter().map(f64::abs).fold(base_size, f64::max);
         }
     }
-    for lp in &part.faces[face].loops {
+    for (loop_index, lp) in part.faces[face].loops.iter().enumerate() {
         if lp.edges.is_empty() {
             return None;
+        }
+        if clip.is_some()
+            && !fillers.is_empty()
+            && lp
+                .edges
+                .iter()
+                .any(|&(e, _)| straight_origin(&part.edges[e].curve).is_none())
+            && let Some(cost) =
+                super::corresponding::loop_match_error((part, face), loop_index, fillers)
+        {
+            error += cost;
+            continue;
         }
         let mut points = Vec::new();
         let mut first = None;
@@ -645,6 +680,68 @@ mod tests {
             .iter()
             .map(|&(x, y)| (c * x - s * y, s * x + c * y))
             .collect()
+    }
+
+    #[test]
+    fn a_separate_finite_disk_fills_a_support_loop_but_retains_annular_gaps() {
+        use crate::cover::{Coverage, assess};
+        let patch = face(&[rectangle(-2.0, -2.0, 2.0, 2.0)]);
+        let disk = |radius: f64, offset: f64| {
+            let mut p = face(&[rectangle(-2.0, -2.0, 2.0, 2.0)]);
+            let curve = Curve::Circle {
+                frame: Frame {
+                    origin: [offset, 0.0, 0.0],
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 1.0, 0.0],
+                    z: [0.0, 0.0, 1.0],
+                },
+                radius,
+            };
+            let seam = curve.value(0.0);
+            p.edges = vec![Edge {
+                curve,
+                start: seam,
+                end: seam,
+                vertices: (0, 0),
+                same_sense: true,
+                samples: vec![],
+            }];
+            p.faces[0].loops = vec![Loop {
+                edges: vec![(0, true)],
+                vertex: None,
+            }];
+            p
+        };
+        let filler = disk(1.0, 0.0);
+        let mut wall = patch.clone();
+        let hole_index = wall.edges.len();
+        wall.edges.push(filler.edges[0].clone());
+        wall.faces[0].loops.push(Loop {
+            edges: vec![(hole_index, true)],
+            vertex: None,
+        });
+        assert_ne!(assess((&patch, 0), &[(&wall, 0)]), Coverage::Covered);
+        assert_eq!(
+            assess((&patch, 0), &[(&wall, 0), (&filler, 0)]),
+            Coverage::Covered
+        );
+        // The analytic annular gap is pi*(1-r^2), far above the original area budget.
+        for bad in [disk(0.999, 0.0), disk(1.0, 0.001)] {
+            assert_ne!(
+                assess((&patch, 0), &[(&wall, 0), (&bad, 0)]),
+                Coverage::Covered
+            );
+        }
+        let mut perforated = filler.clone();
+        perforated.edges.push(disk(0.1, 0.0).edges.remove(0));
+        perforated.faces[0].loops.push(Loop {
+            edges: vec![(1, true)],
+            vertex: None,
+        });
+        assert_ne!(
+            assess((&patch, 0), &[(&wall, 0), (&perforated, 0)]),
+            Coverage::Covered
+        );
     }
 
     #[test]
