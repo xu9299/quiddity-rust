@@ -386,7 +386,11 @@ fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
         add(p)?;
     }
     match &edge.curve {
-        Curve::Line { .. } => return Some(0.0),
+        Curve::Line { .. } => {
+            for p in [edge.start, edge.end] {
+                add(edge.curve.value(edge.curve.parameter(p)))?;
+            }
+        }
         Curve::Nurbs(curve) => {
             if !curve.weights().iter().all(|w| w.is_finite() && *w > 0.0) {
                 return None;
@@ -1002,28 +1006,32 @@ mod tests {
             edges: vec![(index, true)],
             vertex: None,
         });
-        let support = crate::brep::Part::new(support.faces.clone(), support.edges.clone(), vec![])
-            .with_file_pcurves(
-                std::collections::BTreeMap::from([(
-                    0,
-                    vec![(
-                        index,
-                        RawCurve2d::Circle {
-                            point: [0.5, 0.5],
-                            reference: None,
-                            radius: 0.25,
-                        },
-                    )],
-                )]),
-                Default::default(),
-                (1.0, 1.0),
-                Some(1e-7),
+        for pcurve in [
+            RawCurve2d::Circle {
+                point: [0.5, 0.5],
+                reference: None,
+                radius: 0.25,
+            },
+            RawCurve2d::Line {
+                point: [0.5, 0.5],
+                direction: [1.0, -1.0],
+                magnitude: 1.0,
+            },
+        ] {
+            let bounded =
+                crate::brep::Part::new(support.faces.clone(), support.edges.clone(), vec![])
+                    .with_file_pcurves(
+                        std::collections::BTreeMap::from([(0, vec![(index, pcurve)])]),
+                        Default::default(),
+                        (1.0, 1.0),
+                        Some(1e-7),
+                    );
+            assert_eq!(covered((&patch, 0), &[(&bounded, 0)]), None);
+            assert_ne!(
+                super::super::assess((&patch, 0), &[(&bounded, 0)]),
+                super::super::Coverage::Covered
             );
-        assert_eq!(covered((&patch, 0), &[(&support, 0)]), None);
-        assert_ne!(
-            super::super::assess((&patch, 0), &[(&support, 0)]),
-            super::super::Coverage::Covered
-        );
+        }
     }
 
     #[test]
