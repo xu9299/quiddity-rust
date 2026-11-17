@@ -423,12 +423,26 @@ impl Reader<'_> {
         }
     }
 
-    /// A 2D line or B-spline as the file states it.
+    /// A 2D line, conic or B-spline as the file states it.
     fn raw_curve_2d(&self, item: &m::RepresentationItemRef) -> Option<RawCurve2d> {
         let model = self.model;
         let point = |r: &m::CartesianPointRef| {
             let c = self.raw_point(r)?;
             Some([c[0], c[1]])
+        };
+        let placement = |p: &m::Axis2PlacementRef| {
+            let m::Axis2PlacementRef::Axis2Placement2d(id) = p else {
+                return None;
+            };
+            let a = model.get(*id)?;
+            let reference = match &a.ref_direction {
+                Some(r) => {
+                    let d = self.raw_ratios(r)?;
+                    Some([d[0], d[1]])
+                }
+                None => None,
+            };
+            Some((point(&a.location)?, reference))
         };
         Some(match item {
             m::RepresentationItemRef::Line(i) => {
@@ -438,6 +452,25 @@ impl Reader<'_> {
                     point: point(&l.pnt)?,
                     direction: [d[0], d[1]],
                     magnitude,
+                }
+            }
+            m::RepresentationItemRef::Circle(i) => {
+                let c = model.get(m::CircleId(i.0))?;
+                let (point, reference) = placement(&c.position)?;
+                RawCurve2d::Circle {
+                    point,
+                    reference,
+                    radius: c.radius,
+                }
+            }
+            m::RepresentationItemRef::Ellipse(i) => {
+                let c = model.get(m::EllipseId(i.0))?;
+                let (point, reference) = placement(&c.position)?;
+                RawCurve2d::Ellipse {
+                    point,
+                    reference,
+                    semi_axis_1: c.semi_axis_1,
+                    semi_axis_2: c.semi_axis_2,
                 }
             }
             m::RepresentationItemRef::BSplineCurveWithKnots(i) => {
@@ -483,7 +516,6 @@ impl Reader<'_> {
         &self,
         face: &StepFace<'_>,
         edge_index: &HashMap<m::EntityKey, usize>,
-        collect_preferred: bool,
     ) -> (Vec<(usize, RawCurve2d)>, Vec<usize>) {
         let basis = face.surface().key();
         let mut out = Vec::new();
@@ -522,14 +554,13 @@ impl Reader<'_> {
                         .resolved(m::DefinitionalRepresentationId(d.0))
                         .items
                     {
-                        if let Some(curve) = self.raw_curve_2d(item) {
-                            if collect_preferred
-                                && matches!(
-                                    (master, slot),
-                                    (m::PreferredSurfaceCurveRepresentation::PcurveS1, 0)
-                                        | (m::PreferredSurfaceCurveRepresentation::PcurveS2, 1)
-                                )
-                            {
+                        {
+                            let curve = self.raw_curve_2d(item).unwrap_or(RawCurve2d::Unresolved);
+                            if matches!(
+                                (master, slot),
+                                (m::PreferredSurfaceCurveRepresentation::PcurveS1, 0)
+                                    | (m::PreferredSurfaceCurveRepresentation::PcurveS2, 1)
+                            ) {
                                 primary.push(out.len());
                             }
                             out.push((index, curve));
@@ -2328,9 +2359,7 @@ fn build(parsed: &Parsed<impl RecordGraph>, scope: Scope<'_>) -> Result<Read, St
             {
                 swept.insert(out_faces.len(), source);
             }
-            let collect_preferred =
-                matches!(&surface,Surface::Freeform{kind,..} if matches!(*kind,"BSPLINE"|"BEZIER"));
-            let (raw, primary) = reader.file_pcurves(&face, &edge_index, collect_preferred);
+            let (raw, primary) = reader.file_pcurves(&face, &edge_index);
             if !primary.is_empty() {
                 primary_pcurves.insert(out_faces.len(), primary);
             }

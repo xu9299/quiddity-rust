@@ -11,12 +11,10 @@ in [docs/alpha1.md](docs/alpha1.md).
 - Keep support coverage indeterminate when finite boundary evidence is insufficient, instead
   of falling back to a directional sampling margin. Bound finite straight-edge trims and their
   vertex connections in a canonical plane frame.
-
-- Check straight-bounded planar coverage without a scan-direction chord margin. Split
-  integration at boundary crossings and bracket nearby conic/NURBS and vertex-to-line
-  uncertainty against the existing area tolerance; retain the sampled path for ambiguous
-  boundaries and ineligible geometry. Bound straight-edge endpoint discrepancies over
-  subsegments without increasing the acceptance budget.
+- Bound complete finite conic and cylindrical boundary correspondences against the same
+  area budget, including independent pcurves and endpoint connections. Retain analytic
+  pcurve master metadata, read and write planar pcurve conics, and refuse unsupported
+  representations instead of omitting them from a coverage proof.
 
 ### Added
 

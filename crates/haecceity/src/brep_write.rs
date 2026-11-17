@@ -1097,6 +1097,43 @@ impl<'p> Writer<'p> {
         let part = self.part;
         if raw {
             let item = match &part.file_pcurves(face)[slot].1 {
+                RawCurve2d::Unresolved => {
+                    return Ok(Err("unsupported file pcurve representation".into()));
+                }
+                RawCurve2d::Circle {
+                    point,
+                    reference,
+                    radius,
+                }
+                | RawCurve2d::Ellipse {
+                    point,
+                    reference,
+                    semi_axis_1: radius,
+                    ..
+                } => {
+                    let curve = &part.file_pcurves(face)[slot].1;
+                    let a = self.b.author();
+                    let p = a.add_cartesian_point("", (*point).into())?;
+                    let d = reference
+                        .map(|d| {
+                            a.add_direction("", d.into())
+                                .map(m::DirectionRef::Direction)
+                        })
+                        .transpose()?;
+                    let axis =
+                        a.add_axis2_placement2d("", m::CartesianPointRef::CartesianPoint(p), d)?;
+                    let axis = m::Axis2PlacementRef::Axis2Placement2d(axis);
+                    if let RawCurve2d::Ellipse { semi_axis_2, .. } = curve {
+                        m::RepresentationItemRef::Ellipse(a.add_ellipse(
+                            "",
+                            axis,
+                            *radius,
+                            *semi_axis_2,
+                        )?)
+                    } else {
+                        m::RepresentationItemRef::Circle(a.add_circle("", axis, *radius)?)
+                    }
+                }
                 RawCurve2d::Line {
                     point,
                     direction,

@@ -1,0 +1,631 @@
+//! Coverage established by a bounded correspondence of complete finite boundaries.
+//!
+//! This path proves only acceptance: each target loop must have a distinct support loop,
+//! with every finite edge paired in cyclic order (either orientation). A pointwise curve
+//! displacement d confines the changed parity region to a tube of area at most 2*d*L+pi*d²,
+//! where L bounds the reference curve's length. Independent pcurves and endpoint joins are
+//! charged separately. A coarse polygon supplies only a conservative lower area bound for
+//! the original relative budget; it is never the coverage evidence.
+
+use super::{FaceRef, linear, representations, same_surface};
+use crate::brep::Edge;
+use crate::geom::{self, Curve, Surface, V3};
+use crate::sampling::edge_interval;
+
+#[derive(Clone)]
+struct Trim {
+    curve: Curve,
+    a: f64,
+    b: f64,
+    start: V3,
+    end: V3,
+}
+
+impl Trim {
+    fn new(edge: &Edge, curve: Curve, forward: bool, limit: f64) -> Option<Self> {
+        let (a, b) = edge_interval(
+            &curve,
+            edge.start,
+            edge.end,
+            edge.same_sense,
+            edge.vertices.0 == edge.vertices.1,
+        );
+        if ![a, b].into_iter().all(f64::is_finite)
+            || geom::dist(edge.start, curve.value(a)) > limit
+            || geom::dist(edge.end, curve.value(b)) > limit
+        {
+            return None;
+        }
+        let trim = Self {
+            curve,
+            a,
+            b,
+            start: edge.start,
+            end: edge.end,
+        };
+        Some(if forward { trim } else { trim.reversed() })
+    }
+
+    fn reversed(&self) -> Self {
+        Self {
+            curve: self.curve.clone(),
+            a: self.b,
+            b: self.a,
+            start: self.end,
+            end: self.start,
+        }
+    }
+
+    fn length(&self) -> Option<f64> {
+        Some(match &self.curve {
+            Curve::Line { .. } => geom::dist(self.curve.value(self.a), self.curve.value(self.b)),
+            _ => {
+                let (_, x, y) = conic(&self.curve)?;
+                (geom::norm(x) + geom::norm(y)) * (self.b - self.a).abs()
+            }
+        })
+    }
+}
+
+struct Boundary {
+    loops: Vec<Vec<Trim>>,
+    error: f64,
+}
+
+pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bool> {
+    let surface = &patch.0.faces[patch.1].surface;
+    let mine = boundary(patch, surface)?;
+    let lower_area = lower_area(&mine, patch)?;
+    for &support in supports {
+        if !same_surface(surface, &support.0.faces[support.1].surface) {
+            continue;
+        }
+        let Some(theirs) = boundary(support, surface) else {
+            continue;
+        };
+        if let Some(error) = correspondence(&mine, &theirs, surface)
+            && error <= 1e-9 * lower_area
+        {
+            return Some(true);
+        }
+    }
+    None
+}
+
+fn size(curve: &Curve) -> f64 {
+    let magnitude = |p: V3| p.into_iter().map(f64::abs).fold(1.0, f64::max);
+    match curve {
+        Curve::Line { origin, dir } => magnitude(*origin).max(magnitude(*dir)),
+        Curve::Circle { frame, radius } => magnitude(frame.origin).max(radius.abs()),
+        Curve::Ellipse {
+            frame,
+            major,
+            minor,
+        } => magnitude(frame.origin).max(major.abs()).max(minor.abs()),
+        Curve::Nurbs(c) => c
+            .control_points()
+            .iter()
+            .copied()
+            .map(magnitude)
+            .fold(1.0, f64::max),
+    }
+}
+
+fn boundary((part, face): FaceRef<'_>, surface: &Surface) -> Option<Boundary> {
+    let mut loops = Vec::new();
+    let mut error = 0.0;
+    let uncertainty = part
+        .file_uncertainty()
+        .filter(|x| x.is_finite() && *x >= 0.0)
+        .unwrap_or(0.0);
+    for lp in &part.faces[face].loops {
+        if lp.edges.is_empty() || lp.edges.len() > 512 {
+            return None;
+        }
+        let mut trims = Vec::new();
+        for &(index, forward) in &lp.edges {
+            if part.unresolved_edges().contains(&index) {
+                return None;
+            }
+            let edge = &part.edges[index];
+            let pad = 128.0
+                * f64::EPSILON
+                * size(&edge.curve)
+                    .max(edge.start.into_iter().map(f64::abs).fold(1.0, f64::max))
+                    .max(edge.end.into_iter().map(f64::abs).fold(1.0, f64::max));
+            let trim = Trim::new(edge, edge.curve.clone(), forward, uncertainty + pad)?;
+            if trims.last().is_some_and(|t: &Trim| t.end != trim.start) {
+                return None;
+            }
+            error += tube(&trim, surface, pad)?;
+            for (v, t) in [(trim.start, trim.a), (trim.end, trim.b)] {
+                let d = 4.0 * (geom::dist(v, trim.curve.value(t)) + pad);
+                error += 4.0 * d * d;
+            }
+            for curve in representations::alternatives((part, face), index)? {
+                let alternate = Trim::new(edge, curve, forward, uncertainty + pad)?;
+                error += tube(&trim, surface, displacement(&trim, &alternate)?)?;
+            }
+            trims.push(trim);
+        }
+        if trims.last()?.end != trims.first()?.start {
+            return None;
+        }
+        loops.push(trims);
+    }
+    (!loops.is_empty() && error.is_finite()).then_some(Boundary { loops, error })
+}
+
+fn conic(curve: &Curve) -> Option<(V3, V3, V3)> {
+    match curve {
+        Curve::Circle { frame, radius } => Some((
+            frame.origin,
+            geom::scale(frame.x, *radius),
+            geom::scale(frame.y, *radius),
+        )),
+        Curve::Ellipse {
+            frame,
+            major,
+            minor,
+        } => Some((
+            frame.origin,
+            geom::scale(frame.x, *major),
+            geom::scale(frame.y, *minor),
+        )),
+        _ => None,
+    }
+}
+
+/// Compare equal fractions of the finite intervals, rather than untrimmed conic boxes.
+fn displacement(a: &Trim, b: &Trim) -> Option<f64> {
+    let pad = 128.0 * f64::EPSILON * size(&a.curve).max(size(&b.curve));
+    if matches!(a.curve, Curve::Line { .. }) && matches!(b.curve, Curve::Line { .. }) {
+        return Some(
+            geom::dist(a.curve.value(a.a), b.curve.value(b.a))
+                .max(geom::dist(a.curve.value(a.b), b.curve.value(b.b)))
+                + pad,
+        );
+    }
+    let mut aligned = b.clone();
+    let whole_conic = |t: &Trim| {
+        t.start == t.end
+            && conic(&t.curve).is_some()
+            && ((t.b - t.a).abs() - std::f64::consts::TAU).abs()
+                <= 256.0 * f64::EPSILON * std::f64::consts::TAU
+    };
+    if whole_conic(a) && whole_conic(b) {
+        let sense = (b.b - b.a).signum();
+        aligned.a = b.curve.parameter(a.curve.value(a.a));
+        aligned.b = aligned.a + sense * std::f64::consts::TAU;
+    }
+    let b = &aligned;
+    let normalized = |t: &Trim| {
+        let (o, x, y) = conic(&t.curve)?;
+        let p = geom::add(geom::scale(x, t.a.cos()), geom::scale(y, t.a.sin()));
+        let q = geom::scale(
+            geom::add(geom::scale(x, -t.a.sin()), geom::scale(y, t.a.cos())),
+            (t.b - t.a).signum(),
+        );
+        Some((o, p, q, (t.b - t.a).abs()))
+    };
+    let (o, x, y, span) = normalized(a)?;
+    let (p, u, v, other_span) = normalized(b)?;
+    let d = geom::dist(o, p)
+        + geom::dist(x, u)
+        + geom::dist(y, v)
+        + (geom::norm(u) + geom::norm(v)) * (span - other_span).abs()
+        + pad;
+    d.is_finite().then_some(d)
+}
+
+/// A lower radial bound keeps the cylindrical parameter map away from its axis.
+fn radial_lower(trim: &Trim, surface: &Surface) -> Option<f64> {
+    let Surface::Cylinder { frame, .. } = surface else {
+        return Some(f64::INFINITY);
+    };
+    let across = |p| geom::sub(p, geom::scale(frame.z, geom::dot(p, frame.z)));
+    if matches!(trim.curve, Curve::Line { .. }) {
+        let a = across(geom::sub(trim.curve.value(trim.a), frame.origin));
+        let b = across(geom::sub(trim.curve.value(trim.b), frame.origin));
+        let d = geom::sub(b, a);
+        let t = if geom::dot(d, d) > 0.0 {
+            (-geom::dot(a, d) / geom::dot(d, d)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        return Some(geom::norm(geom::add(a, geom::scale(d, t))));
+    }
+    let (o, a, b) = conic(&trim.curve)?;
+    let (c, a, b) = (across(geom::sub(o, frame.origin)), across(a), across(b));
+    let square = geom::dot(c, c) + 0.5 * (geom::dot(a, a) + geom::dot(b, b))
+        - 2.0 * geom::dot(c, a).abs()
+        - 2.0 * geom::dot(c, b).abs()
+        - 0.5 * (geom::dot(a, a) - geom::dot(b, b)).abs()
+        - geom::dot(a, b).abs();
+    Some(square.max(0.0).sqrt())
+}
+
+fn tube(trim: &Trim, surface: &Surface, distance: f64) -> Option<f64> {
+    let (d, length) = match surface {
+        Surface::Plane { .. } => (distance, trim.length()?),
+        Surface::Cylinder { radius, .. }
+            if *radius > 0.0
+                && distance < 0.25 * radius
+                && radial_lower(trim, surface)? >= 0.75 * radius =>
+        {
+            (4.0 * distance, 2.0 * trim.length()?)
+        }
+        _ => return None,
+    };
+    let area = 2.0 * d * length + std::f64::consts::PI * d * d;
+    (d >= 0.0 && area.is_finite()).then_some(area)
+}
+
+fn correspondence(a: &Boundary, b: &Boundary, surface: &Surface) -> Option<f64> {
+    if a.loops.len() != b.loops.len() {
+        return None;
+    }
+    let mut used = vec![false; b.loops.len()];
+    let mut error = a.error + b.error;
+    for mine in &a.loops {
+        let best = b
+            .loops
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !used[*i])
+            .filter_map(|(i, other)| loop_error(mine, other, surface).map(|e| (i, e)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))?;
+        used[best.0] = true;
+        error += best.1;
+    }
+    error.is_finite().then_some(error)
+}
+
+fn loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
+    if a.len() != b.len() {
+        return None;
+    }
+    let mut best: Option<f64> = None;
+    for reverse in [false, true] {
+        for shift in 0..b.len() {
+            let cost = a.iter().enumerate().try_fold(0.0, |sum, (i, mine)| {
+                let index = if reverse {
+                    (shift + b.len() - i) % b.len()
+                } else {
+                    (shift + i) % b.len()
+                };
+                let other = if reverse {
+                    b[index].reversed()
+                } else {
+                    b[index].clone()
+                };
+                Some(sum + tube(mine, surface, displacement(mine, &other)?)?)
+            });
+            if let Some(cost) = cost {
+                best = Some(best.map_or(cost, |x| x.min(cost)));
+            }
+        }
+    }
+    best
+}
+
+/// Coarse chord/control error is subtracted from the denominator, never added to coverage.
+fn lower_area(boundary: &Boundary, patch: FaceRef<'_>) -> Option<f64> {
+    let surface = &patch.0.faces[patch.1].surface;
+    let mut error = boundary.error;
+    let mut loops = Vec::new();
+    let plane = linear::canonical_frame(patch);
+    for lp in &boundary.loops {
+        let mut points: Vec<(f64, f64)> = Vec::new();
+        for trim in lp {
+            match surface {
+                Surface::Plane { .. } => {
+                    let frame = plane.as_ref()?;
+                    let project = |p| {
+                        let q = geom::sub(p, frame.origin);
+                        (geom::dot(q, frame.x), geom::dot(q, frame.y))
+                    };
+                    points.push(project(trim.start));
+                    let n = if conic(&trim.curve).is_some() {
+                        ((trim.b - trim.a).abs() / 0.1).ceil().max(1.0) as usize
+                    } else {
+                        1
+                    };
+                    if n > 128 {
+                        return None;
+                    }
+                    for i in 0..=n {
+                        points.push(project(
+                            trim.curve
+                                .value(trim.a + (trim.b - trim.a) * i as f64 / n as f64),
+                        ));
+                    }
+                    points.push(project(trim.end));
+                    if let Some((_, a, b)) = conic(&trim.curve) {
+                        let step = (trim.b - trim.a).abs() / n as f64;
+                        let d = (geom::norm(a) + geom::norm(b)) * step * step / 8.0;
+                        error += tube(trim, surface, d)?;
+                    }
+                }
+                Surface::Cylinder { frame, radius } => {
+                    let uv = |p| {
+                        let (u, v) = surface.parameters(p, None)?;
+                        let u = points
+                            .last()
+                            .map_or(u, |q| geom::nearest_turn(u, q.0 / radius));
+                        Some((u * radius, v))
+                    };
+                    let vertex = uv(trim.start)?;
+                    points.push(vertex);
+                    let start = trim.curve.value(trim.a);
+                    let end = trim.curve.value(trim.b);
+                    if matches!(trim.curve, Curve::Line { .. }) {
+                        let a = surface.parameters(start, None)?;
+                        let b = surface.parameters(end, None)?;
+                        let ideal_a = surface.value(a.0, a.1);
+                        let ideal_b = surface.value(a.0, b.1);
+                        error += tube(
+                            trim,
+                            surface,
+                            geom::dist(start, ideal_a).max(geom::dist(end, ideal_b)),
+                        )?;
+                        let u = geom::nearest_turn(a.0, vertex.0 / radius) * radius;
+                        points.extend([(u, a.1), (u, b.1)]);
+                    } else {
+                        let (o, a, b) = conic(&trim.curve)?;
+                        let h = geom::dot(geom::sub(o, frame.origin), frame.z);
+                        let origin = frame.to_world([0.0, 0.0, h]);
+                        let x =
+                            geom::unit(geom::sub(a, geom::scale(frame.z, geom::dot(a, frame.z))))?;
+                        let sense = geom::dot(geom::cross(a, b), frame.z).signum();
+                        if sense == 0.0 {
+                            return None;
+                        }
+                        let y = geom::scale(geom::cross(frame.z, x), sense);
+                        let d = geom::dist(o, origin)
+                            + geom::dist(a, geom::scale(x, *radius))
+                            + geom::dist(b, geom::scale(y, *radius));
+                        error += tube(trim, surface, d)?;
+                        let p = geom::add(
+                            origin,
+                            geom::scale(
+                                geom::add(
+                                    geom::scale(x, trim.a.cos()),
+                                    geom::scale(y, trim.a.sin()),
+                                ),
+                                *radius,
+                            ),
+                        );
+                        let u =
+                            geom::nearest_turn(surface.parameters(p, None)?.0, vertex.0 / radius)
+                                * radius;
+                        points.extend([(u, h), (u + sense * (trim.b - trim.a) * radius, h)]);
+                    }
+                    let (u, v) = surface.parameters(trim.end, None)?;
+                    let u = geom::nearest_turn(u, points.last()?.0 / radius) * radius;
+                    points.push((u, v));
+                }
+                _ => return None,
+            }
+        }
+        let first = *points.first()?;
+        let last = *points.last()?;
+        let extent = points
+            .iter()
+            .flat_map(|p| [p.0.abs(), p.1.abs()])
+            .fold(1.0, f64::max);
+        if (last.0 - first.0).hypot(last.1 - first.1) > 256.0 * f64::EPSILON * extent {
+            return None;
+        }
+        points.push(first);
+        loops.push(points);
+    }
+    let count = loops.iter().map(Vec::len).sum::<usize>() as f64;
+    let low = loops
+        .iter()
+        .flatten()
+        .fold((f64::INFINITY, f64::INFINITY), |a, p| {
+            (a.0.min(p.0), a.1.min(p.1))
+        });
+    let mut extent = 1.0_f64;
+    for p in loops.iter_mut().flatten() {
+        p.0 -= low.0;
+        p.1 -= low.1;
+        extent = extent.max(p.0.abs()).max(p.1.abs());
+    }
+    error += 256.0 * f64::EPSILON * count * count * extent * extent;
+    let lower = linear::polygon_area(&loops)? - error;
+    (lower.is_finite() && lower > 0.0).then_some(lower)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::brep::{Face, Loop, Part, RawCurve2d};
+    use crate::cover::{Coverage, assess};
+    use crate::geom::Frame;
+
+    fn frame(angle: f64) -> Frame {
+        Frame {
+            origin: [0.0; 3],
+            x: [angle.cos(), angle.sin(), 0.0],
+            y: [-angle.sin(), angle.cos(), 0.0],
+            z: [0.0, 0.0, 1.0],
+        }
+    }
+
+    fn part(surface: Surface, curves: Vec<(Curve, V3, V3, bool)>) -> Part {
+        let edges: Vec<_> = curves
+            .into_iter()
+            .enumerate()
+            .map(|(i, (curve, start, end, same_sense))| Edge {
+                curve,
+                start,
+                end,
+                vertices: if start == end { (i, i) } else { (i, i + 1) },
+                same_sense,
+                samples: vec![],
+            })
+            .collect();
+        let face = Face {
+            surface,
+            reversed: false,
+            loops: vec![Loop {
+                edges: (0..edges.len()).map(|i| (i, true)).collect(),
+                vertex: None,
+            }],
+            solid: None,
+            pcurves: vec![],
+        };
+        Part::new(vec![face], edges, vec![])
+    }
+
+    fn disk(radius: f64, angle: f64) -> Part {
+        let frame = frame(angle);
+        let curve = Curve::Circle { frame, radius };
+        let vertex = curve.value(0.0);
+        part(
+            Surface::Plane { frame },
+            vec![(curve, vertex, vertex, true)],
+        )
+    }
+
+    #[test]
+    fn complete_conics_do_not_depend_on_the_seam_or_parameter_axes() {
+        let patch = disk(1.0, 0.0);
+        for angle in [0.0, 0.37, 1.2, 3.7] {
+            let support = disk(1.0 - 1e-12, angle);
+            assert_eq!(assess((&patch, 0), &[(&support, 0)]), Coverage::Covered);
+        }
+        let smaller = disk(1.0 - 1e-4, 0.0);
+        assert_ne!(assess((&patch, 0), &[(&smaller, 0)]), Coverage::Covered);
+    }
+
+    #[test]
+    fn opposite_finite_arcs_are_not_the_same_boundary() {
+        let a = [1.0, 0.0, 0.0];
+        let b = [-1.0, 0.0, 0.0];
+        let half = |sense| {
+            part(
+                Surface::Plane { frame: frame(0.0) },
+                vec![
+                    (
+                        Curve::Circle {
+                            frame: frame(0.0),
+                            radius: 1.0,
+                        },
+                        a,
+                        b,
+                        sense,
+                    ),
+                    (
+                        Curve::Line {
+                            origin: b,
+                            dir: [1.0, 0.0, 0.0],
+                        },
+                        b,
+                        a,
+                        true,
+                    ),
+                ],
+            )
+        };
+        let upper = half(true);
+        let lower = half(false);
+        assert_eq!(assess((&upper, 0), &[(&upper, 0)]), Coverage::Covered);
+        assert_ne!(assess((&upper, 0), &[(&lower, 0)]), Coverage::Covered);
+    }
+
+    #[test]
+    fn an_auxiliary_or_unsupported_pcurve_cannot_be_omitted() {
+        let patch = disk(1.0, 0.0);
+        for curve in [
+            RawCurve2d::Unresolved,
+            RawCurve2d::Circle {
+                point: [0.1, 0.0],
+                reference: None,
+                radius: 1.0,
+            },
+        ] {
+            let p = disk(1.0, 0.0).with_file_pcurves(
+                std::collections::BTreeMap::from([(0, vec![(0, curve)])]),
+                Default::default(),
+                (1.0, 1.0),
+                Some(1e-7),
+            );
+            assert_ne!(assess((&patch, 0), &[(&p, 0)]), Coverage::Covered);
+        }
+    }
+
+    fn cylinder(angle: f64, height: f64) -> Part {
+        let radius = 2.0;
+        let arc = |z| Curve::Circle {
+            frame: Frame {
+                origin: [0.0, 0.0, z],
+                ..frame(0.0)
+            },
+            radius,
+        };
+        let a = [radius, 0.0, 0.0];
+        let b = [0.0, radius, 0.0];
+        let c = [0.0, radius, height];
+        let d = [radius, 0.0, height];
+        part(
+            Surface::Cylinder {
+                frame: Frame {
+                    origin: [0.0, 0.0, 100.0],
+                    ..frame(angle)
+                },
+                radius,
+            },
+            vec![
+                (arc(0.0), a, b, true),
+                (
+                    Curve::Line {
+                        origin: b,
+                        dir: [0.0, 0.0, 1.0],
+                    },
+                    b,
+                    c,
+                    true,
+                ),
+                (arc(height), c, d, false),
+                (
+                    Curve::Line {
+                        origin: d,
+                        dir: [0.0, 0.0, -1.0],
+                    },
+                    d,
+                    a,
+                    true,
+                ),
+            ],
+        )
+    }
+
+    #[test]
+    fn cylindrical_strips_keep_their_finite_turn_and_axial_extent() {
+        let patch = cylinder(0.0, 3.0);
+        for angle in [0.0, 0.37, 1.2, 3.7] {
+            let support = cylinder(angle, 3.0);
+            assert_eq!(assess((&patch, 0), &[(&support, 0)]), Coverage::Covered);
+        }
+        let shorter = cylinder(0.0, 2.999);
+        assert_ne!(assess((&patch, 0), &[(&shorter, 0)]), Coverage::Covered);
+    }
+
+    #[test]
+    fn extra_holes_are_not_hidden_by_an_outer_boundary_match() {
+        let patch = disk(1.0, 0.0);
+        let mut ring = disk(1.0, 0.0);
+        let hole = disk(0.25, 0.0).edges[0].clone();
+        ring.edges.push(hole);
+        ring.faces[0].loops.push(Loop {
+            edges: vec![(1, false)],
+            vertex: None,
+        });
+        let ring = Part::new(ring.faces.clone(), ring.edges.clone(), vec![]);
+        assert_ne!(assess((&patch, 0), &[(&ring, 0)]), Coverage::Covered);
+        assert_eq!(assess((&ring, 0), &[(&ring, 0)]), Coverage::Covered);
+    }
+}

@@ -24,7 +24,6 @@ type Loops = Vec<Vec<Point>>;
 struct Boundary {
     loops: Loops,
     line_error: f64,
-    curve_error: f64,
 }
 
 // Bound the quadratic arrangement work; this is an eligibility limit, not a geometric epsilon.
@@ -69,51 +68,10 @@ impl Box2 {
 
 /// `None` means this path cannot establish the boundary representation it needs.
 pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bool> {
-    if let Some((gap, error, tolerance)) = finite_area(patch, supports) {
-        return if gap + error <= tolerance {
-            Some(true)
-        } else if gap > tolerance + error {
-            Some(false)
-        } else {
-            None
-        };
-    }
-    let frame = canonical_frame(patch)?;
-    let mine = loops(patch, &frame, None)?.loops;
-    let mut bounds = Box2::empty();
-    for &p in mine.iter().flatten() {
-        bounds.add(p)?;
-    }
-    let target_error: f64 = patch.0.faces[patch.1]
-        .loops
-        .iter()
-        .flat_map(|lp| &lp.edges)
-        .map(|&(edge, _)| line_error(&patch.0.edges[edge], &frame, None))
-        .collect::<Option<Vec<_>>>()?
-        .iter()
-        .sum();
-    let area = patch.0.face_mass(patch.1)?[0];
-    if !area.is_finite() || area <= 0.0 {
-        return Some(false);
-    }
-    let tolerance = 1e-9 * area;
-    let bounded = supports
-        .iter()
-        .copied()
-        .filter(|(p, f)| same_surface(&patch.0.faces[patch.1].surface, &p.faces[*f].surface))
-        .map(|support| loops(support, &frame, Some((bounds, tolerance))))
-        .collect::<Option<Vec<_>>>()?;
-    let curve_error: f64 = bounded.iter().map(|boundary| boundary.curve_error).sum();
-    if curve_error > tolerance {
-        return None;
-    }
-    let uncertainty =
-        target_error + curve_error + bounded.iter().map(|b| b.line_error).sum::<f64>();
-    let theirs: Vec<_> = bounded.into_iter().map(|boundary| boundary.loops).collect();
-    let gap = uncovered_area(&mine, &theirs, bounds)?;
-    if gap + uncertainty <= tolerance {
+    let (gap, error, tolerance) = finite_area(patch, supports)?;
+    if gap + error <= tolerance {
         Some(true)
-    } else if gap > tolerance + uncertainty {
+    } else if gap > tolerance + error {
         Some(false)
     } else {
         None
@@ -122,7 +80,7 @@ pub(super) fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Option<bo
 
 /// Integrate finite analytic segments, retaining uncertainty only at their common vertices
 /// and between the file's independent curve representations. No infinite lines are intersected.
-fn canonical_frame((part, face): FaceRef<'_>) -> Option<Frame> {
+pub(super) fn canonical_frame((part, face): FaceRef<'_>) -> Option<Frame> {
     let Surface::Plane { frame } = &part.faces[face].surface else {
         return None;
     };
@@ -226,10 +184,16 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
             first.get_or_insert(a);
             last = Some(b);
             let vertices = [a, b].map(|p| project(frame, p));
+            let alternatives = super::representations::alternatives((part, face), index)?;
             if !matches!(edge.curve, Curve::Line { .. }) {
                 let patch = clip?;
-                if curve_error(edge, frame, patch)? != 0.0 {
-                    return None;
+                error += curve_error(edge, frame, patch)?;
+                for curve in alternatives {
+                    let alternate = Edge {
+                        curve,
+                        ..edge.clone()
+                    };
+                    error += curve_error(&alternate, frame, patch)?;
                 }
                 points.extend(vertices);
                 continue;
@@ -238,14 +202,11 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
                 return None;
             };
             let mut size = origin.into_iter().map(f64::abs).fold(base_size, f64::max);
-            for (_, pcurve) in part.faces[face].pcurves.iter().filter(|(e, _)| *e == index) {
-                if let crate::brep::Pcurve::Line { point, .. } = pcurve {
-                    size = surface
-                        .value(point.0, point.1)
-                        .into_iter()
-                        .map(f64::abs)
-                        .fold(size, f64::max);
-                }
+            for curve in &alternatives {
+                let Curve::Line { origin, .. } = curve else {
+                    return None;
+                };
+                size = origin.iter().copied().map(f64::abs).fold(size, f64::max);
             }
             let pad = 64.0 * f64::EPSILON * size;
             let world = [a, b].map(|p| edge.curve.value(edge.curve.parameter(p)));
@@ -266,18 +227,9 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
                 return None;
             }
             error += segment_error(feet, [0.0; 2], size, clip)?;
-            for (_, pcurve) in part.faces[face].pcurves.iter().filter(|(e, _)| *e == index) {
-                let crate::brep::Pcurve::Line { point, dir } = pcurve else {
-                    return None;
-                };
-                let norm = dir.0 * dir.0 + dir.1 * dir.1;
-                if !norm.is_finite() || norm == 0.0 {
-                    return None;
-                }
+            for curve in &alternatives {
                 let param_feet = [a, b].map(|p| {
-                    let uv = surface.parameters(p, None)?;
-                    let t = ((uv.0 - point.0) * dir.0 + (uv.1 - point.1) * dir.1) / norm;
-                    let q = surface.value(point.0 + t * dir.0, point.1 + t * dir.1);
+                    let q = curve.value(curve.parameter(p));
                     (geom::dist(p, q) <= limit).then_some(project(frame, q))
                 });
                 let [Some(c), Some(d)] = param_feet else {
@@ -315,7 +267,6 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
     Some(Boundary {
         loops: contours,
         line_error: error,
-        curve_error: 0.0,
     })
 }
 
@@ -324,62 +275,7 @@ fn project(frame: &Frame, p: V3) -> Point {
     (geom::dot(delta, frame.x), geom::dot(delta, frame.y))
 }
 
-fn loops((part, face): FaceRef<'_>, frame: &Frame, patch: Option<(Box2, f64)>) -> Option<Boundary> {
-    let mut out = Vec::new();
-    let mut line_uncertainty = 0.0;
-    let mut curve_uncertainty = 0.0;
-    for lp in &part.faces[face].loops {
-        if lp.edges.is_empty() {
-            continue;
-        }
-        let mut points = Vec::new();
-        let mut last = None;
-        let mut first = None;
-        for &(index, forward) in &lp.edges {
-            if part.unresolved_edges().contains(&index) {
-                return None;
-            }
-            let edge = &part.edges[index];
-            if matches!(edge.curve, Curve::Line { .. }) {
-                if let Some((bounds, _)) = patch {
-                    line_uncertainty += line_error(edge, frame, Some(bounds))?;
-                }
-            } else {
-                let (bounds, tolerance) = patch?;
-                curve_uncertainty += curve_error(edge, frame, bounds)?;
-                if curve_uncertainty > tolerance {
-                    return None;
-                }
-            }
-            let (a, b) = if forward {
-                (edge.start, edge.end)
-            } else {
-                (edge.end, edge.start)
-            };
-            if last.is_some_and(|p| p != a) {
-                return None;
-            }
-            first.get_or_insert(a);
-            let uv = project(frame, a);
-            if !uv.0.is_finite() || !uv.1.is_finite() {
-                return None;
-            }
-            points.push(uv);
-            last = Some(b);
-        }
-        if last != first {
-            return None;
-        }
-        points.push(points[0]);
-        out.push(points);
-    }
-    Some(Boundary {
-        loops: out,
-        line_error: line_uncertainty,
-        curve_error: curve_uncertainty,
-    })
-}
-
+#[cfg(test)]
 fn line_error(edge: &Edge, frame: &Frame, patch: Option<Box2>) -> Option<f64> {
     let Curve::Line { origin, dir } = edge.curve else {
         return None;
@@ -550,6 +446,14 @@ fn uncovered_area(mine: &Loops, theirs: &[Loops], bounds: Box2) -> Option<f64> {
         area += (band[1] - band[0]) * length;
     }
     area.is_finite().then_some(area)
+}
+
+pub(super) fn polygon_area(loops: &Vec<Vec<(f64, f64)>>) -> Option<f64> {
+    let mut bounds = Box2::empty();
+    for &p in loops.iter().flatten() {
+        bounds.add(p)?;
+    }
+    uncovered_area(loops, &[], bounds)
 }
 
 fn crossing_height((a, b): Segment, (c, d): Segment) -> Option<f64> {
@@ -992,5 +896,56 @@ mod tests {
                 assert_eq!(assess((&patch, 0), &[(support, 0)]), expected);
             }
         }
+    }
+
+    #[test]
+    fn a_far_3d_curve_does_not_hide_an_interior_pcurve() {
+        use crate::brep::RawCurve2d;
+        let patch = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        let mut support = face(&[rectangle(-2.0, -2.0, 2.0, 2.0)]);
+        let index = support.edges.len();
+        let vertex = [10.25, 10.0, 0.0];
+        support.edges.push(Edge {
+            curve: Curve::Circle {
+                frame: Frame {
+                    origin: [10.0, 10.0, 0.0],
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 1.0, 0.0],
+                    z: [0.0, 0.0, 1.0],
+                },
+                radius: 0.25,
+            },
+            start: vertex,
+            end: vertex,
+            vertices: (index, index),
+            same_sense: true,
+            samples: vec![],
+        });
+        support.faces[0].loops.push(Loop {
+            edges: vec![(index, true)],
+            vertex: None,
+        });
+        let support = crate::brep::Part::new(support.faces.clone(), support.edges.clone(), vec![])
+            .with_file_pcurves(
+                std::collections::BTreeMap::from([(
+                    0,
+                    vec![(
+                        index,
+                        RawCurve2d::Circle {
+                            point: [0.5, 0.5],
+                            reference: None,
+                            radius: 0.25,
+                        },
+                    )],
+                )]),
+                Default::default(),
+                (1.0, 1.0),
+                Some(1e-7),
+            );
+        assert_eq!(covered((&patch, 0), &[(&support, 0)]), None);
+        assert_ne!(
+            super::super::assess((&patch, 0), &[(&support, 0)]),
+            super::super::Coverage::Covered
+        );
     }
 }

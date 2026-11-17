@@ -74,6 +74,10 @@ fn integrate_inner<const N: usize>(
 }
 fn raw_param_curve(pc: &crate::brep::RawCurve2d) -> Option<Curve> {
     match pc {
+        // This recovery path only integrates lines and splines on spline surfaces.
+        crate::brep::RawCurve2d::Unresolved
+        | crate::brep::RawCurve2d::Circle { .. }
+        | crate::brep::RawCurve2d::Ellipse { .. } => None,
         crate::brep::RawCurve2d::Line {
             point,
             direction,

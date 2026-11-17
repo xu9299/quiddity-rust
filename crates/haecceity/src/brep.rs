@@ -118,10 +118,23 @@ impl SweptSource {
 /// A pcurve's 2D curve as the file states it (parameter values unscaled).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RawCurve2d {
+    /// The file declares a pcurve whose representation cannot be evaluated here.
+    Unresolved,
     Line {
         point: [f64; 2],
         direction: [f64; 2],
         magnitude: f64,
+    },
+    Circle {
+        point: [f64; 2],
+        reference: Option<[f64; 2]>,
+        radius: f64,
+    },
+    Ellipse {
+        point: [f64; 2],
+        reference: Option<[f64; 2]>,
+        semi_axis_1: f64,
+        semi_axis_2: f64,
     },
     BSpline {
         degree: i64,

@@ -12,7 +12,9 @@ use super::geom::{self, Surface};
 #[cfg(test)]
 use super::sampling::CHORD_TOLERANCE;
 
+mod corresponding;
 mod linear;
+mod representations;
 
 /// A face of a part.
 pub type FaceRef<'a> = (&'a Part, usize);
@@ -33,6 +35,7 @@ pub fn assess(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Coverage {
     match linear::covered(patch, supports) {
         Some(true) => Coverage::Covered,
         Some(false) => Coverage::Uncovered,
+        None if corresponding::covered(patch, supports) == Some(true) => Coverage::Covered,
         None => Coverage::Indeterminate,
     }
 }

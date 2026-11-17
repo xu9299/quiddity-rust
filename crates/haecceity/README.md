@@ -65,6 +65,8 @@ Use `cover::assess(patch, supports)` to distinguish `Coverage::Covered`,
 `Coverage::Uncovered` and `Coverage::Indeterminate`. The latter leaves the geometric question
 unproved; callers must not interpret it as established coverage or a measured gap.
 `cover::covered` returns true only for `Covered`. Unsupported trims remain indeterminate.
+The supported finite-geometry proof paths and their limits are described in
+[finite support coverage](../../docs/finite-support-coverage.md).
 
 ## Selected assembly bodies
 
