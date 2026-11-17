@@ -78,6 +78,14 @@ Complete boundary correspondence retains its finite endpoint connectors and char
 actual area bounds, as the straight arrangement does. A declared precision remains a
 coherence guard; neither case enlarges the acceptance budget.
 
+For a planar query, correspondence measures displacement after orthogonal projection onto
+the held plane, as the planar arrangement does. The finite trims and endpoint coherence
+checks still use the original three-dimensional curves before projection. Rational/conic
+coordinates use the projected reference axes and control points with the original finite
+intervals. A normal representation offset is therefore excluded from the in-plane tube
+distance; in-plane radial or tangential disagreement remains charged. Three-dimensional
+lengths remain conservative upper bounds for projected lengths.
+
 For a planar union, another sufficient proof can remove a closed loop from one support's
 parity region when a separate one-loop support matches that complete finite boundary. If the
 loop region is H and the original support is A, the reduced region A' satisfies

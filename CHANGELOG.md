@@ -25,6 +25,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   existing capsule and clipping bounds as independent upper bounds.
 - Bound finite positive rational/conic correspondences through implicit Bernstein residuals
   and proved angular order, and charge complete loop matches when one support fills another.
+- Compare planar boundary displacements in the held plane while retaining three-dimensional
+  endpoint coherence, so normal representation offsets do not consume an in-plane area bound.
 
 ### Added
 

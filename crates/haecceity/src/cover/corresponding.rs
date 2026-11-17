@@ -187,7 +187,7 @@ fn boundary((part, face): FaceRef<'_>, surface: &Surface) -> Option<Boundary> {
             }
             for curve in representations::alternatives((part, face), index)? {
                 let alternate = Trim::new(edge, curve, forward, uncertainty + pad)?;
-                error += tube(&trim, surface, displacement(&trim, &alternate)?)?;
+                error += tube(&trim, surface, displacement(&trim, &alternate, surface)?)?;
             }
             trims.push(trim);
         }
@@ -220,17 +220,28 @@ fn conic(curve: &Curve) -> Option<(V3, V3, V3)> {
 }
 
 /// Compare equal fractions of the finite intervals, rather than untrimmed conic boxes.
-fn displacement(a: &Trim, b: &Trim) -> Option<f64> {
+fn displacement(a: &Trim, b: &Trim, surface: &Surface) -> Option<f64> {
     let pad = 128.0 * f64::EPSILON * size(&a.curve).max(size(&b.curve));
     if matches!(b.curve, Curve::Nurbs(_)) && conic(&a.curve).is_some() {
-        return conic_bounds::deviation(&a.curve, (a.a, a.b), &b.curve, (b.a, b.b));
+        return if let Surface::Plane { frame } = surface {
+            conic_bounds::planar_deviation(&a.curve, (a.a, a.b), &b.curve, (b.a, b.b), frame.z)
+        } else {
+            conic_bounds::deviation(&a.curve, (a.a, a.b), &b.curve, (b.a, b.b))
+        };
     }
+    let normal = match surface {
+        Surface::Plane { frame } => Some(geom::unit(frame.z)?),
+        _ => None,
+    };
+    let length =
+        |p| geom::norm(normal.map_or(p, |n| geom::sub(p, geom::scale(n, geom::dot(p, n)))));
+    let distance = |p, q| length(geom::sub(p, q));
     if let (Some(a0), Some(b0)) = (
         representations::straight_foot(&a.curve, a.start),
         representations::straight_foot(&b.curve, b.start),
     ) {
         return Some(
-            geom::dist(a0, b0).max(geom::dist(
+            distance(a0, b0).max(distance(
                 representations::straight_foot(&a.curve, a.end)?,
                 representations::straight_foot(&b.curve, b.end)?,
             )) + pad,
@@ -260,10 +271,10 @@ fn displacement(a: &Trim, b: &Trim) -> Option<f64> {
     };
     let (o, x, y, span) = normalized(a)?;
     let (p, u, v, other_span) = normalized(b)?;
-    let d = geom::dist(o, p)
-        + geom::dist(x, u)
-        + geom::dist(y, v)
-        + (geom::norm(u) + geom::norm(v)) * (span - other_span).abs()
+    let d = distance(o, p)
+        + distance(x, u)
+        + distance(y, v)
+        + (length(u) + length(v)) * (span - other_span).abs()
         + pad;
     d.is_finite().then_some(d)
 }
@@ -361,7 +372,7 @@ fn loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
                 } else {
                     b[index].clone()
                 };
-                Some(sum + tube(mine, surface, displacement(mine, &other)?)?)
+                Some(sum + tube(mine, surface, displacement(mine, &other, surface)?)?)
             });
             if let Some(cost) = cost {
                 best = Some(best.map_or(cost, |x| x.min(cost)));
@@ -561,6 +572,62 @@ mod tests {
         }
         let smaller = disk(1.0 - 1e-4, 0.0);
         assert_ne!(assess((&patch, 0), &[(&smaller, 0)]), Coverage::Covered);
+    }
+
+    #[test]
+    fn planar_correspondence_charges_in_plane_motion_and_keeps_3d_coherence() {
+        let patch = disk(1.0, 0.0);
+        for (axis, shift, expected) in [(2, 1e-8, true), (0, 1e-8, false), (2, 1e-5, false)] {
+            let mut support = disk(1.0, 0.0);
+            let Curve::Circle { frame, .. } = &mut support.edges[0].curve else {
+                unreachable!()
+            };
+            frame.origin[axis] = shift;
+            let poles = vec![
+                [1.0, 0.0],
+                [1.0, 1.0],
+                [0.0, 1.0],
+                [-1.0, 1.0],
+                [-1.0, 0.0],
+                [-1.0, -1.0],
+                [0.0, -1.0],
+                [1.0, -1.0],
+                [1.0, 0.0],
+            ];
+            let support = support.with_file_pcurves(
+                std::collections::BTreeMap::from([(
+                    0,
+                    vec![(
+                        0,
+                        RawCurve2d::BSpline {
+                            degree: 2,
+                            points: poles,
+                            multiplicities: vec![3, 2, 2, 2, 3],
+                            knots: vec![0.0, 0.25, 0.5, 0.75, 1.0],
+                            weights: Some(
+                                (0..9)
+                                    .map(|i| {
+                                        if i % 2 == 0 {
+                                            1.0
+                                        } else {
+                                            std::f64::consts::FRAC_1_SQRT_2
+                                        }
+                                    })
+                                    .collect(),
+                            ),
+                        },
+                    )],
+                )]),
+                Default::default(),
+                (1.0, 1.0),
+                Some(1e-7),
+            );
+            assert_eq!(
+                assess((&patch, 0), &[(&support, 0)]) == Coverage::Covered,
+                expected,
+                "axis={axis}, shift={shift}"
+            );
+        }
     }
 
     #[test]

@@ -120,7 +120,33 @@ pub(super) fn deviation(
     other: &Curve,
     other_interval: (f64, f64),
 ) -> Option<f64> {
+    projected(reference, interval, other, other_interval, |p| p)
+}
+
+/// Planar coverage compares the held surface's orthogonal projections. Three-dimensional
+/// endpoint coherence is checked by the caller before using this distance bound.
+pub(super) fn planar_deviation(
+    reference: &Curve,
+    interval: (f64, f64),
+    other: &Curve,
+    other_interval: (f64, f64),
+    normal: V3,
+) -> Option<f64> {
+    let normal = geom::unit(normal)?;
+    projected(reference, interval, other, other_interval, |p| {
+        geom::sub(p, geom::scale(normal, geom::dot(p, normal)))
+    })
+}
+
+fn projected(
+    reference: &Curve,
+    interval: (f64, f64),
+    other: &Curve,
+    other_interval: (f64, f64),
+    project_vector: impl Fn(V3) -> V3,
+) -> Option<f64> {
     let (origin, x, y) = axes(reference)?;
+    let (x, y) = (project_vector(x), project_vector(y));
     let Curve::Nurbs(curve) = other else {
         return None;
     };
@@ -133,7 +159,7 @@ pub(super) fn deviation(
     let minimum = determinant.sqrt() / maximum;
     let normal = geom::unit(geom::cross(x, y))?;
     let project = |p| {
-        let q = geom::sub(p, origin);
+        let q = project_vector(geom::sub(p, origin));
         let (a, b) = (geom::dot(q, x), geom::dot(q, y));
         [
             (a * yy - b * xy) / determinant,
