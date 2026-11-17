@@ -66,3 +66,24 @@ remaining hull. Their combined box encloses the finite curve and its vertex chor
 charging unrelated spans. Invalid intervals or unsuccessful extraction retain the full hull.
 Temporary knot insertion and subdivision operate on copied control data; the input B-Rep
 remains unchanged.
+
+## Sufficient containment
+
+A straight convex planar support admits a second acceptance proof. Its vertex polygon is
+checked for strict convexity, and every finite straight representation stays within a
+bounded displacement of that polygon. Every target edge, including complete conics,
+positive rational control hulls and independent pcurves, must lie strictly inside all of
+the support's half-planes after that displacement and roundoff allowance. A supporting face
+with additional holes cannot use this proof. An interior seam vertex alone is insufficient.
+
+A cylindrical face with two closed winding-one contours and one shared seam bounds a full
+band. Opposite contour windings and a closed topological walk are required. Finite curve
+extrema bound each contour's axial range; the conservative interior band excludes both
+ranges. Independent seam representations contribute a physical parameter tube area.
+For a target's additional loops, positive control hulls and all retained pcurves must stay
+in an open radial hemisphere and within the outer band. The hemisphere establishes zero
+winding. The complete circumference times each hole's axial span bounds the removed area,
+including non-linear cylindrical pcurves whose UV control hull is positive and finite.
+The resulting lower target area and upper missing band area use the unchanged relative
+budget. A shorter support, an unresolved boundary or a hole outside the band cannot be
+accepted by this path. Neither containment proof establishes rejection.

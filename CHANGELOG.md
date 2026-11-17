@@ -17,6 +17,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   representations instead of omitting them from a coverage proof.
 - Tighten finite rational pcurve bounds with positive Bezier hull subdivision, and use
   guarded radius-dependent cylindrical parameter bounds without increasing the area budget.
+- Prove curved targets strictly inside a convex planar support, and local cutouts inside
+  a complete cylindrical band, using finite boundary bounds and retained pcurves.
 
 ### Added
 

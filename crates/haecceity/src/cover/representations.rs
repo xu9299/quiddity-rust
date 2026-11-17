@@ -81,7 +81,7 @@ pub(super) fn alternatives((part, face): FaceRef<'_>, edge: usize) -> Option<Vec
     Some(out)
 }
 
-fn mapped(raw: &RawCurve2d, surface: &Surface, (mm, rad): (f64, f64)) -> Option<Curve> {
+pub(super) fn mapped(raw: &RawCurve2d, surface: &Surface, (mm, rad): (f64, f64)) -> Option<Curve> {
     match surface {
         Surface::Plane { frame } => {
             let point = |p: [f64; 2]| frame.to_world([p[0] * mm, p[1] * mm, 0.0]);
