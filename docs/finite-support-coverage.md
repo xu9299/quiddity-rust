@@ -66,7 +66,10 @@ When complete loops have different edge counts, finite curve splits may propose 
 walk. Every step consumes at least one remaining edge, and both closed loops must be fully
 consumed. Closest parameters only propose the splits: the same full-path homotopy tubes
 bound every paired piece. No closest-point or sampled distance is accepted as a proof.
-This bounded search currently considers loops with at most 64 edges in total.
+The acyclic search retains the least charged path for each finite split state, avoiding
+greedy dead ends near numerically coincident endpoints. It currently considers loops with
+at most 64 edges in total and at most 4096 visited or queued states per oriented start.
+These are work limits, not geometric or acceptance tolerances.
 
 Single-loop cylindrical regions narrower than a complete turn also admit a union proof.
 Finite axial lines and coaxial conics are mapped to the physical parameters `(R*u,v)`;

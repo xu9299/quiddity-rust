@@ -12,6 +12,8 @@ use crate::brep::Edge;
 use crate::geom::{self, Curve, Surface, V3};
 use crate::sampling::edge_interval;
 
+type Loops = Vec<Vec<(f64, f64)>>;
+
 #[derive(Clone)]
 struct Trim {
     curve: Curve,
@@ -412,10 +414,21 @@ fn loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
 /// one whole remaining edge; the final correspondence must consume both closed loops.
 /// Closest parameters propose splits, while the complete homotopy tubes prove the bound.
 fn subdivided_loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f64> {
-    let (mut i, mut j) = (0, 0);
-    let (mut mine, mut other) = (a.first()?.clone(), b.first()?.clone());
-    let mut error = 0.0;
-    loop {
+    let key = |i, j, mine: &Trim, other: &Trim| (i + j, i, j, mine.a.to_bits(), other.a.to_bits());
+    let mine = a.first()?.clone();
+    let other = b.first()?.clone();
+    let mut paths = std::collections::BTreeMap::new();
+    paths.insert(key(0, 0, &mine, &other), (0.0, mine, other));
+    let mut best: Option<f64> = None;
+    let mut visited = 0;
+    while let Some(((_, i, j, _, _), (error, mine, other))) = paths.pop_first() {
+        visited += 1;
+        if visited + paths.len() > 4096 {
+            return None;
+        }
+        if best.is_some_and(|bound| error >= bound) {
+            continue;
+        }
         let cost = |x: &Trim, y: &Trim| tube(x, surface, displacement(x, y, surface)?);
         let mut choices = Vec::new();
         if let Some(c) = cost(&mine, &other) {
@@ -431,28 +444,28 @@ fn subdivided_loop_error(a: &[Trim], b: &[Trim], surface: &Surface) -> Option<f6
         {
             choices.push((c, None, Some(last)));
         }
-        let (bound, rest_a, rest_b) = choices.into_iter().min_by(|x, y| x.0.total_cmp(&y.0))?;
-        error += bound;
-        if let Some(rest) = rest_a {
-            mine = rest;
-        } else {
-            i += 1;
-            if let Some(next) = a.get(i) {
-                mine = next.clone();
+        for (bound, rest_a, rest_b) in choices {
+            let total = error + bound;
+            if !total.is_finite() || best.is_some_and(|cost| total >= cost) {
+                continue;
             }
-        }
-        if let Some(rest) = rest_b {
-            other = rest;
-        } else {
-            j += 1;
-            if let Some(next) = b.get(j) {
-                other = next.clone();
+            let next_i = i + usize::from(rest_a.is_none());
+            let next_j = j + usize::from(rest_b.is_none());
+            if next_i == a.len() || next_j == b.len() {
+                if next_i == a.len() && next_j == b.len() {
+                    best = Some(best.map_or(total, |bound| bound.min(total)));
+                }
+                continue;
             }
-        }
-        if i == a.len() || j == b.len() {
-            return (i == a.len() && j == b.len() && error.is_finite()).then_some(error);
+            let next_a = rest_a.unwrap_or_else(|| a[next_i].clone());
+            let next_b = rest_b.unwrap_or_else(|| b[next_j].clone());
+            let state = key(next_i, next_j, &next_a, &next_b);
+            if paths.get(&state).is_none_or(|(cost, _, _)| total < *cost) {
+                paths.insert(state, (total, next_a, next_b));
+            }
         }
     }
+    best
 }
 
 /// Coarse chord/control error is subtracted from the denominator, never added to coverage.
@@ -460,7 +473,7 @@ fn parameter_polygon(
     boundary: &Boundary,
     surface: &Surface,
     plane: Option<&crate::geom::Frame>,
-) -> Option<(Vec<Vec<(f64, f64)>>, f64)> {
+) -> Option<(Loops, f64)> {
     let mut error = boundary.error;
     let mut loops = Vec::new();
     for lp in &boundary.loops {
