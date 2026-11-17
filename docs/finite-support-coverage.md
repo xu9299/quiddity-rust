@@ -39,9 +39,11 @@ the declared master. Unevaluable pcurves cannot disappear from the proof.
 
 For a cylinder, physical parameter coordinates are `(radius*u, v)`. A lower radial bound
 keeps each homotopy away from the axis. At radial distance at least half the cylinder's
-radius the parameter map has bounded derivative; the implementation uses conservative
-factors of four for displacement and two for reference length. Curves failing those guards
-remain indeterminate. Finite coaxial conics and axial lines give the target's unwrapped
+radius the parameter map has bounded derivative. Its Jacobian has orthogonal rows with norms
+`R/rho` and `1`. If `r` is the reference curve's lower radial bound, displacement uses the
+factor `max(1,R/(r-d))`, and reference length uses `max(1,R/r)`, each rounded conservatively.
+This uses the actual guarded radial interval rather than fixed worst-case factors. Curves
+failing those guards remain indeterminate. Finite coaxial conics and axial lines give the target's unwrapped
 parameter polygon. A loop with unresolved winding is refused.
 
 The denominator has a separate conservative lower area bound. Coarse conic chords or ideal
@@ -56,7 +58,11 @@ the input geometry or to saved recognition evidence.
 
 Two-pole degree-one positive rational pcurves retain their finite straight segment, including
 endpoint clamping. Axial cylindrical pcurves of this form map to the same finite segment in
-3D. For other positive rational splines, a finite parameter interval can use a derivative
-bound to enclose each complete panel. The combined box encloses that finite curve and its
-vertex chord; it does not charge unrelated spans of the whole spline's control hull. The
-full hull remains the bound when periodic wrapping or invalid intervals prevent refinement.
+3D. Other positive rational splines are split at their knots into homogeneous Bezier nets,
+then restricted to the finite interval. Periodic wraps retain both pieces of the domain.
+Subdivision tightens the positive rational control hulls. Endpoint observations select which
+extrema need more work; they never replace the enclosing hulls. Exhaustion retains every
+remaining hull. Their combined box encloses the finite curve and its vertex chord, without
+charging unrelated spans. Invalid intervals or unsuccessful extraction retain the full hull.
+Temporary knot insertion and subdivision operate on copied control data; the input B-Rep
+remains unchanged.

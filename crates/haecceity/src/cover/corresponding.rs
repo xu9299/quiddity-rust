@@ -74,7 +74,11 @@ impl Trim {
             Curve::Line { .. } => geom::dist(self.curve.value(self.a), self.curve.value(self.b)),
             _ => {
                 let (_, x, y) = conic(&self.curve)?;
-                (geom::norm(x) + geom::norm(y)) * (self.b - self.a).abs()
+                // The largest singular value bounds every unit combination of the two
+                // conic axes, including the derivative's (-sin(t), cos(t)) coefficients.
+                let (xx, yy, xy) = (geom::dot(x, x), geom::dot(y, y), geom::dot(x, y));
+                let maximum = 0.5 * (xx + yy + ((xx - yy).powi(2) + 4.0 * xy * xy).sqrt());
+                maximum.sqrt() * (self.b - self.a).abs() * (1.0 + 64.0 * f64::EPSILON)
             }
         })
     }
@@ -268,12 +272,21 @@ fn radial_lower(trim: &Trim, surface: &Surface) -> Option<f64> {
 fn tube(trim: &Trim, surface: &Surface, distance: f64) -> Option<f64> {
     let (d, length) = match surface {
         Surface::Plane { .. } => (distance, trim.length()?),
-        Surface::Cylinder { radius, .. }
-            if *radius > 0.0
-                && distance < 0.25 * radius
-                && radial_lower(trim, surface)? >= 0.75 * radius =>
-        {
-            (4.0 * distance, 2.0 * trim.length()?)
+        Surface::Cylinder { radius, .. } if *radius > 0.0 && distance < 0.25 * radius => {
+            let radial = radial_lower(trim, surface)? - 128.0 * f64::EPSILON * size(&trim.curve);
+            if radial < 0.75 * radius {
+                return None;
+            }
+            // In physical parameters (R*u,v), the map's Jacobian has orthogonal rows
+            // with norms R/rho and 1. A straight homotopy of displacement d stays at
+            // rho >= radial-d; the reference curve itself stays at rho >= radial.
+            let padding = 1.0 + 128.0 * f64::EPSILON;
+            let displacement_factor = (radius / (radial - distance)).max(1.0) * padding;
+            let length_factor = (radius / radial).max(1.0) * padding;
+            (
+                displacement_factor * distance,
+                length_factor * trim.length()?,
+            )
         }
         _ => return None,
     };
@@ -647,5 +660,25 @@ mod tests {
         let ring = Part::new(ring.faces.clone(), ring.edges.clone(), vec![]);
         assert_ne!(assess((&patch, 0), &[(&ring, 0)]), Coverage::Covered);
         assert_eq!(assess((&ring, 0), &[(&ring, 0)]), Coverage::Covered);
+    }
+
+    #[test]
+    fn a_cylindrical_homotopy_cannot_approach_the_axis() {
+        let curve = Curve::Circle {
+            frame: frame(0.0),
+            radius: 0.2,
+        };
+        let trim = Trim {
+            start: curve.value(0.0),
+            end: curve.value(0.0),
+            curve,
+            a: 0.0,
+            b: std::f64::consts::TAU,
+        };
+        let surface = Surface::Cylinder {
+            frame: frame(0.0),
+            radius: 2.0,
+        };
+        assert!(tube(&trim, &surface, 1e-12).is_none());
     }
 }

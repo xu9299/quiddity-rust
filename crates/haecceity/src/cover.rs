@@ -15,6 +15,7 @@ use super::sampling::CHORD_TOLERANCE;
 mod corresponding;
 mod linear;
 mod representations;
+mod spline_bounds;
 
 /// A face of a part.
 pub type FaceRef<'a> = (&'a Part, usize);

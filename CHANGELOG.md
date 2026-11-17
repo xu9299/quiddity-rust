@@ -15,6 +15,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   area budget, including independent pcurves and endpoint connections. Retain analytic
   pcurve master metadata, read and write planar pcurve conics, and refuse unsupported
   representations instead of omitting them from a coverage proof.
+- Tighten finite rational pcurve bounds with positive Bezier hull subdivision, and use
+  guarded radius-dependent cylindrical parameter bounds without increasing the area budget.
 
 ### Added
 

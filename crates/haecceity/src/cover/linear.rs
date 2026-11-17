@@ -398,7 +398,10 @@ fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
             for &p in curve.control_points() {
                 add(p)?;
             }
-            if let Some(mut trimmed) = finite_spline_bounds(edge, frame) {
+            if bounds.disjoint(patch, 64.0 * f64::EPSILON * size) {
+                return Some(0.0);
+            }
+            if let Some(mut trimmed) = finite_spline_bounds(edge, frame, patch) {
                 for p in [edge.start, edge.end] {
                     trimmed.add(project(frame, p))?;
                 }
@@ -427,10 +430,9 @@ fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
     Some(bounds.intersection_area(patch, 64.0 * f64::EPSILON * size))
 }
 
-/// Positive rational weights bound the derivative by 2*p*range/min_span*(wmax/wmin)^2.
-/// Midpoint values plus that bound enclose each entire parameter panel. The combined box
-/// encloses the finite curve and its vertex chord, rather than the whole spline's hull.
-fn finite_spline_bounds(edge: &Edge, frame: &Frame) -> Option<Box2> {
+/// Refined positive Bezier hulls enclose the finite spline, including periodic wraps.
+/// Every final hull is retained even when refinement exhausts its work budget.
+fn finite_spline_bounds(edge: &Edge, frame: &Frame, patch: Box2) -> Option<Box2> {
     let Curve::Nurbs(curve) = &edge.curve else {
         return None;
     };
@@ -441,43 +443,10 @@ fn finite_spline_bounds(edge: &Edge, frame: &Frame) -> Option<Box2> {
         edge.same_sense,
         edge.vertices.0 == edge.vertices.1,
     );
-    let (a, b) = (interval.0.min(interval.1), interval.0.max(interval.1));
-    let domain = curve.domain();
-    if a < domain.0 || b > domain.1 || !a.is_finite() || !b.is_finite() {
-        return None;
-    }
-    let mut hull = Box2::empty();
-    for &p in curve.control_points() {
-        hull.add(project(frame, p))?;
-    }
-    let span = curve
-        .knots()
-        .windows(2)
-        .map(|w| w[1] - w[0])
-        .filter(|x| *x > 0.0)
-        .min_by(f64::total_cmp)?;
-    let low = curve.weights().iter().copied().min_by(f64::total_cmp)?;
-    let high = curve.weights().iter().copied().max_by(f64::total_cmp)?;
-    if low <= 0.0 || !high.is_finite() {
-        return None;
-    }
-    let factor = 2.0 * curve.degree() as f64 / span
-        * (high / low).powi(2)
-        * (1.0 + 128.0 * f64::EPSILON * curve.control_points().len() as f64);
-    let rate = (
-        (hull.high.0 - hull.low.0) * factor,
-        (hull.high.1 - hull.low.1) * factor,
-    );
-    let panels = 128;
-    let half = 0.5 * (b - a) / panels as f64;
-    let mut bounds = Box2::empty();
-    for i in 0..panels {
-        let t = a + (b - a) * (i as f64 + 0.5) / panels as f64;
-        let p = project(frame, curve.value(t));
-        bounds.add((p.0 - rate.0 * half, p.1 - rate.1 * half))?;
-        bounds.add((p.0 + rate.0 * half, p.1 + rate.1 * half))?;
-    }
-    Some(bounds)
+    let accuracy = (patch.high.0 - patch.low.0).min(patch.high.1 - patch.low.1) * 1e-13;
+    let (low, high) =
+        super::spline_bounds::bounds(curve, interval, |p| project(frame, p), accuracy)?;
+    Some(Box2 { low, high })
 }
 
 fn uncovered_area(mine: &Loops, theirs: &[Loops], bounds: Box2) -> Option<f64> {
@@ -1008,12 +977,12 @@ mod tests {
         });
         for pcurve in [
             RawCurve2d::Circle {
-                point: [0.5, 0.5],
+                point: [2.5, 2.5],
                 reference: None,
                 radius: 0.25,
             },
             RawCurve2d::Line {
-                point: [0.5, 0.5],
+                point: [2.5, 2.5],
                 direction: [1.0, -1.0],
                 magnitude: 1.0,
             },
@@ -1066,5 +1035,79 @@ mod tests {
         assert_eq!(curve_error(&edge, &frame, patch), Some(0.0));
         edge.end = edge.curve.value(1.0);
         assert!(curve_error(&edge, &frame, patch).unwrap() > 0.9);
+    }
+
+    #[test]
+    fn a_rotated_rational_circle_keeps_its_tangent_bound() {
+        use crate::brep::RawCurve2d;
+        let mut support = face(&[rectangle(-4.0, -4.0, 4.0, 4.0)]);
+        let index = support.edges.len();
+        let frame = Frame {
+            origin: [-1.0, 0.5, 0.0],
+            x: [1.0, 0.0, 0.0],
+            y: [0.0, 1.0, 0.0],
+            z: [0.0, 0.0, 1.0],
+        };
+        support.edges.push(Edge {
+            curve: Curve::Circle { frame, radius: 1.0 },
+            start: [0.0, 0.5, 0.0],
+            end: [0.0, 0.5, 0.0],
+            vertices: (index, index),
+            same_sense: true,
+            samples: vec![],
+        });
+        support.faces[0].loops.push(Loop {
+            edges: vec![(index, true)],
+            vertex: None,
+        });
+        let (s, c) = 0.37_f64.sin_cos();
+        let poles = [
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (0.0, 1.0),
+            (-1.0, 1.0),
+            (-1.0, 0.0),
+            (-1.0, -1.0),
+            (0.0, -1.0),
+            (1.0, -1.0),
+            (1.0, 0.0),
+        ]
+        .map(|(x, y)| {
+            let world = [-1.0 + c * x - s * y, 0.5 + s * x + c * y, 0.0];
+            let uv = support.faces[0].surface.parameters(world, None).unwrap();
+            [uv.0, uv.1]
+        })
+        .to_vec();
+        let pcurve = RawCurve2d::BSpline {
+            degree: 2,
+            points: poles,
+            multiplicities: vec![3, 2, 2, 2, 3],
+            knots: vec![0.0, 0.25, 0.5, 0.75, 1.0],
+            weights: Some(
+                (0..9)
+                    .map(|i| {
+                        if i % 2 == 0 {
+                            1.0
+                        } else {
+                            std::f64::consts::FRAC_1_SQRT_2
+                        }
+                    })
+                    .collect(),
+            ),
+        };
+        let support = Part::new(support.faces.clone(), support.edges.clone(), vec![])
+            .with_file_pcurves(
+                std::collections::BTreeMap::from([(0, vec![(index, pcurve)])]),
+                Default::default(),
+                (1.0, 1.0),
+                Some(1e-7),
+            );
+        let patch = face(&[rectangle(0.0, 0.0, 1.0, 1.0)]);
+        assert_eq!(covered((&patch, 0), &[(&support, 0)]), Some(true));
+        let overlapping = face(&[rectangle(-0.1, 0.0, 1.0, 1.0)]);
+        assert_ne!(
+            super::super::assess((&overlapping, 0), &[(&support, 0)]),
+            super::super::Coverage::Covered
+        );
     }
 }
