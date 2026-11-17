@@ -13,14 +13,14 @@ const DEGREE: usize = 8;
 
 fn split(net: &[f64], t: f64) -> (Vec<f64>, Vec<f64>) {
     let mut net = net.to_vec();
-    let (mut left, mut right) = (vec![net[0]], vec![*net.last().unwrap()]);
+    let (mut left, mut right) = (vec![net[0]], vec![net[net.len() - 1]]);
     while net.len() > 1 {
         net = net
             .windows(2)
             .map(|w| (1.0 - t) * w[0] + t * w[1])
             .collect();
         left.push(net[0]);
-        right.push(*net.last().unwrap());
+        right.push(net[net.len() - 1]);
     }
     right.reverse();
     (left, right)
@@ -39,7 +39,7 @@ fn elevate(mut net: Vec<f64>) -> Vec<f64> {
             let t = i as f64 / n as f64;
             t * net[i - 1] + (1.0 - t) * net[i]
         }));
-        out.push(*net.last().unwrap());
+        out.push(net[n - 1]);
         net = out;
     }
     net
