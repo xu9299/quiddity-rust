@@ -30,6 +30,33 @@ fn bounded_cover_preserves_the_narrow_channel_document() {
     );
 }
 
+fn check_subdivided_public_document(stem: &str) {
+    let file = format!("parts/{stem}.step.gz");
+    let part = read_step_file(&dir().join(&file)).unwrap();
+    let actual = serde_json::to_value(build_section_recess_document(&part).unwrap()).unwrap();
+    assert_eq!(actual["occurrences"].as_array().unwrap().len(), 1);
+    common::snapshot::check(
+        &common::fixtures(),
+        &format!("recess_documents/test/{file}"),
+        &actual,
+    );
+}
+
+#[test]
+fn bounded_cover_preserves_partitioned_cylindrical_seat_document() {
+    check_subdivided_public_document("00b0026a353bfcdc");
+}
+
+#[test]
+fn bounded_cover_preserves_horizontal_cylindrical_pcurve_document() {
+    check_subdivided_public_document("42a1f432aab027f5");
+}
+
+#[test]
+fn bounded_cover_preserves_subdivided_planar_end_arc_document() {
+    check_subdivided_public_document("332c6144380c21d7");
+}
+
 fn captured() -> &'static Value {
     static CAPTURED: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
     CAPTURED.get_or_init(|| {

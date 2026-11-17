@@ -71,6 +71,11 @@ greedy dead ends near numerically coincident endpoints. It currently considers l
 at most 64 edges in total and at most 4096 visited or queued states per oriented start.
 These are work limits, not geometric or acceptance tolerances.
 
+The public finite-query controls retain three exact failing caller queries. Separate
+section-recess document tests compare the full outputs for those same inputs and the
+existing narrow channel with their unchanged Rust snapshots. Query acceptance alone
+does not establish caller-document or feature-classification regression coverage.
+
 Single-loop cylindrical regions narrower than a complete turn also admit a union proof.
 Finite axial lines and coaxial conics are mapped to the physical parameters `(R*u,v)`;
 their ideal parameter segments retain the complete representation, endpoint and projection
