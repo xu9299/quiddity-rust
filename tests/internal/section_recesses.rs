@@ -30,11 +30,14 @@ fn bounded_cover_preserves_the_narrow_channel_document() {
     );
 }
 
-fn check_subdivided_public_document(stem: &str) {
+fn check_subdivided_public_document(stem: &str, expected_occurrences: usize) {
     let file = format!("parts/{stem}.step.gz");
     let part = read_step_file(&dir().join(&file)).unwrap();
     let actual = serde_json::to_value(build_section_recess_document(&part).unwrap()).unwrap();
-    assert_eq!(actual["occurrences"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        actual["occurrences"].as_array().unwrap().len(),
+        expected_occurrences
+    );
     common::snapshot::check(
         &common::fixtures(),
         &format!("recess_documents/test/{file}"),
@@ -44,17 +47,32 @@ fn check_subdivided_public_document(stem: &str) {
 
 #[test]
 fn bounded_cover_preserves_partitioned_cylindrical_seat_document() {
-    check_subdivided_public_document("00b0026a353bfcdc");
+    check_subdivided_public_document("00b0026a353bfcdc", 1);
 }
 
 #[test]
 fn bounded_cover_preserves_horizontal_cylindrical_pcurve_document() {
-    check_subdivided_public_document("42a1f432aab027f5");
+    check_subdivided_public_document("42a1f432aab027f5", 1);
 }
 
 #[test]
 fn bounded_cover_preserves_subdivided_planar_end_arc_document() {
-    check_subdivided_public_document("332c6144380c21d7");
+    check_subdivided_public_document("332c6144380c21d7", 1);
+}
+
+#[test]
+fn bounded_cover_preserves_polynomial_pcurve_passages_document() {
+    check_subdivided_public_document("00eb6f057ad5d83c", 2);
+}
+
+#[test]
+fn bounded_cover_preserves_polynomial_pcurve_triangular_document() {
+    check_subdivided_public_document("160a9f5d03a23b16", 2);
+}
+
+#[test]
+fn bounded_cover_preserves_the_circular_aperture_document() {
+    check_subdivided_public_document("137798c6ae23078d", 1);
 }
 
 fn captured() -> &'static Value {

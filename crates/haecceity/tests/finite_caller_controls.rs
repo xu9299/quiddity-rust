@@ -6,6 +6,100 @@ use haecceity::cover::{Coverage, assess};
 use haecceity::geom::{Curve, Frame, Surface};
 
 #[test]
+fn public_circular_aperture_band_and_finite_wall_filler() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/captured/section_recesses/parts/137798c6ae23078d.step.gz");
+    let source = haecceity::step::read_step_file(&file).unwrap();
+    let Surface::Cylinder { frame, radius } = source.faces[11].surface else {
+        panic!()
+    };
+    let rotated = Frame {
+        x: frame.y,
+        y: haecceity::geom::scale(frame.x, -1.0),
+        ..frame
+    };
+    let a = Curve::Circle {
+        frame: rotated,
+        radius,
+    };
+    let b = Curve::Circle {
+        frame: Frame {
+            origin: haecceity::geom::add(frame.origin, haecceity::geom::scale(frame.z, 4.0)),
+            ..rotated
+        },
+        radius,
+    };
+    let (p, q) = (a.value(0.0), b.value(0.0));
+    let edge = |curve, start, end, vertices| Edge {
+        curve,
+        start,
+        end,
+        vertices,
+        same_sense: true,
+        samples: vec![],
+    };
+    let band = Part::new(
+        vec![Face {
+            surface: Surface::Cylinder {
+                frame: rotated,
+                radius,
+            },
+            reversed: false,
+            loops: vec![Loop {
+                edges: vec![(0, true), (2, true), (1, false), (2, false)],
+                vertex: None,
+            }],
+            solid: None,
+            pcurves: vec![],
+        }],
+        vec![
+            edge(a, p, p, (0, 0)),
+            edge(b, q, q, (1, 1)),
+            edge(
+                Curve::Line {
+                    origin: p,
+                    dir: haecceity::geom::sub(q, p),
+                },
+                p,
+                q,
+                (0, 1),
+            ),
+        ],
+        vec![],
+    );
+    assert_eq!(assess((&source, 11), &[(&band, 0)]), Coverage::Covered);
+    assert_eq!(assess((&band, 0), &[(&source, 11)]), Coverage::Covered);
+    let mut wall = source.faces[6].clone();
+    wall.loops.truncate(1);
+    wall.pcurves.clear();
+    wall.solid = None;
+    let wall = Part::new(vec![wall], source.edges.clone(), vec![]);
+    let circle = source.edges[22].clone();
+    let Curve::Circle { frame, .. } = circle.curve else {
+        panic!()
+    };
+    let disk = Part::new(
+        vec![Face {
+            surface: Surface::Plane { frame },
+            reversed: false,
+            loops: vec![Loop {
+                edges: vec![(0, true)],
+                vertex: None,
+            }],
+            solid: None,
+            pcurves: vec![],
+        }],
+        vec![circle],
+        vec![],
+    );
+    assert_ne!(assess((&wall, 0), &[(&source, 6)]), Coverage::Covered);
+    assert_eq!(
+        assess((&wall, 0), &[(&source, 6), (&disk, 0)]),
+        Coverage::Covered
+    );
+}
+
+#[test]
 fn public_planar_end_with_a_preferred_cylindrical_polynomial() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/captured/section_geometry/parts/0883f49ece1bde7d.step.gz");

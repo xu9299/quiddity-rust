@@ -237,12 +237,16 @@ fn closed_contour(
             high = high.max(r.1 + axial);
             continue;
         }
-        let Curve::Circle {
-            frame: circle,
-            radius,
-        } = curve
-        else {
-            return None;
+        let (circle, radius) = match curve {
+            Curve::Circle { frame, radius } => (frame, radius),
+            // A planar STEP circle maps to this conic representation. Exact equal
+            // axes preserve the entire circle, its sense and every finite endpoint.
+            Curve::Ellipse {
+                frame,
+                major,
+                minor,
+            } if major == minor => (frame, major),
+            _ => return None,
         };
         let axis = geom::dot(circle.z, frame.z);
         let off = geom::sub(circle.origin, frame.origin);
@@ -768,6 +772,22 @@ mod tests {
             assess((&cylinder(3.0, false), 0), &[(&patch, 0)]),
             Coverage::Covered
         );
+    }
+
+    #[test]
+    fn equal_axis_contours_keep_the_circle_proof_without_fitting_other_ellipses() {
+        for minor in [2.0, 2.0_f64.next_up(), 3.0] {
+            let mut part = cylinder(3.0, false);
+            part.edges[0].curve = Curve::Ellipse {
+                frame: frame(),
+                major: 2.0,
+                minor,
+            };
+            assert_eq!(
+                closed_contour((&part, 0), 0, false, &frame()).is_some(),
+                minor == 2.0
+            );
+        }
     }
 
     #[test]

@@ -8,6 +8,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Retain exact equal-axis ellipse representations of circular contours in full cylindrical
+  band proofs, including preferred planar pcurves used to prove a native wall aperture.
 - Bound finite polynomial cylinder pcurves projected onto a held plane through analytic
   intersection homotopies and Bernstein/Taylor enclosures, retaining finite endpoints,
   directed angular order and the original coverage area budget.

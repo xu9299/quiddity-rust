@@ -189,6 +189,12 @@ including non-linear cylindrical pcurves whose UV control hull is positive and f
 The resulting lower target area and upper missing band area use the unchanged relative
 budget. A shorter support, an unresolved boundary or a hole outside the band cannot be
 accepted by this path. Neither containment proof establishes rejection.
+Planar circle pcurves can map to an ellipse value with exactly equal axes. That representation
+has the identical complete circular parameterization and retains the same winding proof.
+Unequal axes, even one floating-point step apart, do not use this circle-specific branch.
+Public aperture controls check both directions of the complete band, retain an unfilled
+wall hole, and require a separately supplied finite disk to fill it. Three further complete
+caller-document controls compare the affected passages and aperture with unchanged snapshots.
 
 For two finite straight boundaries on a cylinder, compare their physical `(R*u,v)` paths.
 Under an affine walk, transverse cross and dot products are quadratic Bernstein polynomials.
