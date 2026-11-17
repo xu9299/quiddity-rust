@@ -40,15 +40,15 @@ use super::section_passages::{end_slab, line_section, probe_prism};
 use super::section_recess::{
     ClosedSectionProfile, EndSurface, OpenSectionProfile, PlanarEndSurface, PlanarEndTerm,
     PlanarEnvelopeEndSurface, SectionEnd, SectionProfile, SectionRecessEnds, SectionRecessError,
-    SectionRecessGeometry, open_profile_material_side,
+    SectionRecessEvidence, SectionRecessGeometry, SectionRecessRefusal, open_profile_material_side,
 };
 use super::sections::{
     BodyRefIssuer, LocalFrame, PlanarSection, SectionEnds, SectionOccurrence, SectionVertex, V2,
     arc as section_arc, occurrence_geometry,
 };
-use super::support_patches::covered_patch;
 use crate::kernel::brep::{Arc, Edge, Face, Loop, Part};
 use crate::kernel::classify::State;
+use crate::kernel::cover::{self, Coverage};
 use crate::kernel::geom::{Curve, Frame, Surface, V3};
 use crate::kernel::py;
 use crate::kernel::sampling::{edge_interval, sample_edge};
@@ -992,7 +992,11 @@ fn mixed_floor_section(
 /// An intact native mixed line/arc pocket proved from its exact swept floor
 /// (`_one_mixed_candidate`): the swept floor's every face covered by the walls, the floor and
 /// its copy at the mouth, and the probes.
-fn one_mixed_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
+fn one_mixed_candidate(
+    ctx: &Context<'_>,
+    floor: usize,
+    refusals: &mut Vec<SectionRecessRefusal>,
+) -> Option<Candidate> {
     let _timing = crate::kernel::timing::operation("section_recess.mixed");
     let part = ctx.part;
     let depth = canonical(normal(part, floor)?)?;
@@ -1061,11 +1065,30 @@ fn one_mixed_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
     let mut supports: Vec<(&Part, usize)> = walls.iter().map(|&w| (part, w)).collect();
     supports.push((part, floor));
     supports.push((&swept, 1));
-    let uncovered = {
+    let coverage = {
         let _timing = crate::kernel::timing::operation("section_recess.covered_patches");
-        (0..swept.faces.len()).any(|patch| !covered_patch((&swept, patch), &supports))
+        required_coverage(
+            (0..swept.faces.len()).map(|patch| cover::assess((&swept, patch), &supports)),
+        )
     };
-    if uncovered {
+    if coverage == Coverage::Uncovered {
+        return None;
+    }
+    if coverage != Coverage::Covered {
+        let mut defining = walls.clone();
+        defining.sort_unstable();
+        let mut constituent = defining.clone();
+        constituent.push(floor);
+        constituent.sort_unstable();
+        let refusal = SectionRecessRefusal::new(
+            owner,
+            "indeterminate_support_coverage",
+            SectionRecessEvidence::new(defining, constituent).ok()?,
+        )
+        .ok()?;
+        if !refusals.contains(&refusal) {
+            refusals.push(refusal);
+        }
         return None;
     }
     let thickness = 2e-5f64.max(1.0f64.max(high - low).max(moments.area.sqrt()) * 1e-4);
@@ -1108,6 +1131,20 @@ fn one_mixed_candidate(ctx: &Context<'_>, floor: usize) -> Option<Candidate> {
         section_shape: "general",
         feature_kind: "pocket",
     })
+}
+
+/// A proved missing support rejects a candidate even if an earlier query was unanswered.
+/// Otherwise any unanswered required query preserves uncertainty, without issuing a claim.
+fn required_coverage(queries: impl IntoIterator<Item = Coverage>) -> Coverage {
+    let mut result = Coverage::Covered;
+    for query in queries {
+        match query {
+            Coverage::Covered => {}
+            Coverage::Uncovered => return Coverage::Uncovered,
+            _ => result = Coverage::Indeterminate,
+        }
+    }
+    result
 }
 
 internal_entry! {
@@ -1679,7 +1716,7 @@ pub fn floor_readings(ctx: &Context<'_>, floor: usize) -> [FloorReading; 3] {
     [
         Ok(one_obround_candidate(ctx, floor)),
         one_polygonal_candidate(ctx, floor),
-        Ok(one_mixed_candidate(ctx, floor)),
+        Ok(one_mixed_candidate(ctx, floor, &mut Vec::new())),
     ]
 }
 }
@@ -1735,14 +1772,25 @@ internal_entry! {
 /// cylindrical pockets and passages and plane-envelope passages. A proof whose projection
 /// refuses is dropped; a refusal outside the projections refuses the whole discovery.
 pub fn candidates(ctx: &Context<'_>, surfaces: &EffectiveFaces<'_, '_>) -> Checked<Vec<Candidate>> {
-    candidates_reading(ctx, surfaces, |floor| {
+    candidates_with_refusals(ctx, surfaces).0
+}
+}
+
+/// Native discovery retains an eligible floor whose required finite support is unanswered.
+/// The existing candidate-only entry points keep their signatures and proved records.
+pub(crate) fn candidates_with_refusals(
+    ctx: &Context<'_>,
+    surfaces: &EffectiveFaces<'_, '_>,
+) -> (Checked<Vec<Candidate>>, Vec<SectionRecessRefusal>) {
+    let mut refusals = Vec::new();
+    let found = candidates_reading(ctx, surfaces, |floor| {
         preferred(
             one_obround_candidate(ctx, floor),
             || one_polygonal_candidate(ctx, floor),
-            || one_mixed_candidate(ctx, floor),
+            || one_mixed_candidate(ctx, floor, &mut refusals),
         )
-    })
-}
+    });
+    (found, refusals)
 }
 
 internal_entry! {
@@ -1861,6 +1909,55 @@ fn candidates_reading(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indeterminate_native_support_retains_the_public_mixed_floor() {
+        let part = crate::read_step_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/captured/section_recesses/parts/45d4d70ae8f31a88.step.gz"),
+        )
+        .unwrap();
+        let ctx = Context::new(&part);
+        let mut refusals = Vec::new();
+        assert!(one_mixed_candidate(&ctx, 16, &mut refusals).is_none());
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].body(), 0);
+        assert!(refusals[0].evidence().constituent_faces().contains(&16));
+        assert!(!refusals[0].evidence().defining_faces().is_empty());
+        assert_eq!(
+            serde_json::to_value(&refusals[0]).unwrap()["reason"],
+            "indeterminate_support_coverage"
+        );
+    }
+
+    #[test]
+    fn indeterminate_native_support_does_not_mask_a_proved_missing_support() {
+        let plane = super::super::support_patches::polygon_face(&[
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ])
+        .unwrap();
+        let mut faces = plane.faces.clone();
+        faces[0].surface = Surface::Other {
+            kind: "UNSUPPORTED",
+        };
+        let unsupported = Part::new(faces, plane.edges.clone(), vec![]);
+        let unknown = cover::assess((&unsupported, 0), &[]);
+        let missing = cover::assess((&plane, 0), &[]);
+        let complete = cover::assess((&plane, 0), &[(&plane, 0)]);
+        assert_eq!(unknown, Coverage::Indeterminate);
+        assert_eq!(missing, Coverage::Uncovered);
+        assert_eq!(complete, Coverage::Covered);
+        assert_eq!(
+            required_coverage([unknown, complete]),
+            Coverage::Indeterminate
+        );
+        assert_eq!(required_coverage([complete, complete]), Coverage::Covered);
+        assert_eq!(required_coverage([unknown, missing]), Coverage::Uncovered);
+        assert_eq!(required_coverage([missing, unknown]), Coverage::Uncovered);
+    }
 
     fn box_probe(min: V3, max: V3) -> Part {
         let low = [

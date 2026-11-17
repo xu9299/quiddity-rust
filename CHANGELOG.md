@@ -27,6 +27,9 @@ in [docs/alpha1.md](docs/alpha1.md).
   and proved angular order, and charge complete loop matches when one support fills another.
 - Compare planar boundary displacements in the held plane while retaining three-dimensional
   endpoint coherence, so normal representation offsets do not consume an in-plane area bound.
+- Retain an eligible mixed-floor candidate with indeterminate finite support as a section
+  refusal, unless another reader proves its complete body-local source region. A proved
+  missing required support still rejects it.
 
 ### Added
 

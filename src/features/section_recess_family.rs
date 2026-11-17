@@ -161,7 +161,27 @@ pub(crate) fn section_recess_projection_in(
     let surfaces = EffectiveFaces::new(ctx);
     let native = ctx.native_section_recesses(&surfaces).clone()?;
     let _timing = crate::kernel::timing::stage("section_recess.project_inventory");
-    project(ctx, &surfaces, inventory, native)
+    let mut projection = project(ctx, &surfaces, inventory, native)?;
+    for refusal in ctx.native_section_recess_refusals(&surfaces) {
+        // Another reader may prove the whole containing region. Its body and complete
+        // source-face evidence must account for this floor; an overlapping claim alone
+        // is insufficient. Recompute this decision for each inventory, not in the cache.
+        let faces = refusal.evidence().constituent_faces();
+        if projection.section_recesses.iter().any(|record| {
+            record.body() == refusal.body()
+                && faces
+                    .iter()
+                    .all(|f| record.evidence().constituent_faces().contains(f))
+        }) || projection
+            .refusals
+            .iter()
+            .any(|other| other.body() == refusal.body() && other.evidence() == refusal.evidence())
+        {
+            continue;
+        }
+        projection.refusals.push(refusal.clone());
+    }
+    Ok(projection)
 }
 
 /// `dataclasses.replace(record, index=index)`, which validates the record again.
@@ -2218,6 +2238,58 @@ fn section_patterns(
 #[cfg(test)]
 mod authority_tests {
     use super::*;
+
+    #[test]
+    fn indeterminate_native_support_is_reconciled_with_each_inventory() {
+        let part = crate::read_step_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/captured/section_recesses/parts/45d4d70ae8f31a88.step.gz"),
+        )
+        .unwrap();
+        let ctx = Context::new(&part);
+        let surfaces = EffectiveFaces::new(&ctx);
+        let pending = ctx.native_section_recess_refusals(&surfaces);
+        assert!(
+            pending
+                .iter()
+                .any(|r| r.evidence().constituent_faces().contains(&16))
+        );
+        let original = super::super::inventory(&part).unwrap();
+        let proved = section_recess_projection_in(&ctx, &original).unwrap();
+        assert_eq!(proved.section_recesses.len(), 1);
+        assert!(proved.refusals.is_empty());
+
+        // Remove the independent accepted readers, retaining the same immutable part and
+        // cached native analysis. The unanswered floor must now be visible as a refusal.
+        let mut empty = original.clone();
+        empty.physical = super::super::Features {
+            defining: original
+                .physical
+                .defining
+                .keys()
+                .map(|&k| (k, vec![]))
+                .collect(),
+            ..Default::default()
+        };
+        for faces in empty.constituent.values_mut() {
+            faces.clear();
+        }
+        empty.dispositions.clear();
+        let unproved = section_recess_projection_in(&ctx, &empty).unwrap();
+        assert!(unproved.section_recesses.is_empty());
+        assert!(unproved.refusals.iter().any(|r| {
+            r.evidence().constituent_faces().contains(&16)
+                && serde_json::to_value(r).unwrap()["reason"] == "indeterminate_support_coverage"
+        }));
+        assert_eq!(
+            unproved,
+            section_recess_projection_in(&Context::new(&part), &empty).unwrap()
+        );
+        assert_eq!(
+            proved,
+            section_recess_projection_in(&ctx, &original).unwrap()
+        );
+    }
 
     #[test]
     fn unowned_recess_eligibility_checks_consulted_faces_in_every_source_family() {

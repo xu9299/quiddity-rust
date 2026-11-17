@@ -12,7 +12,7 @@ use super::body::{BodyKey, body_signature, unambiguous_body_keys};
 use super::cylinders::{CylinderEvidence, analyse_cylinders};
 use super::modelled_threads::{ThreadAnalysis, analyse_modelled_threads};
 use super::passages::{Found, PassageError, find_section_passages};
-use super::section_recess::{SectionRecess, SectionRecessError};
+use super::section_recess::{SectionRecess, SectionRecessError, SectionRecessRefusal};
 use crate::kernel::brep::Part;
 use crate::kernel::classify::Classifier;
 use crate::kernel::geom::{Bounds, V3};
@@ -45,6 +45,11 @@ fn classify_shell_groups(solid: usize, groups: Vec<(Vec<usize>, f64)>) -> Vec<Se
         .collect()
 }
 
+struct NativeSectionRecesses {
+    records: Result<Vec<SectionRecess>, SectionRecessError>,
+    refusals: Vec<SectionRecessRefusal>,
+}
+
 pub struct Context<'a> {
     pub part: &'a Part,
     pub(super) floor_blends: Vec<super::recess_core::FloorBlendAnalysisCache>,
@@ -63,7 +68,7 @@ pub struct Context<'a> {
     surface_moments: Vec<OnceLock<Option<crate::kernel::mass::FaceMoments>>>,
     signatures: OnceLock<Vec<Option<BodyKey>>>,
     section_passages: OnceLock<Result<Vec<Found>, PassageError>>,
-    native_section_recesses: [OnceLock<Result<Vec<SectionRecess>, SectionRecessError>>; 2],
+    native_section_recesses: [OnceLock<NativeSectionRecesses>; 2],
 }
 
 impl<'a> Context<'a> {
@@ -217,8 +222,9 @@ internal_entry! {
             .get_or_init(|| find_section_passages(self))
     }
 
-    /// Geometry-only records shared by reconciliation and publication. Strict and locally
-    /// degraded ownership proofs occupy separate slots; neither the accepted inventory nor
+    /// Geometry-only records and unanswered native supports shared by reconciliation and
+    /// publication. Strict and locally degraded ownership proofs occupy separate slots;
+    /// neither the accepted inventory nor
     /// its projection is cached. Each context borrows one immutable part; a new run or
     /// transformed part starts fresh. Discovery order and complete errors are retained;
     /// a panicking initializer leaves the slot empty for retry.
@@ -226,11 +232,29 @@ internal_entry! {
         &self,
         surfaces: &super::effective_surfaces::EffectiveFaces<'_, '_>,
     ) -> &Result<Vec<SectionRecess>, SectionRecessError> {
+        &self.native_section_recess_analysis(surfaces).records
+    }
+
+    pub(crate) fn native_section_recess_refusals(
+        &self,
+        surfaces: &super::effective_surfaces::EffectiveFaces<'_, '_>,
+    ) -> &[SectionRecessRefusal] {
+        &self.native_section_recess_analysis(surfaces).refusals
+    }
+
+    fn native_section_recess_analysis(
+        &self,
+        surfaces: &super::effective_surfaces::EffectiveFaces<'_, '_>,
+    ) -> &NativeSectionRecesses {
         let mode = usize::from(super::evidence::local_degradation());
         self.native_section_recesses[mode].get_or_init(|| {
             let _timing = crate::kernel::timing::stage("section_recess.native_discovery");
-            super::section_recess_discovery::discover_section_recesses(self, surfaces)
-                .map(|found| found.into_iter().map(|occurrence| occurrence.record).collect())
+            let (found, refusals) =
+                super::section_recess_geometry::candidates_with_refusals(self, surfaces);
+            let records = found
+                .and_then(super::section_recess_discovery::section_recesses_of)
+                .map(|found| found.into_iter().map(|occurrence| occurrence.record).collect());
+            NativeSectionRecesses { records, refusals }
         })
     }
 

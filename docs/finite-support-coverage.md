@@ -141,3 +141,20 @@ including non-linear cylindrical pcurves whose UV control hull is positive and f
 The resulting lower target area and upper missing band area use the unchanged relative
 budget. A shorter support, an unresolved boundary or a hole outside the band cannot be
 accepted by this path. Neither containment proof establishes rejection.
+
+## Unanswered support in native discovery
+
+The mixed-floor section reader evaluates every required swept-face support until one is
+proved uncovered. That rejection takes precedence over an earlier indeterminate query.
+If no support is proved missing but at least one remains unanswered, the eligible native
+floor and its walls are retained as `SectionRecessRefusal` with reason
+`indeterminate_support_coverage`. Their common valid solid and exact source-face roles
+have already been checked; no material-volume proof or feature claim is implied.
+
+The run-local native cache holds both proved records and these refusals, separately for
+strict and locally degraded modes. Each inventory projection suppresses a pending native
+floor only when another proved section record on the same body accounts for all of its
+constituent source faces, or an existing refusal already retains the same evidence.
+The suppression is recomputed for each inventory, so an earlier accepted projection cannot
+hide the pending floor when the independent accepted reader is later absent. No global
+or thread-local query recorder participates in production discovery.

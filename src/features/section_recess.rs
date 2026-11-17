@@ -890,12 +890,14 @@ pub struct SectionRecessRefusal {
 
 impl SectionRecessRefusal {
     pub fn new(body: usize, reason: &str, evidence: SectionRecessEvidence) -> Checked<Self> {
-        if reason != "unsupported_support_geometry" {
-            return refuse("unsupported section projection refusal");
-        }
+        let reason = match reason {
+            "unsupported_support_geometry" => "unsupported_support_geometry",
+            "indeterminate_support_coverage" => "indeterminate_support_coverage",
+            _ => return refuse("unsupported section projection refusal"),
+        };
         Ok(SectionRecessRefusal {
             body,
-            reason: "unsupported_support_geometry",
+            reason,
             evidence,
         })
     }
