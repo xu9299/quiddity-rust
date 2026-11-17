@@ -21,6 +21,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   a complete cylindrical band, using finite boundary bounds and retained pcurves.
 - Retain a finite native spline-surface pcurve's complete positive control hull when its
   exact composition is unavailable, so a proved remote boundary need not block local coverage.
+- Bound straight representation sweeps by their affine homotopy Jacobian, retaining the
+  existing capsule and clipping bounds as independent upper bounds.
 
 ### Added
 

@@ -18,6 +18,12 @@ containing the entire finite curve and that chord. Analytic extrema bound conics
 rational weights allow the control hull to bound a spline. Independent pcurves must also be
 bounded. An unsupported representation makes this path indeterminate. File uncertainty only
 guards endpoint coherence; it is not an acceptance margin.
+For two finite straight representations, a straight homotopy has an affine Jacobian
+determinant on the parameter square. Convexity bounds its absolute integral by the mean
+of the four corner determinants, which bounds swept area even for folds. Roundoff is
+added, and the minimum with the independently enclosing capsule and clipped-box bounds
+is retained. This preserves transverse displacement instead of charging a longitudinal
+slide as a full-width strip. It changes only an error bound, not the relative area budget.
 Constructed parts without a declared modelling precision retain the vertex path and analytic
 segment together in the area bracket. Missing metadata is not interpreted as zero precision
 and does not permit silently replacing an inconsistent boundary.

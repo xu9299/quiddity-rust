@@ -269,17 +269,11 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
                 // Constructed parts need not declare a modelling precision. Retain both
                 // the vertex path and finite analytic segment in their area bracket; an
                 // absent declaration is neither zero uncertainty nor a licence to heal.
-                let deviations = std::array::from_fn(|i| {
-                    (vertices[i].0 - feet[i].0).hypot(vertices[i].1 - feet[i].1)
-                });
-                error += segment_error(vertices, deviations, size, clip)?;
+                error += paired_error(vertices, feet, size, clip)?;
                 for curve in &alternatives {
                     let projected = [straight_foot(curve, a)?, straight_foot(curve, b)?]
                         .map(|p| project(frame, p));
-                    let deviations = std::array::from_fn(|i| {
-                        (vertices[i].0 - projected[i].0).hypot(vertices[i].1 - projected[i].1)
-                    });
-                    error += segment_error(vertices, deviations, size, clip)?;
+                    error += paired_error(vertices, projected, size, clip)?;
                 }
                 points.extend(vertices);
                 continue;
@@ -294,14 +288,13 @@ fn finite_loops((part, face): FaceRef<'_>, frame: &Frame, clip: Option<Box2>) ->
                     return None;
                 };
                 let alternate = [c, d];
-                let deviations = std::array::from_fn(|i| {
+                for i in 0..2 {
                     radii[i] = radii[i].max(
                         (vertices[i].0 - alternate[i].0).hypot(vertices[i].1 - alternate[i].1)
                             + pad,
                     );
-                    (feet[i].0 - alternate[i].0).hypot(feet[i].1 - alternate[i].1)
-                });
-                error += segment_error(feet, deviations, size, clip)?;
+                }
+                error += paired_error(feet, alternate, size, clip)?;
             }
             for (vertex, radius) in vertices.into_iter().zip(radii) {
                 let local = Box2 {
@@ -398,6 +391,37 @@ fn segment_error(
         split += capsule.min(bounds.intersection_area(patch, radius));
     }
     Some(full.min(split))
+}
+
+/// A straight homotopy F(t,s)=p(t)+s(q(t)-p(t)) has an affine Jacobian determinant.
+/// Convexity of absolute value bounds its integral by the mean of the four corner values.
+/// The area formula bounds the image even when the sweep folds or overlaps itself.
+fn paired_error(
+    ends: [Point; 2],
+    other: [Point; 2],
+    size: f64,
+    patch: Option<Box2>,
+) -> Option<f64> {
+    let delta = |a: Point, b: Point| (a.0 - b.0, a.1 - b.1);
+    let norm = |p: Point| p.0.hypot(p.1);
+    let directions = [delta(ends[1], ends[0]), delta(other[1], other[0])];
+    let deviations = [delta(other[0], ends[0]), delta(other[1], ends[1])];
+    let mut area = 0.0;
+    for a in directions {
+        for b in deviations {
+            area += (a.0 * b.1 - a.1 * b.0).abs() * 0.25;
+        }
+    }
+    let pad = 64.0 * f64::EPSILON * size;
+    area += 8.0
+        * pad
+        * (directions.into_iter().map(norm).sum::<f64>()
+            + deviations.into_iter().map(norm).sum::<f64>())
+        + 32.0 * pad * pad;
+    if !area.is_finite() {
+        return None;
+    }
+    Some(segment_error(ends, deviations.map(norm), size, patch)?.min(area))
 }
 
 fn curve_error(edge: &Edge, frame: &Frame, patch: Box2) -> Option<f64> {
@@ -702,6 +726,20 @@ mod tests {
                 );
             assert_eq!(super::super::covered((&patch, 0), &[(&support, 0)]), !near);
         }
+    }
+
+    #[test]
+    fn finite_straight_sweeps_keep_their_transverse_area() {
+        let ends = [(0.0, 0.0), (1.0, 0.0)];
+        for (other, expected) in [
+            ([(0.0, 0.1), (1.0, 0.1)], 0.1),
+            ([(0.0, 0.0), (1.0, 0.1)], 0.05),
+        ] {
+            let bound = paired_error(ends, other, 1.0, None).unwrap();
+            assert!(bound >= expected && bound <= expected + 1e-10);
+        }
+        // A longitudinal slide has no swept area, although its Euclidean displacement is large.
+        assert!(paired_error(ends, [(0.1, 0.0), (1.1, 0.0)], 2.0, None).unwrap() < 1e-10);
     }
 
     #[test]
