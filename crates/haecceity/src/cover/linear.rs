@@ -1576,3 +1576,91 @@ mod tests {
         );
     }
 }
+
+#[cfg(any(test, feature = "manifest", feature = "json"))]
+pub(super) fn research_eligibility(
+    patch: FaceRef<'_>,
+    supports: &[FaceRef<'_>],
+) -> serde_json::Value {
+    use serde_json::json;
+    let Some(frame) = canonical_frame(patch) else {
+        return json!({"reason":"not_planar"});
+    };
+    let Some(target) = finite_loops(patch, &frame, None, &[]) else {
+        return json!({"reason":"target_boundary"});
+    };
+    let mut bounds = Box2::empty();
+    for &p in target.loops.iter().flatten() {
+        bounds.add(p).unwrap();
+    }
+    let rows: Vec<_> = supports
+        .iter()
+        .copied()
+        .filter(|s| same_surface(&patch.0.faces[patch.1].surface, &s.0.faces[s.1].surface))
+        .map(|(part, face)| {
+            let boundary = finite_loops((part, face), &frame, Some(bounds), &[]);
+            let outer = boundary.as_ref().and_then(|b| {
+                straight_outer(b.straight_points.as_ref()?, b.size)
+            });
+            let outer_error = outer.as_ref().and_then(|polygon| {
+                polygon.windows(2).try_fold(0.0, |sum, edge| {
+                    Some(sum + segment_error([edge[0], edge[1]], [0.0; 2], boundary.as_ref()?.size, Some(bounds))?)
+                })
+            });
+            let mut curves = Vec::new();
+            let mut lines = Vec::new();
+            for &(i, _) in part.faces[face].loops.iter().flat_map(|lp| &lp.edges) {
+                let edge = &part.edges[i];
+                if straight_origin(&edge.curve).is_some() {
+                    let feet = [edge.start, edge.end].map(|p| {
+                        straight_foot(&edge.curve, p).map(|p| project(&frame, p))
+                    });
+                    let alternatives = super::representations::alternatives((part, face), i)
+                        .map(|curves| {
+                            curves
+                                .iter()
+                                .map(|curve| {
+                                    [edge.start, edge.end].map(|p| {
+                                        straight_foot(curve, p).map(|p| project(&frame, p))
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                    lines.push(json!({"edge":i,"vertices":[project(&frame,edge.start),project(&frame,edge.end)],
+                        "nominal_feet":feet,"alternate_feet":alternatives}));
+                    continue;
+                }
+                let alternatives = super::representations::alternatives((part, face), i);
+                let errors = alternatives.map(|curves| {
+                    curves
+                        .into_iter()
+                        .map(|curve| {
+                            curve_error(
+                                &Edge {
+                                    curve,
+                                    ..edge.clone()
+                                },
+                                &frame,
+                                bounds,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                });
+                curves.push(
+                    json!({"edge":i,"nominal":curve_error(edge,&frame,bounds),"alternates":errors}),
+                );
+            }
+            json!({"face":face,"available":boundary.is_some(),
+                "error":boundary.as_ref().map(|b|b.line_error),
+                "outer_envelope":outer,"outer_edge_error":outer_error,
+                "outer_size":boundary.as_ref().map(|b|b.size),
+                "outer_points":boundary.as_ref().and_then(|b|b.straight_points.as_ref()),
+                "loops":boundary.as_ref().map(|b|&b.loops),"curved_edges":curves,"straight_edges":lines})
+        })
+        .collect();
+    let area = finite_area(patch, supports, &[]);
+    json!({"reason":"evaluated","area_bracket":area.as_ref().map(|b|[b.gap,b.error,b.tolerance]),
+           "outer_gap_lower":area.as_ref().and_then(|b|b.outer_gap_lower),
+           "target_error":target.line_error,"target_loops":target.loops,"supports":rows})
+}
+

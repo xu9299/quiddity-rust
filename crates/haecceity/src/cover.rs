@@ -18,6 +18,8 @@ mod conic_bounds;
 mod containment;
 mod corresponding;
 mod cylinder_pcurves;
+#[cfg(any(test, feature = "manifest", feature = "json"))]
+mod diagnostics;
 mod linear;
 mod representations;
 mod spline_bounds;
@@ -38,7 +40,7 @@ pub enum Coverage {
 /// Decide coverage from bounded finite geometry. Geometry outside the supported proof paths
 /// remains indeterminate; it never falls back to the scan-direction chord margin.
 pub fn assess(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Coverage {
-    match linear::covered(patch, supports) {
+    let decision = match linear::covered(patch, supports) {
         Some(true) => Coverage::Covered,
         Some(false) => Coverage::Uncovered,
         None if linear::covered_filled(patch, supports) == Some(true)
@@ -48,7 +50,10 @@ pub fn assess(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> Coverage {
             Coverage::Covered
         }
         None => Coverage::Indeterminate,
-    }
+    };
+    #[cfg(any(test, feature = "manifest", feature = "json"))]
+    diagnostics::record(patch, supports, decision);
+    decision
 }
 
 /// Whether coverage is established. Both uncovered and indeterminate geometry return false;

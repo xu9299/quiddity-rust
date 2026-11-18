@@ -335,3 +335,32 @@ sliced!(
     files: super::moved_files,
     [0 => slice_0, 1 => slice_1]
 );
+
+#[test]
+fn inspect_arm_cover_case() {
+    let Some(stem) = std::env::var_os("QUIDDITY_COVER_CALLER_FIXTURE") else {
+        return;
+    };
+    let stem = stem.to_str().unwrap();
+    let family = match stem {
+        "00b0026a353bfcdc" | "42a1f432aab027f5" | "332c6144380c21d7" | "00eb6f057ad5d83c"
+        | "137798c6ae23078d" | "160a9f5d03a23b16" | "957de14512ed17ed" | "2b5bb2263cb71962"
+        | "68dea25a083923c8" | "d6a626a702cbb6d1" => "section_recesses",
+        "0883f49ece1bde7d" | "022df9198c3a6396" => "section_geometry",
+        "0262e62c10a5adb5" | "11e9e0b548aeed6c" | "aa10cea8dede61f3" => "section_recess_geometry",
+        "11cebd76f38c6a2c" => "section_recess_helpers",
+        _ => panic!("unlisted public caller fixture"),
+    };
+    let part =
+        read_step_file(&common::fixtures().join(format!("captured/{family}/parts/{stem}.step.gz")))
+            .unwrap();
+    let actual = build_section_recess_document(&part).unwrap();
+    let path = std::env::var_os("QUIDDITY_COVER_CALLER_DOCUMENT").unwrap();
+    let output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap();
+    serde_json::to_writer(output, &actual).unwrap();
+}
+

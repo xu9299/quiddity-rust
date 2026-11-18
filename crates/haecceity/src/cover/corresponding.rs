@@ -1153,3 +1153,23 @@ mod tests {
         assert!(tube(&trim, &surface, 1e-12).is_none());
     }
 }
+
+#[cfg(any(test, feature = "manifest", feature = "json"))]
+pub(super) fn research_eligibility(
+    patch: FaceRef<'_>,
+    supports: &[FaceRef<'_>],
+) -> serde_json::Value {
+    use serde_json::json;
+    let surface = &patch.0.faces[patch.1].surface;
+    let mine = boundary(patch, surface);
+    let rows: Vec<_> = supports.iter().copied().filter(|s|
+        same_surface(surface, &s.0.faces[s.1].surface)).map(|support| {
+        let other = boundary(support, surface);
+        json!({"face":support.1,"available":other.is_some(),
+            "error":other.as_ref().map(|b|b.error),
+            "pair_cost":mine.as_ref().and_then(|a|other.as_ref().and_then(|b|correspondence(a,b,surface)))})
+    }).collect();
+    json!({"available":mine.is_some(),"error":mine.as_ref().map(|b|b.error),
+        "lower_area":mine.as_ref().and_then(|b|lower_area(b,patch)),"supports":rows})
+}
+
