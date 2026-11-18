@@ -1,0 +1,99 @@
+name: Spline boundary cut reuse review
+
+on:
+  push:
+    branches:
+      - validation/spline-boundary-cuts-strict-20261118
+      - validation/spline-boundary-cuts-workspace-20261118
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boundary-cut-reuse-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+
+jobs:
+  verify:
+    if: github.ref_name == 'validation/spline-boundary-cuts-strict-20261118'
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 'c29813096e62141eaad9b181af4bfe7db4c1671c'
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record exact source, corpus, and compiler
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; git -C ../quiddity-corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = 'c29813096e62141eaad9b181af4bfe7db4c1671c'
+          test "$(git rev-parse HEAD^{tree})" = '7991b1297a02df904753c708e94f7b936313c73e'
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(uname -m)" = arm64
+          git diff --exit-code '847421798ef70f0d6a677999f5b4cb57522819e5' HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+          git diff --stat '847421798ef70f0d6a677999f5b4cb57522819e5' HEAD | tee ../validation-logs/scope.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: boundary-cut-reuse-macos-15
+      - name: Verify the updated main baseline
+        run: |
+          git checkout --detach '847421798ef70f0d6a677999f5b4cb57522819e5'
+          test "$(git rev-parse HEAD^{tree})" = 'ab22e110456f81d40e282f40c804a7c0b395cf30'
+          status=0
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/baseline.log || status=$?
+          git checkout --detach 'c29813096e62141eaad9b181af4bfe7db4c1671c'
+          exit "$status"
+      - name: Formatting and full workspace lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Supported feature-off builds
+        run: |
+          cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
+      - name: Strict snapshot reproduction
+        if: ${{ !cancelled() }}
+        run: |
+          test "$(git rev-parse HEAD)" = 'c29813096e62141eaad9b181af4bfe7db4c1671c'
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Workspace documentation tests
+        run: cargo test --workspace --doc --release --locked 2>&1 | tee ../validation-logs/doctests.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: boundary-cut-reuse-evidence
+          path: validation-logs/
+          if-no-files-found: ignore
+          retention-days: 30
+  workspace:
+    if: github.ref_name == 'validation/spline-boundary-cuts-workspace-20261118'
+    uses: ./.github/workflows/suite.yml
+    with:
+      os: macos-15
+      tier: ci
+      shards: '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]'
