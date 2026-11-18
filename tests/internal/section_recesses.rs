@@ -17,6 +17,26 @@ fn dir() -> std::path::PathBuf {
     common::fixtures().join("captured/section_recesses")
 }
 
+#[test]
+fn bounded_cover_preserves_the_narrow_channel_document() {
+    let file = "parts/45d4d70ae8f31a88.step.gz";
+    let part = read_step_file(&dir().join(file)).unwrap();
+    let actual = serde_json::to_value(build_section_recess_document(&part).unwrap()).unwrap();
+    assert_eq!(actual["occurrences"].as_array().unwrap().len(), 1);
+    // Read the existing reference directly: the ordinary document slice owns
+    // its verification output, including when the full suite runs concurrently.
+    let expected: Value = serde_json::from_reader(flate2::read::GzDecoder::new(
+        std::fs::File::open(
+            common::fixtures()
+                .join("rust-snapshot/recess_documents/test")
+                .join(format!("{file}.json.gz")),
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(actual, expected);
+}
+
 fn captured() -> &'static Value {
     static CAPTURED: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
     CAPTURED.get_or_init(|| {

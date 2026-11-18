@@ -35,6 +35,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   `seek_read`), so one `&File` can be shared by threads reading different products. On Unix the
   `File`'s cursor is neither used nor moved; on Windows `seek_read` moves it, which does no
   harm because every read is positional. The signature is unchanged. For #293.
+- Bound eligible straight planar support coverage without a scan-direction sampling
+  margin. Retain the existing path for curved or uncertain boundaries.
 
 ## 0.5.4 (2026-11-16)
 

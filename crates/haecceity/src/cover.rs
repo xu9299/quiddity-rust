@@ -1,24 +1,25 @@
-//! Whether faces cover a face — what the Python implementation asks of repeated face booleans
-//! (`_support_patches.covered_patch`): cut the patch by each support and see whether the area
-//! left is at most 1e-9 of it.
+//! Whether faces cover a face, with the existing relative area budget.
 //!
-//! A support cuts area from the patch only where it lies on the patch's surface, so only
-//! supports on the same plane or cylinder count. In the patch's parameter space the question is
-//! two-dimensional: along each line `v = c` the patch's intervals, less every support's, leave
-//! a length uncovered, and the uncovered area is that length integrated over `v`, between the
-//! heights of the loops' vertices. Two faces sharing a curved edge sample it differently, so a
-//! support's intervals are widened by the samples' chordal error either side; a gap narrower
-//! than that is no gap.
-
+//! Bounded straight planar queries use finite polygon integration and explicit
+//! representation error. Other queries retain the sampled parameter-space path.
+//! See `docs/planar-support-coverage.md` for eligibility and error bounds.
 use super::brep::Part;
 use super::geom::{self, Surface, V3};
 use super::sampling::CHORD_TOLERANCE;
+
+mod interval;
+mod linear;
+mod planar_intervals;
+mod straight_intervals;
 
 /// A face of a part.
 pub type FaceRef<'a> = (&'a Part, usize);
 
 /// `covered_patch`: whether the supports leave at most 1e-9 of the patch's area uncovered.
 pub fn covered(patch: FaceRef<'_>, supports: &[FaceRef<'_>]) -> bool {
+    if let Some(answer) = linear::covered(patch, supports) {
+        return answer;
+    }
     let (part, face) = patch;
     let surface = &part.faces[face].surface;
     let (scale, widen) = match *surface {
