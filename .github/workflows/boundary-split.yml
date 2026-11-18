@@ -1,4 +1,4 @@
-name: Independent internal-knot checks and canonical fallback
+name: Checked Green primitives and analytic planar centroids
 
 on:
   push:
@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        include: [{"topic": "boundary-split-054", "head": "a6780f914ad52578a94b41d319a79f7310ebfe13", "tree": "6f5135b8ca75395a12dfc96d16f2c2e564c1776c"}]
+        include: [{"topic": "boundary-centroid-054", "head": "980566d7eaf75038b4204a88f417234b574dda82", "tree": "3b019fa23da2376c2361fb854c541730b89ac09f"}]
     defaults:
       run:
         shell: bash
