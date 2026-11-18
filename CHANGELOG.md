@@ -4,6 +4,14 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+- Check the new Green primitive's inner rule independently and retain the established axis when it is unresolved; preserve canonical mass and master-trim authority.
+
+- Stabilize face quadrature on open, noncollapsed spline parameter patches with local homogeneous evaluation, while keeping ordinary queries and closed/collapsed parameter frames on their established paths.
+- Retain representable held-boundary endpoint splits on those open patches even when the interval is shorter than the quadrature nodes can see; preserve the established seam and pole treatment.
+- Use the shorter spline axis for eligible nonwinding freeform face antiderivatives after checking normalized closed differentials; retain the established axis when the projected walk fails that check.
+
 ## 0.5.4 (2026-11-16)
 
 A patch release for Specify and draftwright 0.6.0-alpha.4: a hole's counterbore, spotface,
