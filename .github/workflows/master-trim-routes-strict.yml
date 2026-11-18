@@ -1,0 +1,77 @@
+name: Master trim boundary census and strict ARM snapshots
+on:
+  push:
+    branches: [validation/master-trim-routes-strict-20261119]
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  SOURCE: 8818c56edf67a1b2ea1d9b9c744c6a5471014e9a
+  TREE: ade1295655b5766c6c9d2fa4b8dea2ee7568a2a8
+jobs:
+  audit:
+    runs-on: macos-15
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: harness
+          sparse-checkout: .github/master-trim-survey
+          persist-credentials: false
+      - name: Verify the source, corpus and ARM environment
+        run: |
+          mkdir -p ../evidence
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(git -C ../corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; sw_vers; rustc -vV; } | tee ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-macos-15
+      - name: Count retained master flags and the actual canonical boundary
+        env:
+          MASTER_TRIM_ROUTES: ${{ github.workspace }}/evidence/routes.json
+        run: |
+          path=crates/haecceity/src/mass/preferred.rs
+          trap 'git restore -- "$path"' EXIT
+          cat ../harness/.github/master-trim-survey/route-census.rs >> "$path"
+          cargo test --release --locked -p haecceity --lib survey_master_boundary_routes 2>&1 | tee ../evidence/routes.log
+          test -s "$MASTER_TRIM_ROUTES"
+      - name: Reproduce the committed snapshots with the upstream strict command
+        if: ${{ !cancelled() }}
+        run: |
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: master-trim-routes-strict
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
