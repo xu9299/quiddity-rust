@@ -507,7 +507,7 @@ fn adaptive<S: Copy, const N: usize>(
     stop_on_excess: bool,
     eval: &mut impl FnMut(S, f64, f64, bool) -> Option<(Panel<S, N>, Option<(f64, bool)>)>,
 ) -> Option<Panel<S, N>> {
-    adaptive_with_kink_budget(cuts, start, floor, stop_on_excess, false, eval)
+    adaptive_with_kink_budget(cuts, start, floor, stop_on_excess, None, eval)
 }
 
 /// A cost-only primitive may not publish a remainder after exhausting its kink budget.
@@ -517,7 +517,7 @@ fn adaptive_with_kink_budget<S: Copy, const N: usize>(
     start: S,
     floor: Option<f64>,
     stop_on_excess: bool,
-    require_kink_budget: bool,
+    cost_components: Option<Components>,
     eval: &mut impl FnMut(S, f64, f64, bool) -> Option<(Panel<S, N>, Option<(f64, bool)>)>,
 ) -> Option<Panel<S, N>> {
     let mut state = start;
@@ -529,14 +529,55 @@ fn adaptive_with_kink_budget<S: Copy, const N: usize>(
         let mut stack = vec![(w[0], w[1], 0)];
         let mut kinks = MAX_KINKS;
         while let Some((a, b, depth)) = stack.pop() {
-            if require_kink_budget && kinks == 0 && floor.is_some() {
+            if cost_components.is_some() && kinks == 0 && floor.is_some() {
                 return None;
             }
             let locate_kinks = floor.is_some() && depth < MAX_DEPTH && kinks > 0;
-            let ((sum, error, size, end), kink) = eval(state, a, b, locate_kinks)?;
+            let ((mut sum, mut error, mut size, mut end), kink) = eval(state, a, b, locate_kinks)?;
             let inside = |t: f64| (t - a) * (t - b) < 0.0 && t != a && t != b;
             let kink = kink.filter(|&(t, _)| inside(t) && kinks > 0);
-            let unseen = kink.is_some_and(|(_, unseen)| unseen);
+            let mut unseen = kink.is_some_and(|(_, unseen)| unseen);
+            if let (Some(components), Some(floor), Some((t, false))) =
+                (cost_components, floor, kink)
+                && resolved(error, size, floor)
+            {
+                // A resolved embedded pair can alias across a known internal knot.
+                // Probe its two pieces from the saved walk before spending a split.
+                // Mandatory unseen endpoint turns retain their established policy.
+                let ((left, le, lm, ls), _) = eval(state, a, t, false)?;
+                let ((right, re, rm, rs), _) = eval(ls, t, b, false)?;
+                let split = std::array::from_fn(|k| left[k] + right[k]);
+                if [error, size, le, lm, re, rm, lm + rm]
+                    .iter()
+                    .any(|v| !v.is_finite())
+                    || sum.iter().chain(&split).any(|v| !v.is_finite())
+                {
+                    return None;
+                }
+                let first = match components {
+                    Components::Prefix(_) => 0,
+                    Components::Mass(indices) => indices[0],
+                };
+                let magnitude = size.max(lm + rm);
+                let mut scales =
+                    std::array::from_fn(|k| sum[k].abs().max(left[k].abs() + right[k].abs()));
+                scales[first] = magnitude;
+                if scales.iter().any(|v| !v.is_finite()) {
+                    return None;
+                }
+                let defect = estimate(&sum, &split, &scales, components).0;
+                unseen = !resolved(defect, magnitude, floor)
+                    || !resolved(le, lm, floor)
+                    || !resolved(re, rm, floor);
+                if !unseen {
+                    // Integral, magnitude and end state belong to the same two rules.
+                    // Do not mix the probes' walk with the discarded parent's sum.
+                    sum = split;
+                    error = defect.max(le).max(re);
+                    size = lm + rm;
+                    end = rs;
+                }
+            }
             let settled = match floor {
                 None => true,
                 Some(floor) => depth >= MAX_DEPTH || (resolved(error, size, floor) && !unseen),
@@ -1561,12 +1602,7 @@ impl Part {
                     Surface::Freeform { .. } if kink.is_none() && floor.is_some() => unseen(),
                     _ => kink,
                 };
-                // Do not spend the interval-wide budget rediscovering round-off kinks
-                // in a panel already below the face's resolution. Material known kinks
-                // still split even when the embedded pair aliases; unseen end turns
-                // retain their established policy independently of this screen.
-                let material = split_known && floor.is_some_and(|floor| panel.2 > floor);
-                Some((panel, kink.map(|(t, unseen)| (t, unseen || material))))
+                Some((panel, kink))
             };
             let walk = Walk {
                 last,
@@ -1633,8 +1669,14 @@ impl Part {
                 });
                 cuts.dedup();
             }
-            let (sum, excess, size, walk) =
-                adaptive_with_kink_budget(&cuts, walk, floor, true, split_known, &mut eval)?;
+            let (sum, excess, size, walk) = adaptive_with_kink_budget(
+                &cuts,
+                walk,
+                floor,
+                true,
+                split_known.then_some(rule.components),
+                &mut eval,
+            )?;
             mass_estimate.0 = mass_estimate.0.max(edge_mass.0);
             mass_estimate.1 += edge_mass.1;
             add((sum, excess, size, walk.swept));

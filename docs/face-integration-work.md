@@ -172,14 +172,25 @@ defects before selecting it. Each new inner primitive also compares its original
 back to the established axis. Agreement of the outer rules alone cannot detect a
 shared inner-rule bias.
 
-The new primitive always enters the boundary refinement pass. A detected internal
-kink in a panel whose magnitude exceeds the existing face resolution forces a
-split independently of the embedded error. Below that resolution, repeated
-round-off kinks must not consume the interval-wide budget and hide later material
-changes; unseen endpoint turns retain their established policy. On cgb202 face 933 a known
+The new primitive always enters the boundary refinement pass. An embedded pair
+can alias across a detected internal knot: on cgb202 face 933 a known
 kink's embedded estimate was about 1.06e-10, below the 2.71e-10 floor, despite an
-area bias of about 5.65e-8. Splitting that kink recovers the independently verified
-original-3D-boundary result without reducing a global tolerance. A cost walk that
+area bias of about 5.65e-8. Before accepting such a resolved panel, the new axis
+checks its two pieces from the saved walk. The comparison uses the same component
+selector, including canonical mass indices inside moment arrays. If both pieces
+and their comparison resolve, their integral and end state are accepted together;
+otherwise the walk actually splits there. Ordinary panels keep their previous
+sum and state. Analytic hinges of degrees one through three verify that even a
+continuous first or second derivative does not rule out embedded-rule aliasing.
+
+Unseen endpoint turns retain their mandatory split: agreement at nodes short of
+the end cannot establish that the turn was walked. Treating them like internal
+knots reintroduced cgb203 placement errors even when local sums agreed. This is
+separate from preserving very short representable initial endpoint cuts.
+
+Trial splitting avoids spending the interval's budget repeatedly on knots that
+do not require further refinement, while the same tolerances still reject
+unresolved comparisons. A cost walk that
 exhausts its kink budget refuses the unvalidated remainder and retries the
 established axis. Other cost-only validation failures also retain that fallback.
 An additional-field refusal before canonical authority is known leaves it to an

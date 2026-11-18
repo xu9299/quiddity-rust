@@ -149,33 +149,138 @@ fn rejected_cost_axis_keeps_analytic_area_and_canonical_mass_independent_of_mome
 }
 
 #[test]
-fn a_material_known_kink_cannot_hide_behind_an_aliased_embedded_pair() {
-    let c = 0.018719847821034433;
-    let exact = (1.0_f64 - c).powi(2) / 2.;
-    let coarse = kronrod((), 0., 1., |(), x| Some([(x - c).max(0.)])).unwrap();
-    assert!(coarse.1 < 1e-14);
-    assert!((coarse.0[0] - exact).abs() > 1e-5);
-    for (a, b, sign) in [(0., 1., 1.), (1., 0., -1.)] {
-        let floor = 1e-12;
-        let mut eval = |(): (), a: f64, b: f64, locate: bool| {
-            let panel = kronrod((), a, b, |(), x| Some([(x - c).max(0.)]))?;
-            let kink = (locate && c > a.min(b) && c < a.max(b)).then_some((c, panel.2 > floor));
-            Some((panel, kink))
-        };
-        let result =
-            adaptive_with_kink_budget(&[a, b], (), Some(floor), false, true, &mut eval).unwrap();
-        assert!((result.0[0] - sign * exact).abs() < 1e-13);
+fn internal_kink_probes_resolve_aliased_hinges_of_different_smoothness() {
+    for (power, c) in [
+        (1, 0.018719847821034433),
+        (2, 0.028409073504780002),
+        (3, 0.12497402256697929),
+    ] {
+        let exact = (1.0_f64 - c).powi(power + 1) / f64::from(power + 1);
+        let density = |x: f64| [(x - c).max(0.).powi(power)];
+        let coarse = kronrod((), 0., 1., |(), x| Some(density(x))).unwrap();
+        assert!(coarse.1 < 1e-13);
+        assert!((coarse.0[0] - exact).abs() > 1e-8);
+        for (a, b, sign) in [(0., 1., 1.), (1., 0., -1.)] {
+            let mut eval = |(): (), a: f64, b: f64, locate: bool| {
+                let panel = kronrod((), a, b, |(), x| Some(density(x)))?;
+                let kink = (locate && c > a.min(b) && c < a.max(b)).then_some((c, false));
+                Some((panel, kink))
+            };
+            let result = adaptive_with_kink_budget(
+                &[a, b],
+                (),
+                Some(1e-12),
+                false,
+                Some(Components::Prefix(1)),
+                &mut eval,
+            )
+            .unwrap();
+            assert!((result.0[0] - sign * exact).abs() < 1e-13);
+        }
     }
 }
 
 #[test]
-fn a_cost_walk_refuses_an_unvalidated_remainder_after_kink_budget_exhaustion() {
-    let run = |require_budget| {
+fn accepted_split_integrals_keep_their_own_end_state() {
+    let run = |checked: bool| {
         let mut eval = |state: usize, a: f64, b: f64, locate: bool| {
-            let panel = ([b - a], 0., (b - a).abs(), state + 1);
-            Some((panel, locate.then_some((a + 0.01 * (b - a), true))))
+            let panel = kronrod(state, a, b, |state, x| {
+                *state += 1;
+                Some([1. + x * x])
+            })?;
+            Some((
+                panel,
+                (locate && a < 0.4 && b > 0.4).then_some((0.4, false)),
+            ))
         };
-        adaptive_with_kink_budget(&[0., 1.], 0, Some(1e-12), false, require_budget, &mut eval)
+        adaptive_with_kink_budget(
+            &[0., 1.],
+            0,
+            Some(1e-12),
+            false,
+            checked.then_some(Components::Prefix(1)),
+            &mut eval,
+        )
+        .unwrap()
+    };
+    let original = run(false);
+    let checked = run(true);
+    assert_eq!(original.3, 21);
+    assert_eq!(checked.3, 42);
+    assert!((checked.0[0] - 4. / 3.).abs() < 1e-14);
+}
+
+#[test]
+fn split_defects_follow_the_canonical_component_mask() {
+    let c = 0.028409073504780002;
+    let exact = (1.0_f64 - c).powi(3) / 3.;
+    let run = |frequency: f64| {
+        let components = Components::Mass([1, 2, 3, 4, 5]);
+        let rule = IntegralRule {
+            components,
+            observe_mass: None,
+        };
+        let mut eval = |(): (), a: f64, b: f64, locate: bool| {
+            let (panel, _) = kronrod_rule(
+                (),
+                a,
+                b,
+                |(), x| {
+                    Some([
+                        (frequency * x).sin(),
+                        1.,
+                        (x - c).max(0.).powi(2),
+                        0.,
+                        0.,
+                        0.,
+                    ])
+                },
+                rule,
+            )?;
+            Some((
+                panel,
+                (locate && c > a.min(b) && c < a.max(b)).then_some((c, false)),
+            ))
+        };
+        adaptive_with_kink_budget(
+            &[0., 1.],
+            (),
+            Some(1e-12),
+            false,
+            Some(components),
+            &mut eval,
+        )
+        .unwrap()
+        .0
+    };
+    let a = run(100.);
+    let b = run(500.);
+    assert!((a[1] - 1.).abs() < 1e-14);
+    assert!((a[2] - exact).abs() < 1e-13);
+    assert_eq!(
+        a[1..].iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+        b[1..].iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_cost_walk_refuses_an_unvalidated_remainder_after_kink_budget_exhaustion() {
+    let run = |checked: bool| {
+        let mut eval = |state: usize, a: f64, b: f64, locate: bool| {
+            let width = (b - a).abs();
+            Some((
+                ([b - a], width, width, state + 1),
+                locate.then_some((a + 0.01 * (b - a), true)),
+            ))
+        };
+        adaptive_with_kink_budget(
+            &[0., 1.],
+            0,
+            Some(1e-12),
+            false,
+            checked.then_some(Components::Prefix(1)),
+            &mut eval,
+        )
     };
     assert!(run(true).is_none());
     assert!((run(false).unwrap().0[0] - 1.).abs() < 1e-12);

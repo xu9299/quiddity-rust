@@ -6,9 +6,7 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
-- Preserve established mass availability when optional primitive validation exhausts its kink budget; avoid spending that budget on internal panels below the existing resolution floor.
-
-- Split observed boundary kinks when validating a newly selected Green primitive, even if the embedded quadrature pair agrees across the kink.
+- Validate resolved internal-knot panels against a trial split when selecting a cheaper Green primitive; retain mandatory endpoint turns and the established axis on optional validation failure, without changing canonical mass or master-trim authority.
 
 - Check the new Green primitive's inner rule independently and retain the established axis when it is unresolved; preserve canonical mass and master-trim authority.
 
