@@ -1,0 +1,124 @@
+name: Independent internal-knot checks and canonical fallback
+
+on:
+  push:
+    branches: [validation/boundary-split-054-20261118]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize retries of this branch without blocking unrelated validation workflows.
+concurrency:
+  group: boundary-split-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+# Keep committed expectations and independent reference bands unchanged.
+jobs:
+  topic:
+    name: ARM ${{ matrix.topic }}
+    runs-on: macos-26
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: [{"topic": "boundary-split-054", "head": "a6780f914ad52578a94b41d319a79f7310ebfe13", "tree": "6f5135b8ca75395a12dfc96d16f2c2e564c1776c"}]
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ${{ matrix.head }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Record exact source and independent input identity
+        run: |
+          mkdir -p ../validation-logs/verified
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; uv --version; } | tee ../validation-logs/environment.log
+          test "$(uname -m)" = arm64
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(git rev-parse HEAD)" = '${{ matrix.head }}'
+          test "$(git rev-parse HEAD^{tree})" = '${{ matrix.tree }}'
+          git diff --stat f7ed5825b260ecc64221ea5cc00bd7fe9e852bc6 HEAD | tee ../validation-logs/scope.log
+          git diff --exit-code f7ed5825b260ecc64221ea5cc00bd7fe9e852bc6 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: boundary-split-v054-20261118-macos-26
+          cache-on-failure: true
+      - name: Formatting and complete workspace lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Supported feature-off builds
+        run: |
+          cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
+      - name: Upstream public API policy and dependency audit
+        run: |
+          cargo install cargo-semver-checks --version 0.51.0 --locked
+          uv run --no-project --python 3.14 python -m unittest discover -s .github -p test_check_semver.py 2>&1 | tee ../validation-logs/semver-policy.log
+          uv run --no-project --python 3.14 python .github/check_semver.py 2>&1 | tee ../validation-logs/semver.log
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --file Cargo.lock 2>&1 | tee ../validation-logs/audit.log
+      - name: Complete workspace and corpus with unchanged expectations
+        if: ${{ !cancelled() }}
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+          RUST_BACKTRACE: full
+        run: cargo test --workspace --release --locked --no-fail-fast 2>&1 | tee ../validation-logs/workspace.log
+      - name: Produced snapshot coverage against committed expectations
+        if: ${{ !cancelled() }}
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+          test -z "$(git status --porcelain)"
+      - name: Strict byte comparison of the same complete workspace outputs
+        if: ${{ !cancelled() }}
+        run: |
+          uv run --no-project --python 3.14 python - <<'PY' 2>&1 | tee ../validation-logs/strict.log
+          import hashlib, json, pathlib, subprocess
+          def inventory(root):
+              return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*.json.gz")}
+          expected=inventory(pathlib.Path("tests/fixtures/rust-snapshot"))
+          actual=inventory(pathlib.Path("../validation-logs/verified"))
+          assert expected
+          report=dict(method="exact gzip inventory and SHA-256; upstream coverage/provenance is checked separately; producers run once",
+              source_commit=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),
+              missing=sorted(expected.keys()-actual.keys()),added=sorted(actual.keys()-expected.keys()),
+              changed=sorted(k for k in expected.keys()&actual.keys() if expected[k]!=actual[k]),
+              expected_count=len(expected),produced_count=len(actual))
+          pathlib.Path("../validation-logs/strict.json").write_text(json.dumps(report,indent=2)+"\n")
+          print(json.dumps(report))
+          assert not (report["missing"] or report["added"] or report["changed"])
+          PY
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: boundary-split-${{ matrix.topic }}
+          path: validation-logs/
+          retention-days: 30
