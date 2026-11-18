@@ -1,6 +1,5 @@
-//! Recovery from an unresolved projection using STEP's explicitly preferred trim.
-//! This integrates the master pcurve region, which need not equal the projection
-//! of a separately approximated 3D curve. Successful legacy integrals never enter.
+//! Integrate the region bounded by STEP's explicitly selected master pcurves.
+//! A separately approximated 3D curve can enclose a different region.
 
 use super::*;
 
@@ -231,8 +230,7 @@ fn master_boundary_length(
 }
 
 impl Part {
-    /// Only explicitly preferred, complete trims on open spline patches may replace
-    /// an unresolved 3D projection. Unselected approximations are not an authority.
+    /// Use only complete, explicitly selected trims on supported open spline patches.
     fn integration_pcurves(&self, face: usize) -> Option<MasterTrim> {
         self.primary_pcurves(face).next()?;
         let fc = &self.faces[face];
@@ -320,7 +318,7 @@ impl Part {
         })
     }
 
-    /// Integrate the explicit STEP trim after projection has refused. The outer
+    /// Integrate the explicit STEP trim. The outer
     /// criterion is unchanged. Half its fixed floor budgets all inner primitives;
     /// their measured errors also enter each outer panel's error estimate.
     /// The first density component must be area; its certified result also
@@ -697,6 +695,35 @@ mod tests {
     }
 
     #[test]
+    fn master_trim_and_projected_boundary_both_integrate() {
+        let source = include_str!("../../tests/fixtures/master-trim-square.step");
+        let unmarked = source.replace(".PCURVE_S1.", ".CURVE_3D.");
+        let excessive = source.replace("0.0004", "0.0012");
+        assert_ne!(excessive, source);
+        // The lower edge is y=2h*x*(1-x), so the retained area is 1-h/3.
+        // Its first y-moment is 1/2-h²/15. Projection encloses the unit square.
+        for (text, h, preferred) in [
+            (source, 0.0004, true),
+            (unmarked.as_str(), 0., false),
+            (excessive.as_str(), 0., false),
+        ] {
+            let area = 1. - h / 3.;
+            let y = (0.5 - h * h / 15.) / area;
+            for moments_first in [true, false] {
+                let part = crate::step::read_step(text.as_bytes()).unwrap();
+                if !moments_first {
+                    assert!((part.face_mass(0).unwrap()[0] - area).abs() < 1e-12);
+                }
+                let moments = part.face_moments(0).unwrap();
+                assert_eq!(moments.area, part.face_mass(0).unwrap()[0]);
+                assert!((moments.area - area).abs() < 1e-12);
+                assert!(geom::dist(moments.centroid, [0.5, y, 0.]) < 1e-12);
+                assert_eq!(part.cache[0].mass.get().unwrap().preferred, preferred);
+            }
+        }
+    }
+
+    #[test]
     fn preferred_trim_rescues_a_nearly_singular_projection() {
         let eps: f64 = 0.00002;
         let (a, b) = (0.00001, 1.);
@@ -738,7 +765,7 @@ mod tests {
         let mass = p.face_mass(0).expect("preferred trim has area");
         assert!(
             p.cache[0].mass.get().unwrap().preferred,
-            "legacy must refuse"
+            "the eligible master supplies the area"
         );
         assert!((mass[0] - area).abs() < 1e-9 * area, "{mass:?} {area}");
         assert!(

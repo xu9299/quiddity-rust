@@ -50,9 +50,9 @@ Thus either a later evaluation fails (the original returns `None`), or refinemen
 finishes with excess still greater than `F` (the original also returns `None`).
 No continuation can produce a successful face result. The optimized walk may return
 that rejected prefix; the boundary propagates it immediately, and the unchanged
-caller applies the same rejection. In particular, the canonical mass-refinement
-caller records the canonical legacy refusal before considering an explicitly
-selected master trim. No rejected prefix is published.
+caller applies the same rejection. In particular, projected mass refinement
+keeps a known refusal when the master trim was unavailable. No rejected prefix
+is published.
 
 This does not reject a parent that can still be subdivided. With ordinary finite
 values, an accepted leaf that fails both the relative criterion and `F` was accepted
@@ -62,14 +62,15 @@ ordered `E > F` guard cannot trigger. Once it does trigger, Rust's `f64::max` ca
 reduce the non-NaN `E`, even if a later estimate is NaN. Evaluation failures remain
 failures; no new numerical answer is invented.
 
-## Recovery from an explicit master trim
+## Boundary selection for face integrals
 
-A refused 3D projection may retry one complete, explicit STEP master-pcurve loop
-on a native, nonperiodic, noncollapsed B-spline or Bézier surface. Successful legacy
-integrals retain their operation order and values. Near parallel surface tangents
+One complete, explicit STEP master-pcurve loop on a native, nonperiodic,
+noncollapsed B-spline or Bézier surface takes precedence when its canonical
+mass passes the checks below. Otherwise the projected 3D edges define the
+integration region. Near parallel surface tangents
 can make Gauss–Newton oscillate even with small position residuals; using the file's
 selected trim supplies positions and derivatives without that ill-conditioned solve.
-Recovered faces measure the region bounded by the **file's master pcurves**. This
+Faces using this path measure the region bounded by the **file's master pcurves**. This
 can differ from a 3D-edge answer by the file's own representation disagreement.
 
 Each edge needs exactly one master pcurve, finite controls within the surface
@@ -106,8 +107,10 @@ outer panel's estimate. Unresolved integrals still refuse. These are numerical
 error estimates, as in the legacy walk, rather than rigorous true-error bounds.
 
 Canonical mass and boundary choice are published under one once-cell before any
-moments escape, including concurrent first queries. An unresolved canonical legacy
-quadrature retries only the eligible master boundary, without repeating legacy mass.
+moments escape, including concurrent first queries. A moment query first tests
+canonical mass on the master trim. If it falls back to projection, the combined
+pass shares projected mass and moment work. Further moment queries use the
+boundary already chosen for mass.
 A completed but invalid canonical sum stays refused, as in a standalone mass query.
 A failure evaluating additional moment fields before canonical mass was determined
 still needs an independent canonical query; it cannot poison a valid mass cache.

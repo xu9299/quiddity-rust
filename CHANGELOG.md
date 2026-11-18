@@ -8,6 +8,11 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Face area and moments use an explicitly selected STEP master trim on supported
+  B-spline and Bézier faces when it passes the existing integration checks. A
+  separately approximated 3D edge can enclose a different area. Projection
+  supplies the boundary when the master trim is unavailable or cannot integrate.
+
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's
   outward-shell proof and the ray casters keep their face boxes and membership for the
   solid's own faces, the unresolved-face and unresolved-edge lookups search a sorted list, and

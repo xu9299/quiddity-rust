@@ -1,10 +1,8 @@
 //! Areas and volumes (`BRepGProp`): surface integrals over each face's trimmed parameter
-//! domain, reduced by Green's theorem to integrals along the exact edge curves'
-//! foot points on the surface. A refused projection may recover using the file's
-//! explicit master pcurves, measuring the region they bound. That region can differ
-//! from a 3D-edge answer by the file's own 2D/3D disagreement, bounded by a sampled
-//! interior check. Recovery uses bounded inner and outer numerical error checks;
-//! see `docs/face-integration-work.md`, "Recovery from an explicit master trim".
+//! domain, reduced by Green's theorem to boundary integrals. An eligible explicit
+//! STEP master trim defines the region. If it cannot be integrated, use the
+//! foot points of the 3D edge curves on the surface. The two regions may differ
+//! by the file's own 2D/3D disagreement. See `docs/face-integration-work.md`.
 //! `tests/face_areas.rs` checks every corpus face against OpenCascade.
 //!
 //! ∬_D f du dv = −∮ H du with H(u, v) = ∫ f(u, s) ds from a fixed v, or ∮ G dv with
@@ -647,13 +645,6 @@ fn valid_mass(m: [f64; 5]) -> Option<[f64; 5]> {
     (m[0] > 0. && m.iter().all(|x| x.is_finite())).then_some(m)
 }
 
-/// A completed but invalid mass sum must retain standalone mass's refusal;
-/// only failure to resolve the legacy quadrature permits a master-trim retry.
-enum MassPass {
-    Refused,
-    Evaluated(Option<[f64; 5]>),
-}
-
 /// Canonical mass and its boundary authority are published together. A concurrent
 /// first moment query cannot publish a legacy region after mass selected the master trim.
 #[derive(Debug)]
@@ -726,11 +717,24 @@ impl Part {
     fn face_terms(&self, face: usize) -> Option<[f64; 5]> {
         self.cache[face]
             .mass
-            .get_or_init(|| self.compute_face_mass(face))
+            .get_or_init(|| {
+                self.preferred_face_mass(face)
+                    .unwrap_or_else(|| self.projected_face_mass(face))
+            })
             .terms
     }
 
-    fn compute_face_mass(&self, face: usize) -> FaceMass {
+    fn preferred_face_mass(&self, face: usize) -> Option<FaceMass> {
+        let terms = self
+            .integrate_preferred_face(face, mass_density, Components::Prefix(5))
+            .and_then(valid_mass)?;
+        Some(FaceMass {
+            terms: Some(terms),
+            preferred: true,
+        })
+    }
+
+    fn projected_face_mass(&self, face: usize) -> FaceMass {
         let surface = &self.faces[face].surface;
         // A whole sphere has no boundary to integrate along; its area and flux (3V) are exact,
         // and its area vector vanishes.
@@ -751,22 +755,10 @@ impl Part {
             components: Components::Prefix(5),
             observe_mass: None,
         };
-        if let Some(value) = self.integrate_face_legacy(face, density, rule, &mut None) {
-            return FaceMass::legacy(valid_mass(value));
-        }
-        self.recover_face_mass(face)
-    }
-
-    /// Only a known legacy refusal reaches here. Ineligible trims do no further
-    /// integration; eligible trims certify canonical mass on their own boundary.
-    fn recover_face_mass(&self, face: usize) -> FaceMass {
-        let terms = self
-            .integrate_preferred_face(face, mass_density, Components::Prefix(5))
-            .and_then(valid_mass);
-        FaceMass {
-            preferred: terms.is_some(),
-            terms,
-        }
+        FaceMass::legacy(
+            self.integrate_face_legacy(face, density, rule, &mut None)
+                .and_then(valid_mass),
+        )
     }
 
     /// Share the cold coarse pass, but choose and publish canonical mass and its
@@ -780,6 +772,9 @@ impl Part {
         let mut shared = None;
         let mut attempted = false;
         let choice = self.cache[face].mass.get_or_init(|| {
+            if let Some(master) = self.preferred_face_mass(face) {
+                return master;
+            }
             attempted = true;
             let mut observed = None;
             shared = self.integrate_face_legacy(
@@ -791,13 +786,8 @@ impl Part {
                 },
                 &mut observed,
             );
-            match observed {
-                Some(MassPass::Evaluated(terms)) => FaceMass::legacy(terms),
-                Some(MassPass::Refused) => self.recover_face_mass(face),
-                // An early failure in additional fields did not evaluate canonical
-                // mass. Determine it independently rather than poisoning its cache.
-                None => self.compute_face_mass(face),
-            }
+            // Extra fields can fail before the projected canonical mass is known.
+            observed.unwrap_or_else(|| self.projected_face_mass(face))
         });
         choice.terms?;
         if choice.preferred {
@@ -832,7 +822,7 @@ impl Part {
         face: usize,
         f: impl Fn(V3, V3, V3) -> [f64; N],
         rule: IntegralRule,
-        observed: &mut Option<MassPass>,
+        observed: &mut Option<FaceMass>,
     ) -> Option<[f64; N]> {
         let fc = &self.faces[face];
         let surface = &fc.surface;
@@ -940,7 +930,7 @@ impl Part {
                         u_ref,
                     )?;
                     if refined.1 > mass_floor {
-                        *observed = Some(MassPass::Refused);
+                        *observed = Some(FaceMass::legacy(None));
                         return None;
                     }
                     (refined.0, refined.3)
@@ -954,7 +944,7 @@ impl Part {
                 }
             }
             let mass = (mass[0] > 0.0 && mass.iter().all(|x| x.is_finite())).then_some(mass);
-            *observed = Some(MassPass::Evaluated(mass));
+            *observed = Some(FaceMass::legacy(mass));
             mass?;
         }
         let floor = 1e-11 * passes.iter().map(|p| p.0.2).sum::<f64>();
