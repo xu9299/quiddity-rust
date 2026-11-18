@@ -1,0 +1,90 @@
+name: Spline boundary cut reuse review
+
+on:
+  push:
+    branches: [validation/boundary-cut-reuse-main-20261118]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boundary-cut-reuse-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: '3233f359a4bc03232f5693c7a9bf39f0e966e03f'
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Record exact source, corpus, and compiler
+        run: |
+          mkdir -p ../validation-logs/verified
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; git -C ../quiddity-corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = '3233f359a4bc03232f5693c7a9bf39f0e966e03f'
+          test "$(git rev-parse HEAD^{tree})" = '93f62bbea0dbc581dfbe324e111ca5990d479a69'
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(uname -m)" = arm64
+          git diff --exit-code '0811cb18863fdb1b8b1396fef5ca0e7b4bb43a07' HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+          git diff --stat '0811cb18863fdb1b8b1396fef5ca0e7b4bb43a07' HEAD | tee ../validation-logs/scope.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: boundary-cut-reuse-macos-15
+      - name: Verify the updated main baseline
+        run: |
+          git checkout --detach '0811cb18863fdb1b8b1396fef5ca0e7b4bb43a07'
+          test "$(git rev-parse HEAD^{tree})" = '2f5d23f9dd9bf34c6f073a7b2408c65e00f2a082'
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/baseline.log
+          git checkout --detach '3233f359a4bc03232f5693c7a9bf39f0e966e03f'
+      - name: Formatting and full workspace lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../validation-logs/clippy.log
+      - name: Supported feature-off builds
+        run: |
+          cargo check -p haecceity --release --locked --no-default-features 2>&1 | tee ../validation-logs/haecceity-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../validation-logs/quiddity-feature-off.log
+      - name: Strict snapshot reproduction
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/strict.log
+          test -z "$(git status --porcelain)"
+      - name: Complete workspace and public corpus
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
+        run: cargo test --workspace --release --locked 2>&1 | tee ../validation-logs/workspace.log
+      - name: Snapshot coverage and provenance
+        run: cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: boundary-cut-reuse-evidence
+          path: validation-logs/
+          if-no-files-found: ignore
+          retention-days: 30
