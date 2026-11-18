@@ -326,3 +326,48 @@ fn solid_centroid_flux_moments_stay_measured_under_motion() {
         );
     }
 }
+
+/// The existing original-3D-boundary ledger gives 27.14076014; independent OCCT
+/// projections with 32/64 boundary subdivisions give 27.14076013570/13245.
+/// A detected internal kink must not be accepted merely because the embedded
+/// quadrature pair aliases below the fixed floor after changing Green primitive.
+#[test]
+fn a_short_primitive_honors_observed_boundary_kinks() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part =
+        read_step_file_placed(&dir.join("cadgenbench_inputs/cgb202.step.gz"), &IDENTITY).unwrap();
+    let area = part
+        .face_mass(933)
+        .expect("independently verified boundary")[0];
+    assert!((area - 27.14076014).abs() < 1e-8, "area {area}");
+}
+
+#[test]
+fn optional_primitive_validation_preserves_measurability_and_placement() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    for (file, faces) in [
+        ("cadgenbench_inputs/cgb202.step.gz", vec![396, 938, 933]),
+        ("cadgenbench_inputs/cgb203.step", vec![49, 71]),
+    ] {
+        let original = read_step_file_placed(&dir.join(file), &IDENTITY).unwrap();
+        let moved = read_step_file_placed(&dir.join(file), &motion(true)).unwrap();
+        for face in faces {
+            let a = original
+                .face_mass(face)
+                .expect("established measurable face")[0];
+            let b = moved
+                .face_mass(face)
+                .expect("placement preserves measurability")[0];
+            assert!(
+                (a - b).abs() <= 1e-9 * a,
+                "{file} face {face}: {a} moved {b}"
+            );
+        }
+    }
+}

@@ -36,6 +36,19 @@ in [docs/alpha1.md](docs/alpha1.md).
   `File`'s cursor is neither used nor moved; on Windows `seek_read` moves it, which does no
   harm because every read is positional. The signature is unchanged. For #293.
 
+- Compute planar face centroids from analytic boundary tangents, avoiding finite-difference amplification of translation round-off.
+
+- Validate resolved internal-knot panels against a trial split when selecting a cheaper Green primitive; retain mandatory endpoint turns and the established axis on optional validation failure, without changing canonical mass or master-trim authority.
+
+- Check the new Green primitive's inner rule independently and retain the established axis when it is unresolved; preserve canonical mass and master-trim authority.
+
+- Stabilize face quadrature on open, noncollapsed spline parameter patches with local homogeneous evaluation, while keeping ordinary point, normal and inverse queries and closed/collapsed parameter frames on their established paths.
+- Retain representable held-boundary endpoint splits on those open patches even when the interval is shorter than the quadrature nodes can see; preserve the established seam and pole treatment.
+
+### Changed
+
+- Use the shorter spline axis for eligible nonwinding freeform face antiderivatives after checking normalized closed differentials; retain the established axis when the projected walk fails that check.
+
 ## 0.5.4 (2026-11-16)
 
 A patch release for Specify and draftwright 0.6.0-alpha.4: a hole's counterbore, spotface,

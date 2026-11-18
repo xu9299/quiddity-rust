@@ -442,12 +442,13 @@ impl Part {
                 t0 + (t1 - t0) * (k + 1) as f64 / pieces as f64,
             );
             let (half, centre) = (0.5 * (hi - lo), 0.5 * (hi + lo));
-            let h = 1e-6 * half.abs().max(1e-12);
             for (x, w) in NODES {
                 let t = centre + half * x;
                 let (px, py) = local(t);
-                let (p1, p0) = (local(t + h), local(t - h));
-                let (dx, dy) = ((p1.0 - p0.0) / (2.0 * h), (p1.1 - p0.1) / (2.0 * h));
+                // Project the analytic tangent; differencing translated positions
+                // would amplify their round-off by the reciprocal stencil width.
+                let tangent = ed.curve.derivative(t);
+                let (dx, dy) = (geom::dot(tangent, frame.x), geom::dot(tangent, frame.y));
                 let weight = w * half;
                 a += weight * 0.5 * (px * dy - py * dx);
                 mx += weight * 0.5 * px * px * dy;
@@ -1545,3 +1546,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "planar_centroid_controls.rs"]
+mod centroid_controls;
