@@ -56,3 +56,6 @@ and translations, distinguish a real hole from a filled union, and retain finite
 pcurve-domain failures. Exact rational polygon clipping supplies an independent
 area reference. Full workspace, corpus, snapshot, API and feature-off checks use
 the repository's existing validation requirements; no reference is weakened.
+
+A selected public narrow-channel document is also compared against its unchanged
+complete Rust snapshot, retaining the caller-space integration path.
