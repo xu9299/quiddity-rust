@@ -344,3 +344,30 @@ fn a_short_primitive_honors_observed_boundary_kinks() {
         .expect("independently verified boundary")[0];
     assert!((area - 27.14076014).abs() < 1e-8, "area {area}");
 }
+
+#[test]
+fn optional_primitive_validation_preserves_measurability_and_placement() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    for (file, faces) in [
+        ("cadgenbench_inputs/cgb202.step.gz", vec![396, 938, 933]),
+        ("cadgenbench_inputs/cgb203.step", vec![49, 71]),
+    ] {
+        let original = read_step_file_placed(&dir.join(file), &IDENTITY).unwrap();
+        let moved = read_step_file_placed(&dir.join(file), &motion(true)).unwrap();
+        for face in faces {
+            let a = original
+                .face_mass(face)
+                .expect("established measurable face")[0];
+            let b = moved
+                .face_mass(face)
+                .expect("placement preserves measurability")[0];
+            assert!(
+                (a - b).abs() <= 1e-9 * a,
+                "{file} face {face}: {a} moved {b}"
+            );
+        }
+    }
+}

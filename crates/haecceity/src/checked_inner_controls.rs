@@ -147,3 +147,36 @@ fn rejected_cost_axis_keeps_analytic_area_and_canonical_mass_independent_of_mome
         assert_eq!(other.face_terms(0).unwrap().map(f64::to_bits), before);
     }
 }
+
+#[test]
+fn a_material_known_kink_cannot_hide_behind_an_aliased_embedded_pair() {
+    let c = 0.018719847821034433;
+    let exact = (1.0_f64 - c).powi(2) / 2.;
+    let coarse = kronrod((), 0., 1., |(), x| Some([(x - c).max(0.)])).unwrap();
+    assert!(coarse.1 < 1e-14);
+    assert!((coarse.0[0] - exact).abs() > 1e-5);
+    for (a, b, sign) in [(0., 1., 1.), (1., 0., -1.)] {
+        let floor = 1e-12;
+        let mut eval = |(): (), a: f64, b: f64, locate: bool| {
+            let panel = kronrod((), a, b, |(), x| Some([(x - c).max(0.)]))?;
+            let kink = (locate && c > a.min(b) && c < a.max(b)).then_some((c, panel.2 > floor));
+            Some((panel, kink))
+        };
+        let result =
+            adaptive_with_kink_budget(&[a, b], (), Some(floor), false, true, &mut eval).unwrap();
+        assert!((result.0[0] - sign * exact).abs() < 1e-13);
+    }
+}
+
+#[test]
+fn a_cost_walk_refuses_an_unvalidated_remainder_after_kink_budget_exhaustion() {
+    let run = |require_budget| {
+        let mut eval = |state: usize, a: f64, b: f64, locate: bool| {
+            let panel = ([b - a], 0., (b - a).abs(), state + 1);
+            Some((panel, locate.then_some((a + 0.01 * (b - a), true))))
+        };
+        adaptive_with_kink_budget(&[0., 1.], 0, Some(1e-12), false, require_budget, &mut eval)
+    };
+    assert!(run(true).is_none());
+    assert!((run(false).unwrap().0[0] - 1.).abs() < 1e-12);
+}

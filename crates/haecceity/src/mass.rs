@@ -507,6 +507,19 @@ fn adaptive<S: Copy, const N: usize>(
     stop_on_excess: bool,
     eval: &mut impl FnMut(S, f64, f64, bool) -> Option<(Panel<S, N>, Option<(f64, bool)>)>,
 ) -> Option<Panel<S, N>> {
+    adaptive_with_kink_budget(cuts, start, floor, stop_on_excess, false, eval)
+}
+
+/// A cost-only primitive may not publish a remainder after exhausting its kink budget.
+/// Established axes retain their original bounded stopping policy.
+fn adaptive_with_kink_budget<S: Copy, const N: usize>(
+    cuts: &[f64],
+    start: S,
+    floor: Option<f64>,
+    stop_on_excess: bool,
+    require_kink_budget: bool,
+    eval: &mut impl FnMut(S, f64, f64, bool) -> Option<(Panel<S, N>, Option<(f64, bool)>)>,
+) -> Option<Panel<S, N>> {
     let mut state = start;
     let (mut total, mut excess, mut magnitude) = ([0.0; N], 0.0f64, 0.0);
     let resolved = |error: f64, size: f64, floor: f64| error <= (1e-9 * size).max(floor);
@@ -516,6 +529,9 @@ fn adaptive<S: Copy, const N: usize>(
         let mut stack = vec![(w[0], w[1], 0)];
         let mut kinks = MAX_KINKS;
         while let Some((a, b, depth)) = stack.pop() {
+            if require_kink_budget && kinks == 0 && floor.is_some() {
+                return None;
+            }
             let locate_kinks = floor.is_some() && depth < MAX_DEPTH && kinks > 0;
             let ((sum, error, size, end), kink) = eval(state, a, b, locate_kinks)?;
             let inside = |t: f64| (t - a) * (t - b) < 0.0 && t != a && t != b;
@@ -1048,18 +1064,11 @@ impl Part {
         } else {
             collapsed.0.unwrap_or(start.0)
         };
-        let inner_rejected = std::cell::Cell::new(false);
         let term = |u: f64, v: f64, du: f64, dv: f64| {
             let (weight, y) = if along_v {
                 let cuts = surface_cuts(surface, spans.1, true, reference, v)?;
                 let value = if changed_axis {
-                    match checked_inner_integrate(&cuts, |s| f(u, s), rule) {
-                        Some(value) => value,
-                        None => {
-                            inner_rejected.set(true);
-                            return None;
-                        }
-                    }
+                    checked_inner_integrate(&cuts, |s| f(u, s), rule)?
                 } else {
                     integrate(&cuts, |s| f(u, s))
                 };
@@ -1073,25 +1082,34 @@ impl Part {
         // The moment caller may still hold the mass OnceLock's initializer. Do not
         // enter it again. Before canonical mass is observed, let the caller establish
         // its authority independently; afterwards preserve that decision on fallback.
+        macro_rules! failed_boundary {
+            () => {{
+                if !changed_axis {
+                    return None;
+                }
+                let fallback = if rule.observe_mass.is_some() {
+                    if !matches!(*observed, Some(MassPass::Evaluated(Some(_)))) {
+                        // A cost-only refusal did not choose canonical authority. Let
+                        // the caller establish mass independently, without re-entering
+                        // its OnceLock initializer or persisting this optional refusal.
+                        *observed = None;
+                        return None;
+                    }
+                    IntegralRule {
+                        observe_mass: None,
+                        ..rule
+                    }
+                } else {
+                    rule
+                };
+                return self.integrate_face_axis(face, density, fallback, observed, false);
+            }};
+        }
         macro_rules! checked_boundary {
             ($call:expr) => {
                 match $call {
                     Some(value) => value,
-                    None if changed_axis && inner_rejected.get() => {
-                        let fallback = if rule.observe_mass.is_some() {
-                            if observed.is_none() {
-                                return None;
-                            }
-                            IntegralRule {
-                                observe_mass: None,
-                                ..rule
-                            }
-                        } else {
-                            rule
-                        };
-                        return self.integrate_face_axis(face, density, fallback, observed, false);
-                    }
-                    None => return None,
+                    None => failed_boundary!(),
                 }
             };
         }
@@ -1135,7 +1153,7 @@ impl Part {
                     ));
                     if refined.1 > mass_floor {
                         *observed = Some(MassPass::Refused);
-                        return None;
+                        failed_boundary!();
                     }
                     (refined.0, refined.3)
                 } else {
@@ -1149,7 +1167,9 @@ impl Part {
             }
             let mass = (mass[0] > 0.0 && mass.iter().all(|x| x.is_finite())).then_some(mass);
             *observed = Some(MassPass::Evaluated(mass));
-            mass?;
+            if mass.is_none() {
+                failed_boundary!();
+            }
         }
         let floor = 1e-11 * passes.iter().map(|p| p.0.2).sum::<f64>();
         let mut total = [0.0; N];
@@ -1173,7 +1193,7 @@ impl Part {
                 // A panel still unresolved at the floor after the deepest halving leaves the
                 // area unknown to that scale: refused rather than reported as if exact.
                 if refined.1 > floor {
-                    return None;
+                    failed_boundary!();
                 }
                 sum = refined.0;
                 swept = refined.3;
@@ -1541,10 +1561,12 @@ impl Part {
                     Surface::Freeform { .. } if kink.is_none() && floor.is_some() => unseen(),
                     _ => kink,
                 };
-                // A newly chosen primitive must honor an observed nonsmooth point even
-                // when the embedded pair aliases across it. The existing split budget
-                // and depth limit still bound the work; established axes keep their policy.
-                Some((panel, kink.map(|(t, unseen)| (t, unseen || split_known))))
+                // Do not spend the interval-wide budget rediscovering round-off kinks
+                // in a panel already below the face's resolution. Material known kinks
+                // still split even when the embedded pair aliases; unseen end turns
+                // retain their established policy independently of this screen.
+                let material = split_known && floor.is_some_and(|floor| panel.2 > floor);
+                Some((panel, kink.map(|(t, unseen)| (t, unseen || material))))
             };
             let walk = Walk {
                 last,
@@ -1611,7 +1633,8 @@ impl Part {
                 });
                 cuts.dedup();
             }
-            let (sum, excess, size, walk) = adaptive(&cuts, walk, floor, true, &mut eval)?;
+            let (sum, excess, size, walk) =
+                adaptive_with_kink_budget(&cuts, walk, floor, true, split_known, &mut eval)?;
             mass_estimate.0 = mass_estimate.0.max(edge_mass.0);
             mass_estimate.1 += edge_mass.1;
             add((sum, excess, size, walk.swept));

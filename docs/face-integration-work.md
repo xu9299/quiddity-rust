@@ -173,10 +173,17 @@ back to the established axis. Agreement of the outer rules alone cannot detect a
 shared inner-rule bias.
 
 The new primitive always enters the boundary refinement pass. A detected internal
-kink forces a split independently of the embedded error or fixed floor, retaining
-the existing depth and interval-wide kink budgets. On cgb202 face 933 a known
+kink in a panel whose magnitude exceeds the existing face resolution forces a
+split independently of the embedded error. Below that resolution, repeated
+round-off kinks must not consume the interval-wide budget and hide later material
+changes; unseen endpoint turns retain their established policy. On cgb202 face 933 a known
 kink's embedded estimate was about 1.06e-10, below the 2.71e-10 floor, despite an
 area bias of about 5.65e-8. Splitting that kink recovers the independently verified
-original-3D-boundary result without reducing a global tolerance. Established axes
-retain their previous kink policy. Canonical mass and the preferred boundary are
-still determined atomically and independently of requested extra moments.
+original-3D-boundary result without reducing a global tolerance. A cost walk that
+exhausts its kink budget refuses the unvalidated remainder and retries the
+established axis. Other cost-only validation failures also retain that fallback.
+An additional-field refusal before canonical authority is known leaves it to an
+independent mass query, without re-entering its OnceLock. Once evaluated, that mass
+authority is preserved during an extra-field fallback. Established axes retain
+their previous kink policy. These are conservative numerical screens, not certified
+quadrature bounds or a proof of globally unique projection.
