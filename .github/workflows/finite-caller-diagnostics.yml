@@ -1,0 +1,66 @@
+name: Public coverage caller diagnostics
+
+on:
+  push:
+    branches: [validation/finite-callers-054-20261118]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "1"
+  RUST_MIN_STACK: "67108864"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  capture:
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: "2f22fa067afffd029b64cb9444a65a0d10bc5025"
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record exact source and ARM environment
+        run: |
+          mkdir -p ../validation-logs
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../validation-logs/environment.log
+          test "$(git rev-parse HEAD)" = '2f22fa067afffd029b64cb9444a65a0d10bc5025'
+          test "$(git rev-parse HEAD^{tree})" = '8c68c2612882a23fa724b238008cf380f62e4e36'
+          test "$(uname -m)" = arm64
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: finite-support-054-macos-15
+      - name: Capture six public callers without changing snapshots
+        run: |
+          for stem in 957de14512ed17ed 2b5bb2263cb71962 68dea25a083923c8 d6a626a702cbb6d1 aa10cea8dede61f3 11cebd76f38c6a2c; do
+            case_dir="$GITHUB_WORKSPACE/validation-logs/$stem"
+            mkdir "$case_dir"
+            QUIDDITY_COVER_CALLER_FIXTURE="$stem" QUIDDITY_COVER_CALLER_DOCUMENT="$case_dir/document.json" QUIDDITY_COVER_QUERY_TRACE="$case_dir/coverage-queries.jsonl" \
+              cargo test -p quiddity --lib --release --locked inspect_arm_cover_case -- --test-threads=1 --nocapture 2>&1 | tee "$case_dir/caller.log"
+            grep -F 'test result: ok. 1 passed; 0 failed;' "$case_dir/caller.log"
+            test -s "$case_dir/document.json"
+            test -s "$case_dir/coverage-queries.jsonl"
+          done
+          test -z "$(git status --porcelain)"
+          find ../validation-logs -type f -exec shasum -a 256 {} \; > ../validation-logs.sha256
+          mv ../validation-logs.sha256 ../validation-logs/files.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: finite-support-caller-diagnostics
+          path: validation-logs/
+          if-no-files-found: error
+          retention-days: 30
