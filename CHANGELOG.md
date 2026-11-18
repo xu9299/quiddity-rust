@@ -6,6 +6,11 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+### Changed
+
+- Stop B-spline boundary cut bisection when the floating-point bracket stops changing,
+  and reuse identical cut searches across the integration passes of an open spline face.
+
 ### Fixed
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's
