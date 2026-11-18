@@ -155,3 +155,28 @@ The existing quadrature and kink-budget tests retain exhaustive mode.
 Independent face-area/moment references, placements, existing recognition snapshots,
 inventory floors and tolerances remain unchanged. Repeated-moment speedups measure
 cache reuse; they are not claims about cold integrations or whole-part recognition.
+
+## Regular open B-spline quadrature
+
+Integral-only evaluation can work relative to a local pole, avoiding cancellation
+from world-coordinate rational operands. Ordinary point, normal and inverse
+queries retain their established arithmetic. Closed or collapsed patches and
+sampled nearly parallel tangent frames retain their complete established path;
+the angular samples are an eligibility screen, not a global conditioning proof.
+Transformations invalidate the cached screen.
+
+For an eligible contractible walk, fewer knot spans can make the other Green
+primitive cheaper. Normalized closed-differential checks screen parameter-velocity
+defects before selecting it. Each new inner primitive also compares its original
+16-point result with an independent embedded rule; an unresolved primitive falls
+back to the established axis. Agreement of the outer rules alone cannot detect a
+shared inner-rule bias.
+
+The new primitive always enters the boundary refinement pass. A detected internal
+kink forces a split independently of the embedded error or fixed floor, retaining
+the existing depth and interval-wide kink budgets. On cgb202 face 933 a known
+kink's embedded estimate was about 1.06e-10, below the 2.71e-10 floor, despite an
+area bias of about 5.65e-8. Splitting that kink recovers the independently verified
+original-3D-boundary result without reducing a global tolerance. Established axes
+retain their previous kink policy. Canonical mass and the preferred boundary are
+still determined atomically and independently of requested extra moments.

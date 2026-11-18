@@ -326,3 +326,21 @@ fn solid_centroid_flux_moments_stay_measured_under_motion() {
         );
     }
 }
+
+/// The existing original-3D-boundary ledger gives 27.14076014; independent OCCT
+/// projections with 32/64 boundary subdivisions give 27.14076013570/13245.
+/// A detected internal kink must not be accepted merely because the embedded
+/// quadrature pair aliases below the fixed floor after changing Green primitive.
+#[test]
+fn a_short_primitive_honors_observed_boundary_kinks() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part =
+        read_step_file_placed(&dir.join("cadgenbench_inputs/cgb202.step.gz"), &IDENTITY).unwrap();
+    let area = part
+        .face_mass(933)
+        .expect("independently verified boundary")[0];
+    assert!((area - 27.14076014).abs() < 1e-8, "area {area}");
+}

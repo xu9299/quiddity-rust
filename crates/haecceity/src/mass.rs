@@ -1107,7 +1107,7 @@ impl Part {
                 i,
                 shifts[i],
                 &term,
-                (None, rule),
+                (None, rule, changed_axis),
                 u_ref
             )));
         }
@@ -1117,7 +1117,7 @@ impl Part {
             let mass_floor = 1e-11 * passes.iter().map(|p| p.1.1).sum::<f64>();
             let mut mass = [0.0; 5];
             for (&i, (panel, estimate)) in loops.iter().zip(&passes) {
-                let (sum, swept) = if estimate.0 > mass_floor {
+                let (sum, swept) = if estimate.0 > mass_floor || changed_axis {
                     let (refined, _) = checked_boundary!(self.boundary_integral(
                         face,
                         i,
@@ -1129,6 +1129,7 @@ impl Part {
                                 components: Components::Mass(indices),
                                 observe_mass: None,
                             },
+                            changed_axis,
                         ),
                         u_ref,
                     ));
@@ -1153,7 +1154,7 @@ impl Part {
         let floor = 1e-11 * passes.iter().map(|p| p.0.2).sum::<f64>();
         let mut total = [0.0; N];
         for (&i, ((mut sum, excess, _, mut swept), _)) in loops.iter().zip(passes) {
-            if excess > floor {
+            if excess > floor || changed_axis {
                 let (refined, _) = checked_boundary!(self.boundary_integral(
                     face,
                     i,
@@ -1165,6 +1166,7 @@ impl Part {
                             observe_mass: None,
                             ..rule
                         },
+                        changed_axis,
                     ),
                     u_ref,
                 ));
@@ -1219,7 +1221,7 @@ impl Part {
                 continue;
             }
             let Some((coarse, _)) =
-                self.boundary_integral(face, i, shifts[i], &term, (None, rule), 0.0)
+                self.boundary_integral(face, i, shifts[i], &term, (None, rule, false), 0.0)
             else {
                 return false;
             };
@@ -1228,7 +1230,7 @@ impl Part {
             }
             let floor = 1e-11 * coarse.2;
             let Some((refined, _)) =
-                self.boundary_integral(face, i, shifts[i], &term, (Some(floor), rule), 0.0)
+                self.boundary_integral(face, i, shifts[i], &term, (Some(floor), rule, false), 0.0)
             else {
                 return false;
             };
@@ -1237,7 +1239,7 @@ impl Part {
                 || refined.1 > floor
                 || refined.0[1..]
                     .iter()
-                    .any(|x| !x.is_finite() || x.abs() > floor)
+                    .any(|x| !x.is_finite() || x.abs() > 1e-9 * refined.2)
             {
                 return false;
             }
@@ -1257,7 +1259,7 @@ impl Part {
         i: usize,
         shift: (f64, f64),
         term: &dyn Fn(f64, f64, f64, f64) -> Option<[f64; N]>,
-        (floor, rule): (Option<f64>, IntegralRule),
+        (floor, rule, split_known): (Option<f64>, IntegralRule, bool),
         u_ref: f64,
     ) -> Option<(Panel<f64, N>, Estimate)> {
         debug_assert!(rule.observe_mass.is_none() || floor.is_none());
@@ -1539,7 +1541,10 @@ impl Part {
                     Surface::Freeform { .. } if kink.is_none() && floor.is_some() => unseen(),
                     _ => kink,
                 };
-                Some((panel, kink))
+                // A newly chosen primitive must honor an observed nonsmooth point even
+                // when the embedded pair aliases across it. The existing split budget
+                // and depth limit still bound the work; established axes keep their policy.
+                Some((panel, kink.map(|(t, unseen)| (t, unseen || split_known))))
             };
             let walk = Walk {
                 last,

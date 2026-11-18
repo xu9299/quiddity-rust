@@ -6,6 +6,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+- Split observed boundary kinks when validating a newly selected Green primitive, even if the embedded quadrature pair agrees across the kink.
+
 - Check the new Green primitive's inner rule independently and retain the established axis when it is unresolved; preserve canonical mass and master-trim authority.
 
 - Stabilize face quadrature on open, noncollapsed spline parameter patches with local homogeneous evaluation, while keeping ordinary queries and closed/collapsed parameter frames on their established paths.
