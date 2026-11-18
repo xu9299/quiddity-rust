@@ -155,3 +155,46 @@ The existing quadrature and kink-budget tests retain exhaustive mode.
 Independent face-area/moment references, placements, existing recognition snapshots,
 inventory floors and tolerances remain unchanged. Repeated-moment speedups measure
 cache reuse; they are not claims about cold integrations or whole-part recognition.
+
+## Regular open B-spline quadrature
+
+Integral-only evaluation can work relative to a local pole, avoiding cancellation
+from world-coordinate rational operands. Ordinary point, normal and inverse
+queries retain their established arithmetic. Closed or collapsed patches and
+sampled nearly parallel tangent frames retain their complete established path;
+the angular samples are an eligibility screen, not a global conditioning proof.
+Transformations invalidate the cached screen.
+
+For an eligible contractible walk, fewer knot spans can make the other Green
+primitive cheaper. Normalized closed-differential checks screen parameter-velocity
+defects before selecting it. Each new inner primitive also compares its original
+16-point result with an independent embedded rule; an unresolved primitive falls
+back to the established axis. Agreement of the outer rules alone cannot detect a
+shared inner-rule bias.
+
+The new primitive always enters the boundary refinement pass. An embedded pair
+can alias across a detected internal knot: on cgb202 face 933 a known
+kink's embedded estimate was about 1.06e-10, below the 2.71e-10 floor, despite an
+area bias of about 5.65e-8. Before accepting such a resolved panel, the new axis
+checks its two pieces from the saved walk. The comparison uses the same component
+selector, including canonical mass indices inside moment arrays. If both pieces
+and their comparison resolve, their integral and end state are accepted together;
+otherwise the walk actually splits there. Ordinary panels keep their previous
+sum and state. Analytic hinges of degrees one through three verify that even a
+continuous first or second derivative does not rule out embedded-rule aliasing.
+
+Unseen endpoint turns retain their mandatory split: agreement at nodes short of
+the end cannot establish that the turn was walked. Treating them like internal
+knots reintroduced cgb203 placement errors even when local sums agreed. This is
+separate from preserving very short representable initial endpoint cuts.
+
+Trial splitting avoids spending the interval's budget repeatedly on knots that
+do not require further refinement, while the same tolerances still reject
+unresolved comparisons. A cost walk that
+exhausts its kink budget refuses the unvalidated remainder and retries the
+established axis. Other cost-only validation failures also retain that fallback.
+An additional-field refusal before canonical authority is known leaves it to an
+independent mass query, without re-entering its OnceLock. Once evaluated, that mass
+authority is preserved during an extra-field fallback. Established axes retain
+their previous kink policy. These are conservative numerical screens, not certified
+quadrature bounds or a proof of globally unique projection.

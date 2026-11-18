@@ -173,9 +173,12 @@ fn curve_cuts(surface: &Surface, curve: &Curve, t0: f64, t1: f64) -> Option<Vec<
 /// A B-spline surface's side of constant u, and of constant v, that collapses to a single
 /// point (as at the tip of a surface closing like a cone), if any.
 pub(crate) fn collapsed_sides(surface: &Surface) -> (Option<f64>, Option<f64>) {
-    let Surface::Freeform { surface, .. } = surface else {
-        return (None, None);
-    };
+    match surface {
+        Surface::Freeform { surface, .. } => nurbs_collapsed_sides(surface),
+        _ => (None, None),
+    }
+}
+fn nurbs_collapsed_sides(surface: &crate::nurbs::NurbsSurface) -> (Option<f64>, Option<f64>) {
     let (u0, u1, v0, v1) = surface.domain();
     let (lo, hi) = surface.control_bounds();
     let tiny = 1e-9 * geom::dist(lo, hi).max(1e-300);
@@ -194,9 +197,12 @@ pub(crate) fn collapsed_sides(surface: &Surface) -> (Option<f64>, Option<f64>) {
 /// The parameter spans across which a B-spline surface closes on itself (its sides of
 /// constant u, or of constant v, coincide), infinite where it does not.
 pub(crate) fn closed_spans(surface: &Surface) -> (f64, f64) {
-    let Surface::Freeform { surface, .. } = surface else {
-        return (f64::INFINITY, f64::INFINITY);
-    };
+    match surface {
+        Surface::Freeform { surface, .. } => nurbs_closed_spans(surface),
+        _ => (f64::INFINITY, f64::INFINITY),
+    }
+}
+fn nurbs_closed_spans(surface: &crate::nurbs::NurbsSurface) -> (f64, f64) {
     let (u0, u1, v0, v1) = surface.domain();
     let (lo, hi) = surface.control_bounds();
     let tiny = 1e-9 * geom::dist(lo, hi).max(1e-300);
@@ -218,6 +224,36 @@ pub(crate) fn closed_spans(surface: &Surface) -> (f64, f64) {
         if u_closed { u1 - u0 } else { f64::INFINITY },
         if v_closed { v1 - v0 } else { f64::INFINITY },
     )
+}
+
+/// Keep local quadrature arithmetic away from closed and collapsed parameter frames.
+/// Their sheet and winding decisions must stay consistent with the original UV queries.
+pub(crate) fn supports_local_quadrature_frame(surface: &crate::nurbs::NurbsSurface) -> bool {
+    let closed = nurbs_closed_spans(surface);
+    if closed.0.is_finite()
+        || closed.1.is_finite()
+        || nurbs_collapsed_sides(surface) != (None, None)
+    {
+        return false;
+    }
+    // The angular Gram metric is invariant under independent UV rescaling. Below
+    // sqrt(machine epsilon), forming it can lose half the available precision.
+    // Retain the original projection and boundary authority on those frames.
+    let (u0, u1, v0, v1) = surface.domain();
+    [0., 0.5, 1.].into_iter().all(|a| {
+        [0., 0.5, 1.].into_iter().all(|b| {
+            let (_, su, sv) = surface.value_and_partials(u0 + a * (u1 - u0), v0 + b * (v1 - v0));
+            let (nu, nv) = (geom::norm(su), geom::norm(sv));
+            if !nu.is_finite() || !nv.is_finite() || nu <= 0. || nv <= 0. {
+                return false;
+            }
+            let area = geom::norm(geom::cross(
+                geom::scale(su, 1. / nu),
+                geom::scale(sv, 1. / nv),
+            ));
+            area.is_finite() && area * area > f64::EPSILON.sqrt()
+        })
+    })
 }
 
 /// Parameters a whole number of `spans` round a closed B-spline surface, brought back into its
@@ -407,6 +443,46 @@ fn kronrod_rule<S, const N: usize>(
     Some(((sum, error, magnitude, state), mass))
 }
 
+/// Keep the established 16-node sum only when a different embedded inner rule and
+/// the two inner sums agree at the existing component scale. Used only for a cost-axis
+/// change; an unresolved panel requests the established direction instead.
+fn checked_inner_integrate<const N: usize>(
+    cuts: &[f64],
+    f: impl Fn(f64) -> [f64; N],
+    rule: IntegralRule,
+) -> Option<[f64; N]> {
+    let mut total = [0.0; N];
+    for w in cuts.windows(2) {
+        let (half, centre) = (0.5 * (w[1] - w[0]), 0.5 * (w[1] + w[0]));
+        let (mut sum, mut size) = ([0.0; N], [0.0; N]);
+        for &(x, weight) in gauss_nodes() {
+            let y = f(centre + half * x);
+            if y.iter().any(|v| !v.is_finite()) {
+                return None;
+            }
+            for k in 0..N {
+                let term = weight * half * y[k];
+                total[k] += term;
+                sum[k] += term;
+                size[k] += term.abs();
+            }
+        }
+        let ((other, error, magnitude, ()), mass) =
+            kronrod_rule((), w[0], w[1], |_, t| Some(f(t)), rule)?;
+        let (difference, scale) = estimate(&sum, &other, &size, rule.components);
+        if error > 1e-9 * magnitude || difference > 1e-9 * scale || mass.0 > 1e-9 * mass.1 {
+            return None;
+        }
+        if let Some(indices) = rule.observe_mass {
+            let (difference, scale) = estimate(&sum, &other, &size, Components::Mass(indices));
+            if difference > 1e-9 * scale {
+                return None;
+            }
+        }
+    }
+    Some(total)
+}
+
 /// ∫ over the interval running through `cuts`: the sum, the largest error estimate of a panel
 /// not resolved relative to its own terms, the sum of the terms' magnitudes, and the state at
 /// the end. Without a `floor`, one rule per panel. With one, adaptively: a panel is halved,
@@ -431,6 +507,19 @@ fn adaptive<S: Copy, const N: usize>(
     stop_on_excess: bool,
     eval: &mut impl FnMut(S, f64, f64, bool) -> Option<(Panel<S, N>, Option<(f64, bool)>)>,
 ) -> Option<Panel<S, N>> {
+    adaptive_with_kink_budget(cuts, start, floor, stop_on_excess, None, eval)
+}
+
+/// A cost-only primitive may not publish a remainder after exhausting its kink budget.
+/// Established axes retain their original bounded stopping policy.
+fn adaptive_with_kink_budget<S: Copy, const N: usize>(
+    cuts: &[f64],
+    start: S,
+    floor: Option<f64>,
+    stop_on_excess: bool,
+    cost_components: Option<Components>,
+    eval: &mut impl FnMut(S, f64, f64, bool) -> Option<(Panel<S, N>, Option<(f64, bool)>)>,
+) -> Option<Panel<S, N>> {
     let mut state = start;
     let (mut total, mut excess, mut magnitude) = ([0.0; N], 0.0f64, 0.0);
     let resolved = |error: f64, size: f64, floor: f64| error <= (1e-9 * size).max(floor);
@@ -440,11 +529,55 @@ fn adaptive<S: Copy, const N: usize>(
         let mut stack = vec![(w[0], w[1], 0)];
         let mut kinks = MAX_KINKS;
         while let Some((a, b, depth)) = stack.pop() {
+            if cost_components.is_some() && kinks == 0 && floor.is_some() {
+                return None;
+            }
             let locate_kinks = floor.is_some() && depth < MAX_DEPTH && kinks > 0;
-            let ((sum, error, size, end), kink) = eval(state, a, b, locate_kinks)?;
+            let ((mut sum, mut error, mut size, mut end), kink) = eval(state, a, b, locate_kinks)?;
             let inside = |t: f64| (t - a) * (t - b) < 0.0 && t != a && t != b;
             let kink = kink.filter(|&(t, _)| inside(t) && kinks > 0);
-            let unseen = kink.is_some_and(|(_, unseen)| unseen);
+            let mut unseen = kink.is_some_and(|(_, unseen)| unseen);
+            if let (Some(components), Some(floor), Some((t, false))) =
+                (cost_components, floor, kink)
+                && resolved(error, size, floor)
+            {
+                // A resolved embedded pair can alias across a known internal knot.
+                // Probe its two pieces from the saved walk before spending a split.
+                // Mandatory unseen endpoint turns retain their established policy.
+                let ((left, le, lm, ls), _) = eval(state, a, t, false)?;
+                let ((right, re, rm, rs), _) = eval(ls, t, b, false)?;
+                let split = std::array::from_fn(|k| left[k] + right[k]);
+                if [error, size, le, lm, re, rm, lm + rm]
+                    .iter()
+                    .any(|v| !v.is_finite())
+                    || sum.iter().chain(&split).any(|v| !v.is_finite())
+                {
+                    return None;
+                }
+                let first = match components {
+                    Components::Prefix(_) => 0,
+                    Components::Mass(indices) => indices[0],
+                };
+                let magnitude = size.max(lm + rm);
+                let mut scales =
+                    std::array::from_fn(|k| sum[k].abs().max(left[k].abs() + right[k].abs()));
+                scales[first] = magnitude;
+                if scales.iter().any(|v| !v.is_finite()) {
+                    return None;
+                }
+                let defect = estimate(&sum, &split, &scales, components).0;
+                unseen = !resolved(defect, magnitude, floor)
+                    || !resolved(le, lm, floor)
+                    || !resolved(re, rm, floor);
+                if !unseen {
+                    // Integral, magnitude and end state belong to the same two rules.
+                    // Do not mix the probes' walk with the discarded parent's sum.
+                    sum = split;
+                    error = defect.max(le).max(re);
+                    size = lm + rm;
+                    end = rs;
+                }
+            }
             let settled = match floor {
                 None => true,
                 Some(floor) => depth >= MAX_DEPTH || (resolved(error, size, floor) && !unseen),
@@ -488,7 +621,7 @@ const MAX_KINKS: usize = 64;
 /// whose motion [`uv_velocity`] gives. A side where the surface closes (`spans`) is its seam,
 /// not a boundary: an inversion stopped there from one side is tried again from the other.
 fn foot(surface: &Surface, spans: (f64, f64), p: V3, seed: (f64, f64)) -> Option<(f64, f64)> {
-    let (mut u, mut v) = surface.parameters(p, Some(seed))?;
+    let (mut u, mut v) = integral_parameters(surface, p, Some(seed))?;
     let Surface::Freeform { surface: s, .. } = surface else {
         return Some((u, v));
     };
@@ -501,8 +634,8 @@ fn foot(surface: &Surface, spans: (f64, f64), p: V3, seed: (f64, f64)) -> Option
         (None, Some(v)) => Some((u, v)),
         (None, None) => None,
     };
-    if let Some(retry) = other.and_then(|q| surface.parameters(p, Some(q)))
-        && geom::dist(s.value(retry.0, retry.1), p) < geom::dist(s.value(u, v), p)
+    if let Some(retry) = other.and_then(|q| integral_parameters(surface, p, Some(q)))
+        && geom::dist(s.integral_value(retry.0, retry.1), p) < geom::dist(s.integral_value(u, v), p)
     {
         (u, v) = retry;
     }
@@ -524,7 +657,7 @@ fn foot(surface: &Surface, spans: (f64, f64), p: V3, seed: (f64, f64)) -> Option
         return Some((u, v));
     }
     for _ in 0..50 {
-        let (q, su, sv) = s.value_and_partials(u, v);
+        let (q, su, sv) = s.integral_value_and_partials(u, v);
         let r = geom::sub(p, q);
         let (before, x) = if on_v { (u, &mut u) } else { (v, &mut v) };
         let (d, lo, hi) = if on_v { (su, u0, u1) } else { (sv, v0, v1) };
@@ -541,9 +674,42 @@ fn foot(surface: &Surface, spans: (f64, f64), p: V3, seed: (f64, f64)) -> Option
 }
 
 /// The surface's point and first partials at (u, v).
+fn local_quadrature_frame(surface: &Surface) -> bool {
+    matches!(surface,Surface::Freeform { surface,.. } if surface.has_local_quadrature_frame())
+}
+fn quadrature_curve_value(surface: &Surface, curve: &Curve, t: f64) -> V3 {
+    if local_quadrature_frame(surface) {
+        curve.integral_value(t)
+    } else {
+        curve.value(t)
+    }
+}
+fn quadrature_curve_derivative(surface: &Surface, curve: &Curve, t: f64) -> V3 {
+    if local_quadrature_frame(surface) {
+        curve.integral_derivative(t)
+    } else {
+        curve.derivative(t)
+    }
+}
+fn integral_value(surface: &Surface, u: f64, v: f64) -> V3 {
+    match surface {
+        Surface::Freeform { surface, .. } => surface.integral_value(u, v),
+        _ => surface.value(u, v),
+    }
+}
+fn integral_partials(surface: &Surface, u: f64, v: f64) -> (V3, V3) {
+    let (_, su, sv) = point_and_partials(surface, u, v);
+    (su, sv)
+}
+fn integral_parameters(surface: &Surface, p: V3, hint: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    match surface {
+        Surface::Freeform { surface, .. } => Some(surface.integral_invert(p, hint)),
+        _ => surface.parameters(p, hint),
+    }
+}
 fn point_and_partials(surface: &Surface, u: f64, v: f64) -> (V3, V3, V3) {
     match surface {
-        Surface::Freeform { surface, .. } => surface.value_and_partials(u, v),
+        Surface::Freeform { surface, .. } => surface.integral_value_and_partials(u, v),
         _ => {
             let (su, sv) = surface.partials(u, v);
             (surface.value(u, v), su, sv)
@@ -810,7 +976,7 @@ impl Part {
                 Components::Prefix(M),
             );
         }
-        if attempted {
+        if attempted && shared.is_some() {
             return shared.map(|y| std::array::from_fn(|k| y[k]));
         }
         self.integrate_face_legacy(
@@ -833,6 +999,17 @@ impl Part {
         f: impl Fn(V3, V3, V3) -> [f64; N],
         rule: IntegralRule,
         observed: &mut Option<MassPass>,
+    ) -> Option<[f64; N]> {
+        self.integrate_face_axis(face, &f, rule, observed, true)
+    }
+
+    fn integrate_face_axis<const N: usize>(
+        &self,
+        face: usize,
+        density: &impl Fn(V3, V3, V3) -> [f64; N],
+        rule: IntegralRule,
+        observed: &mut Option<MassPass>,
+        allow_cost_axis: bool,
     ) -> Option<[f64; N]> {
         let fc = &self.faces[face];
         let surface = &fc.surface;
@@ -867,17 +1044,42 @@ impl Part {
         let spans = closed_spans(surface);
         let evaluator = match surface {
             Surface::Freeform { surface, .. } => Some(std::cell::RefCell::new(
-                crate::nurbs::SurfaceEvaluation::new(surface),
+                crate::nurbs::SurfaceEvaluation::for_quadrature(surface),
             )),
             _ => None,
         };
+        // Winding determines loop sense independently of the antiderivative's axis.
+        let winding_u = along_v;
+        let along_v = along_v
+            || (allow_cost_axis
+                && local_quadrature_frame(surface)
+                && !pu
+                && !pv
+                && !spans.0.is_finite()
+                && !spans.1.is_finite()
+                && collapsed_sides(surface) == (None, None)
+                && uv.iter().all(|lp| {
+                    !lp.winds_u
+                        && !lp.winds_v
+                        && !open(lp, |p| p.0, half(domain.u_range()))
+                        && !open(lp, |p| p.1, far_v)
+                })
+                && matches!(surface, Surface::Freeform { surface, .. }
+                if breaks(&surface.knots_v, surface.degree_v).len()
+                    < breaks(&surface.knots_u, surface.degree_u).len()));
+
+        // A parameter-velocity defect invalidates a change of Green primitive even when
+        // its local embedded-rule error is small. Keep the established axis in that case.
+        let along_v = along_v && (winding_u || self.short_axis_walk_is_closed(face));
+
+        let changed_axis = along_v && !winding_u;
         let f = |u: f64, v: f64| {
             let (u, v) = wrap_closed(surface, spans, (u, v));
             let (p, su, sv) = match &evaluator {
                 Some(evaluator) => evaluator.borrow_mut().value_and_partials(u, v),
                 None => point_and_partials(surface, u, v),
             };
-            f(p, su, sv)
+            density(p, su, sv)
         };
         let first = (0..fc.loops.len()).find(|&i| fc.loops[i].vertex.is_none())?;
         let start = uv[first].points.first().copied()?;
@@ -898,17 +1100,60 @@ impl Part {
         };
         // (The swept area, read only where the loops do not run round u, is measured from the
         // same reference.)
-        let u_ref = if along_v { 0.0 } else { reference };
+        let u_ref = if winding_u {
+            0.0
+        } else {
+            collapsed.0.unwrap_or(start.0)
+        };
         let term = |u: f64, v: f64, du: f64, dv: f64| {
             let (weight, y) = if along_v {
                 let cuts = surface_cuts(surface, spans.1, true, reference, v)?;
-                (-du, integrate(&cuts, |s| f(u, s)))
+                let value = if changed_axis {
+                    checked_inner_integrate(&cuts, |s| f(u, s), rule)?
+                } else {
+                    integrate(&cuts, |s| f(u, s))
+                };
+                (-du, value)
             } else {
                 let cuts = surface_cuts(surface, spans.0, false, reference, u)?;
                 (dv, integrate(&cuts, |s| f(s, v)))
             };
             Some(y.map(|y| weight * y))
         };
+        // The moment caller may still hold the mass OnceLock's initializer. Do not
+        // enter it again. Before canonical mass is observed, let the caller establish
+        // its authority independently; afterwards preserve that decision on fallback.
+        macro_rules! failed_boundary {
+            () => {{
+                if !changed_axis {
+                    return None;
+                }
+                let fallback = if rule.observe_mass.is_some() {
+                    if !matches!(*observed, Some(MassPass::Evaluated(Some(_)))) {
+                        // A cost-only refusal did not choose canonical authority. Let
+                        // the caller establish mass independently, without re-entering
+                        // its OnceLock initializer or persisting this optional refusal.
+                        *observed = None;
+                        return None;
+                    }
+                    IntegralRule {
+                        observe_mass: None,
+                        ..rule
+                    }
+                } else {
+                    rule
+                };
+                return self.integrate_face_axis(face, density, fallback, observed, false);
+            }};
+        }
+        macro_rules! checked_boundary {
+            ($call:expr) => {
+                match $call {
+                    Some(value) => value,
+                    None => failed_boundary!(),
+                }
+            };
+        }
         let loops: Vec<usize> = (0..fc.loops.len())
             .filter(|&i| fc.loops[i].vertex.is_none())
             .collect();
@@ -916,7 +1161,14 @@ impl Part {
         // unresolved at the scale of the whole face's terms.
         let mut passes = Vec::with_capacity(loops.len());
         for &i in &loops {
-            passes.push(self.boundary_integral(face, i, shifts[i], &term, (None, rule), u_ref)?);
+            passes.push(checked_boundary!(self.boundary_integral(
+                face,
+                i,
+                shifts[i],
+                &term,
+                (None, rule, changed_axis),
+                u_ref
+            )));
         }
         // Canonical mass validity uses its own errors, floor, refinement and loop sense,
         // irrespective of which additional components this caller needs.
@@ -924,8 +1176,8 @@ impl Part {
             let mass_floor = 1e-11 * passes.iter().map(|p| p.1.1).sum::<f64>();
             let mut mass = [0.0; 5];
             for (&i, (panel, estimate)) in loops.iter().zip(&passes) {
-                let (sum, swept) = if estimate.0 > mass_floor {
-                    let (refined, _) = self.boundary_integral(
+                let (sum, swept) = if estimate.0 > mass_floor || changed_axis {
+                    let (refined, _) = checked_boundary!(self.boundary_integral(
                         face,
                         i,
                         shifts[i],
@@ -936,18 +1188,19 @@ impl Part {
                                 components: Components::Mass(indices),
                                 observe_mass: None,
                             },
+                            changed_axis,
                         ),
                         u_ref,
-                    )?;
+                    ));
                     if refined.1 > mass_floor {
                         *observed = Some(MassPass::Refused);
-                        return None;
+                        failed_boundary!();
                     }
                     (refined.0, refined.3)
                 } else {
                     (panel.0, panel.3)
                 };
-                let winding = along_v || uv[i].winds_v;
+                let winding = winding_u || uv[i].winds_v;
                 let direction = self.loop_direction(face, i, (!winding).then_some(swept))?;
                 for k in 0..5 {
                     mass[k] += direction * sum[indices[k]];
@@ -955,13 +1208,15 @@ impl Part {
             }
             let mass = (mass[0] > 0.0 && mass.iter().all(|x| x.is_finite())).then_some(mass);
             *observed = Some(MassPass::Evaluated(mass));
-            mass?;
+            if mass.is_none() {
+                failed_boundary!();
+            }
         }
         let floor = 1e-11 * passes.iter().map(|p| p.0.2).sum::<f64>();
         let mut total = [0.0; N];
         for (&i, ((mut sum, excess, _, mut swept), _)) in loops.iter().zip(passes) {
-            if excess > floor {
-                let (refined, _) = self.boundary_integral(
+            if excess > floor || changed_axis {
+                let (refined, _) = checked_boundary!(self.boundary_integral(
                     face,
                     i,
                     shifts[i],
@@ -972,25 +1227,85 @@ impl Part {
                             observe_mass: None,
                             ..rule
                         },
+                        changed_axis,
                     ),
                     u_ref,
-                )?;
+                ));
                 // A panel still unresolved at the floor after the deepest halving leaves the
                 // area unknown to that scale: refused rather than reported as if exact.
                 if refined.1 > floor {
-                    return None;
+                    failed_boundary!();
                 }
                 sum = refined.0;
                 swept = refined.3;
             }
             // A loop that winds round either parameter has no signed area to read.
-            let winding = along_v || uv[i].winds_v;
+            let winding = winding_u || uv[i].winds_v;
             let direction = self.loop_direction(face, i, (!winding).then_some(swept))?;
             for k in 0..N {
                 total[k] += direction * sum[k];
             }
         }
         Some(total)
+    }
+
+    /// Necessary closed-differential checks for a contractible projected parameter walk.
+    /// Normalizing by each domain span makes this gate independent of UV units. It is
+    /// a conservative axis-selection condition, not a proof of global quadrature accuracy.
+    fn short_axis_walk_is_closed(&self, face: usize) -> bool {
+        let Some(domain) = self.domain(face) else {
+            return false;
+        };
+        let ((u0, u1), (v0, v1)) = (domain.u_range(), domain.v_range());
+        let (ur, vr) = (u1 - u0, v1 - v0);
+        if !ur.is_finite() || !vr.is_finite() || ur <= 0.0 || vr <= 0.0 {
+            return false;
+        }
+        let Some((_, shifts)) = self.loop_placement(face) else {
+            return false;
+        };
+        let term = |u: f64, v: f64, du: f64, dv: f64| {
+            let (du, dv) = (du / ur, dv / vr);
+            Some([
+                du.hypot(dv),
+                du,
+                dv,
+                (u - u0) / ur * dv + (v - v0) / vr * du,
+            ])
+        };
+        let rule = IntegralRule {
+            components: Components::Prefix(4),
+            observe_mass: None,
+        };
+        for (i, lp) in self.faces[face].loops.iter().enumerate() {
+            if lp.vertex.is_some() {
+                continue;
+            }
+            let Some((coarse, _)) =
+                self.boundary_integral(face, i, shifts[i], &term, (None, rule, false), 0.0)
+            else {
+                return false;
+            };
+            if !coarse.2.is_finite() || coarse.2 <= 0.0 {
+                return false;
+            }
+            let floor = 1e-11 * coarse.2;
+            let Some((refined, _)) =
+                self.boundary_integral(face, i, shifts[i], &term, (Some(floor), rule, false), 0.0)
+            else {
+                return false;
+            };
+            if !refined.1.is_finite()
+                || !refined.2.is_finite()
+                || refined.1 > floor
+                || refined.0[1..]
+                    .iter()
+                    .any(|x| !x.is_finite() || x.abs() > 1e-9 * refined.2)
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// ∮ `term`(u, v, du/dt, dv/dt) dt round loop *i* of the face in parameter space (placed by
@@ -1005,7 +1320,7 @@ impl Part {
         i: usize,
         shift: (f64, f64),
         term: &dyn Fn(f64, f64, f64, f64) -> Option<[f64; N]>,
-        (floor, rule): (Option<f64>, IntegralRule),
+        (floor, rule, split_known): (Option<f64>, IntegralRule, bool),
         u_ref: f64,
     ) -> Option<(Panel<f64, N>, Estimate)> {
         debug_assert!(rule.observe_mass.is_none() || floor.is_none());
@@ -1021,8 +1336,8 @@ impl Part {
             Surface::Freeform { surface: s, .. } => {
                 let (u0, _, v0, _) = s.domain();
                 [
-                    collapsed.0.map(|u| surface.value(u, v0)),
-                    collapsed.1.map(|v| surface.value(u0, v)),
+                    collapsed.0.map(|u| integral_value(surface, u, v0)),
+                    collapsed.1.map(|v| integral_value(surface, u0, v)),
                 ]
             }
             _ => [None, None],
@@ -1082,7 +1397,7 @@ impl Part {
             }
             // One node: its parameters, unwrapped against the walk's, and their velocity.
             let node = |walk: &mut Walk, t: f64| -> Option<((f64, f64), (f64, f64))> {
-                let point = ed.curve.value(t);
+                let point = quadrature_curve_value(surface, &ed.curve, t);
                 // On a collapsed B-spline side, where the other parameter is undetermined,
                 // Newton cannot leave the seed; it starts a little inside instead.
                 let seed = match surface {
@@ -1108,12 +1423,12 @@ impl Part {
                 // Round a closed B-spline surface the point takes the parameters a whole span
                 // round that lie beside the walk (on the surface's seam it has both, and a
                 // boundary may cross that seam anywhere: a face's own seam need not lie on it).
-                let (mut su, mut sv) = surface.partials(u, v);
+                let (mut su, mut sv) = integral_partials(surface, u, v);
                 if matches!(surface, Surface::Freeform { .. }) {
                     let small_jacobian = geom::norm(su) <= 1e-12 * geom::norm(sv)
                         || geom::norm(sv) <= 1e-12 * geom::norm(su);
                     if small_jacobian || has_pole {
-                        let residual = geom::dist(surface.value(u, v), point);
+                        let residual = geom::dist(integral_value(surface, u, v), point);
                         // Preserve the existing singular-Jacobian recovery. A last-ulp change in a
                         // control point can also stall Newton *beside* the pole with a small
                         // nonzero Jacobian, so rank alone must not gate the retry.
@@ -1131,11 +1446,12 @@ impl Part {
                         if rank_stalled || false_pole {
                             let retry = crate::uv::beside_collapsed(surface, point, collapsed)?;
                             if rank_stalled
-                                || geom::dist(surface.value(retry.0, retry.1), point) + 1e-9
+                                || geom::dist(integral_value(surface, retry.0, retry.1), point)
+                                    + 1e-9
                                     < residual
                             {
                                 (u, v) = retry;
-                                (su, sv) = surface.partials(u, v);
+                                (su, sv) = integral_partials(surface, u, v);
                             }
                         }
                     }
@@ -1166,7 +1482,14 @@ impl Part {
                     }
                     (walk.regular_seen, walk.in_band, walk.crossed) = (true, false, false);
                 }
-                let velocity = uv_velocity(surface, spans, u, v, point, ed.curve.derivative(t));
+                let velocity = uv_velocity(
+                    surface,
+                    spans,
+                    u,
+                    v,
+                    point,
+                    quadrature_curve_derivative(surface, &ed.curve, t),
+                );
                 let (u, v) = unwrap((u, v), walk.last);
                 walk.last = (u, v);
                 walk.first.get_or_insert((t, (u, v), velocity));
@@ -1215,7 +1538,7 @@ impl Part {
                 let (mut lo, mut hi) = (ta, tb);
                 for _ in 0..60 {
                     let mid = 0.5 * (lo + hi);
-                    let point = ed.curve.value(mid);
+                    let point = quadrature_curve_value(surface, &ed.curve, mid);
                     match foot(surface, spans, point, wrap(pa)).map(|q| unwrap(q, pa)) {
                         Some(q) if held(q) == held(pa) => lo = mid,
                         _ => hi = mid,
@@ -1263,8 +1586,13 @@ impl Part {
                     [(first, a), (last, b)]
                         .into_iter()
                         .find_map(|((tn, pn), te)| {
-                            let q = foot(surface, spans, ed.curve.value(te), wrap(pn))
-                                .map(|q| unwrap(q, pn))?;
+                            let q = foot(
+                                surface,
+                                spans,
+                                quadrature_curve_value(surface, &ed.curve, te),
+                                wrap(pn),
+                            )
+                            .map(|q| unwrap(q, pn))?;
                             let t = (held(q) != held(pn)).then(|| corner((tn, pn), te))?;
                             ((t - te).abs() > 1e-9 * (b - a).abs()).then_some((t, true))
                         })
@@ -1294,8 +1622,13 @@ impl Part {
             if matches!(surface, Surface::Freeform { .. }) && cuts.len() >= 2 {
                 let x = 0.5 * (1.0 + kronrod_nodes()[0].0);
                 let at = |t: f64, near: (f64, f64)| {
-                    foot(surface, spans, ed.curve.value(t), wrap(near))
-                        .map(|q| (t, unwrap(q, near)))
+                    foot(
+                        surface,
+                        spans,
+                        quadrature_curve_value(surface, &ed.curve, t),
+                        wrap(near),
+                    )
+                    .map(|q| (t, unwrap(q, near)))
                 };
                 let mut more = Vec::new();
                 let mut near = last;
@@ -1312,7 +1645,15 @@ impl Part {
                         {
                             let t = corner(i, cuts[k]);
                             // (A turn within round-off of the cut is the cut's own.)
-                            if (t - cuts[k]).abs() > 1e-7 * (cuts[j] - cuts[k]).abs() {
+                            // An open, noncollapsed patch can have a held-side interval shorter
+                            // than every rule node's endpoint distance. Closed and collapsed
+                            // parameter frames keep their established round-off treatment.
+                            let separated = if local_quadrature_frame(surface) {
+                                t > cuts[k].min(cuts[j]) && t < cuts[k].max(cuts[j])
+                            } else {
+                                (t - cuts[k]).abs() > 1e-7 * (cuts[j] - cuts[k]).abs()
+                            };
+                            if separated {
                                 more.push(t);
                             }
                         }
@@ -1328,7 +1669,14 @@ impl Part {
                 });
                 cuts.dedup();
             }
-            let (sum, excess, size, walk) = adaptive(&cuts, walk, floor, true, &mut eval)?;
+            let (sum, excess, size, walk) = adaptive_with_kink_budget(
+                &cuts,
+                walk,
+                floor,
+                true,
+                split_known.then_some(rule.components),
+                &mut eval,
+            )?;
             mass_estimate.0 = mass_estimate.0.max(edge_mass.0);
             mass_estimate.1 += edge_mass.1;
             add((sum, excess, size, walk.swept));
@@ -1349,7 +1697,13 @@ impl Part {
             let end = |t: f64, from_t: f64, p: (f64, f64), vel: (f64, f64)| {
                 let guess = (p.0 + (t - from_t) * vel.0, p.1 + (t - from_t) * vel.1);
                 let step = (guess.0 - p.0).hypot(guess.1 - p.1);
-                let exact = foot(surface, spans, ed.curve.value(t), wrap(p)).map(|q| unwrap(q, p));
+                let exact = foot(
+                    surface,
+                    spans,
+                    quadrature_curve_value(surface, &ed.curve, t),
+                    wrap(p),
+                )
+                .map(|q| unwrap(q, p));
                 match exact {
                     Some(q) if (q.0 - guess.0).hypot(q.1 - guess.1) <= 10.0 * step + 1e-9 => q,
                     _ => guess,
@@ -1451,7 +1805,9 @@ impl Part {
             let (t0, t1) =
                 edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
             let t = 0.5 * (t0 + t1);
-            let Some((u, v)) = surface.parameters(ed.curve.value(t), None) else {
+            let Some((u, v)) =
+                integral_parameters(surface, quadrature_curve_value(surface, &ed.curve, t), None)
+            else {
                 continue;
             };
             let (mut du, mut dv) = uv_velocity(
@@ -1459,8 +1815,8 @@ impl Part {
                 spans,
                 u,
                 v,
-                ed.curve.value(t),
-                ed.curve.derivative(t),
+                quadrature_curve_value(surface, &ed.curve, t),
+                quadrature_curve_derivative(surface, &ed.curve, t),
             );
             if (t1 >= t0) != forward {
                 (du, dv) = (-du, -dv);
@@ -2032,3 +2388,133 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod narrow_endpoint_controls {
+    //! Synthetic clamped-boundary controls with a known projected unit-square area.
+    use super::*;
+    fn square(delta: f64, reverse: bool) -> Part {
+        let points = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0 + delta, 0.0],
+            [0.0, 1.0 + delta, 0.0],
+        ];
+        let edges = (0..4)
+            .map(|i| crate::brep::Edge {
+                curve: Curve::Line {
+                    origin: points[i],
+                    dir: geom::sub(points[(i + 1) % 4], points[i]),
+                },
+                start: points[i],
+                end: points[(i + 1) % 4],
+                vertices: (i, (i + 1) % 4),
+                same_sense: true,
+                samples: vec![points[i], points[(i + 1) % 4]],
+            })
+            .collect();
+        let surface = crate::nurbs::NurbsSurface::new(
+            1,
+            1,
+            vec![
+                vec![[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                vec![[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+            ],
+            vec![vec![1.0; 2]; 2],
+            vec![0.0, 0.0, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        let uses = if reverse {
+            (0..4).rev().map(|i| (i, false)).collect()
+        } else {
+            (0..4).map(|i| (i, true)).collect()
+        };
+        Part::new(
+            vec![crate::brep::Face {
+                surface: Surface::Freeform {
+                    kind: "synthetic",
+                    surface: Box::new(surface),
+                },
+                reversed: false,
+                loops: vec![crate::brep::Loop {
+                    edges: uses,
+                    vertex: None,
+                }],
+                solid: None,
+                pcurves: vec![],
+            }],
+            edges,
+            vec![],
+        )
+    }
+    #[test]
+    fn shorter_inner_axis_preserves_square_moments_and_rigid_motion() {
+        for reverse in [false, true] {
+            let mut part = square(0.0, reverse);
+            let surface = crate::nurbs::NurbsSurface::new(
+                1,
+                1,
+                [0.0, 0.2, 0.8, 1.0]
+                    .into_iter()
+                    .map(|u| vec![[u, 0.0, 0.0], [u, 1.0, 0.0]])
+                    .collect(),
+                vec![vec![1.0; 2]; 4],
+                vec![0.0, 0.0, 0.2, 0.8, 1.0, 1.0],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            part.faces[0].surface = Surface::Freeform {
+                kind: "synthetic",
+                surface: Box::new(surface),
+            };
+            let moments = part.compute_face_moments(0).unwrap();
+            assert!((moments.area - 1.0).abs() < 3e-12);
+            for (a, b) in moments.centroid.into_iter().zip([0.5, 0.5, 0.0]) {
+                assert!((a - b).abs() < 3e-12);
+            }
+            for k in 0..3 {
+                assert!(
+                    (moments.second_moments[k][k] - if k < 2 { 1.0 / 12.0 } else { 0.0 }).abs()
+                        < 3e-12
+                );
+            }
+            let transform = [
+                [1.0, 0.0, 0.0, 12.0],
+                [0.0, 0.0, -1.0, -3.0],
+                [0.0, 1.0, 0.0, 7.0],
+            ];
+            let moved = part.transformed(&transform).unwrap();
+            let mass = moved.compute_face_mass(0).terms.unwrap();
+            for (a, b) in mass.into_iter().zip([1.0, 3.0, 0.0, -1.0, 0.0]) {
+                assert!((a - b).abs() < 1e-10, "{mass:?}");
+            }
+            let m = moved.compute_face_moments(0).unwrap();
+            for (a, b) in m.centroid.into_iter().zip([12.5, -3.0, 7.5]) {
+                assert!((a - b).abs() < 1e-10);
+            }
+            for k in 0..3 {
+                assert!(
+                    (m.second_moments[k][k] - if k != 1 { 1.0 / 12.0 } else { 0.0 }).abs() < 1e-10
+                );
+            }
+        }
+    }
+    #[test]
+    fn tiny_endpoint_clamp_has_the_projected_square_area_in_both_loop_directions() {
+        for reverse in [false, true] {
+            let part = square(2f64.powi(-35), reverse);
+            let fixed = part.compute_face_mass(0).terms.unwrap();
+            assert!((fixed[0] - 1.0).abs() < 3e-12, "{fixed:?}");
+            assert!((fixed[4] - 1.0).abs() < 3e-12);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "checked_inner_controls.rs"]
+mod checked_inner_controls;
+
+#[cfg(test)]
+#[path = "mass_public_synthetic.rs"]
+mod synthetic_public;

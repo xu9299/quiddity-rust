@@ -721,6 +721,20 @@ impl Curve {
         }
     }
 
+    /// Centered values used only while integrating an exact boundary.
+    pub(crate) fn integral_value(&self, t: f64) -> V3 {
+        match self {
+            Self::Nurbs(n) => n.integral_value(Self::nurbs_parameter(n, t)),
+            _ => self.value(t),
+        }
+    }
+    pub(crate) fn integral_derivative(&self, t: f64) -> V3 {
+        match self {
+            Self::Nurbs(n) => n.integral_derivative(Self::nurbs_parameter(n, t)),
+            _ => self.derivative(t),
+        }
+    }
+
     // A closed edge may run past the knot domain. Values and tangents must use the same
     // turn; clamping the tangent while wrapping the point changes the boundary integral.
     fn nurbs_parameter(n: &NurbsCurve, t: f64) -> f64 {
