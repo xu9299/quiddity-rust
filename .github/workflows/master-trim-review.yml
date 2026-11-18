@@ -1,0 +1,134 @@
+name: Master trim area survey and ARM regression
+on:
+  push:
+    branches: [validation/master-trim-survey-20261119]
+permissions:
+  contents: read
+concurrency:
+  group: master-trim-survey-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
+  SOURCE: 8818c56edf67a1b2ea1d9b9c744c6a5471014e9a
+  TREE: ade1295655b5766c6c9d2fa4b8dea2ee7568a2a8
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            task: survey-and-strict
+          - runner: xcode-27
+            task: workspace
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: matrix.task == 'survey-and-strict'
+        with:
+          path: harness
+          sparse-checkout: .github/master-trim-survey
+          persist-credentials: false
+      - name: Identify source, corpus, OS and compiler
+        run: |
+          mkdir -p ../evidence/verified
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../evidence/environment.log
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(uname -m)" = arm64
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-${{ matrix.runner }}
+      - name: Build identical survey drivers against both source revisions
+        if: matrix.task == 'survey-and-strict'
+        run: |
+          for rev in "$BASE" "$SOURCE"; do
+            git checkout --quiet --detach "$rev"
+            cp ../harness/.github/master-trim-survey/survey.rs examples/master_trim_survey.rs
+            touch crates/haecceity/src/mass.rs src/lib.rs
+            cargo build --release --locked --example master_trim_survey
+            cp "$CARGO_TARGET_DIR/release/examples/master_trim_survey" "$RUNNER_TEMP/survey-$rev"
+            rm examples/master_trim_survey.rs
+            test -z "$(git status --porcelain)"
+          done
+          shasum -a 256 "$RUNNER_TEMP/survey-$BASE" "$RUNNER_TEMP/survey-$SOURCE" > ../evidence/drivers.sha256
+      - name: Compare face areas, fingerprints and recognition on all pinned inputs
+        if: matrix.task == 'survey-and-strict'
+        run: |
+          if ! command -v uv >/dev/null; then brew install uv; fi
+          uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
+            --manifest tests/fixtures/corpus.json --corpus ../corpus \
+            --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
+            --control crates/haecceity/tests/fixtures/master-trim-square.step --out ../evidence | tee ../evidence/survey.log
+      - name: Upload corpus survey
+        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: master-trim-survey
+          path: |
+            evidence/summary.json
+            evidence/per-file.json
+            evidence/survey.log
+            evidence/drivers.sha256
+            evidence/environment.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Format, lint and feature-off builds
+        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings
+          cargo check -p haecceity --release --locked --no-default-features
+          cargo check -p quiddity --release --locked --no-default-features --features presentation
+      - name: Run all workspace tests against pinned references
+        if: matrix.task == 'workspace'
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/evidence/verified
+        run: cargo test --workspace --release --locked --no-fail-fast 2>&1 | tee ../evidence/workspace.log
+      - name: Run Rust snapshot producers under their original comparison bands
+        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/evidence/verified
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          cargo test --workspace --release --locked --no-fail-fast rust_snapshot 2>&1 | tee ../evidence/snapshot-tests.log
+      - name: Check complete coverage and provenance
+        if: "!cancelled()"
+        run: cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../evidence/verified 2>&1 | tee ../evidence/coverage.log
+      - name: Check strict ARM snapshot reproduction
+        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        run: cargo run -p snapshot-tool --release --locked -- --check --verify-dir ../evidence/verified 2>&1 | tee ../evidence/strict.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: master-trim-${{ matrix.task }}-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
