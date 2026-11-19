@@ -33,6 +33,10 @@ in [docs/alpha1.md](docs/alpha1.md).
   A transferred trim near a collapsed spline side uses the closer physical
   point. The selected loop's flux is integrated about a face vertex so a
   rigid translation does not decide whether to use that loop.
+  Mesh edge thinning measures the turning angle on the selected curve when
+  its endpoint misses the shared STEP vertex within file precision.
+  Lengths and fractional arc-length positions split a closed spline at the
+  STEP knots on its actual parameter interval, including across turns.
   Winding queries close regular trim loops at their shared STEP vertex; a ray
   through independently rounded pcurve ends now reads both sides of an annular groove.
   Probe rays near a selected common edge can resolve a duplicate entry within

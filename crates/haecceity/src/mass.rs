@@ -103,6 +103,42 @@ fn cuts(a: f64, b: f64, panels: usize, breaks: &[f64]) -> Option<Vec<f64>> {
     Some(out)
 }
 
+/// Knot boundaries on the branch traversed by this edge or surface integral.
+fn knots_on_interval(knots: Vec<f64>, period: Option<f64>, a: f64, b: f64) -> Option<Vec<f64>> {
+    let Some(span) = period else {
+        return Some(knots);
+    };
+    let Some(&lo) = knots.first() else {
+        return Some(knots);
+    };
+    let turns = |t: f64| ((t - lo) / span).floor();
+    let first = turns(a.min(b));
+    let last = turns(a.max(b));
+    if !(span > 0.
+        && first.is_finite()
+        && last.is_finite()
+        && first >= i64::MIN as f64
+        && last < i64::MAX as f64)
+    {
+        return None;
+    }
+    let (first, last) = (first as i64, last as i64);
+    if first == 0 && last == 0 {
+        return Some(knots);
+    }
+    let count = usize::try_from(last.checked_sub(first)?)
+        .ok()?
+        .checked_add(1)?;
+    if count.checked_mul(knots.len())? > MAX_PANELS {
+        return None;
+    }
+    Some(
+        (first..=last)
+            .flat_map(|turn| knots.iter().map(move |k| k + turn as f64 * span))
+            .collect(),
+    )
+}
+
 /// How an integral along one surface parameter is cut: in one piece where the integrands are
 /// polynomial in it (planes, and the straight direction of cylinders and cones), at the knots
 /// of a B-spline surface (repeated each `span` round, where the surface closes in that
@@ -112,23 +148,12 @@ fn surface_cuts(surface: &Surface, span: f64, along_v: bool, a: f64, b: f64) -> 
         Surface::Plane { .. } => Some(vec![a, b]),
         Surface::Cylinder { .. } | Surface::Cone { .. } if along_v => Some(vec![a, b]),
         Surface::Freeform { surface, .. } => {
-            let mut knots = if along_v {
+            let knots = if along_v {
                 breaks(&surface.knots_v, surface.degree_v)
             } else {
                 breaks(&surface.knots_u, surface.degree_u)
             };
-            if span.is_finite() && !knots.is_empty() {
-                let lo = knots[0];
-                let turns = |x: f64| ((x - lo) / span).floor() as i64;
-                let (first, last) = (turns(a.min(b)), turns(a.max(b)));
-                if last.saturating_sub(first) > MAX_PANELS as i64 {
-                    return None;
-                }
-                let one = knots.clone();
-                knots = (first..=last)
-                    .flat_map(|n| one.iter().map(move |k| k + n as f64 * span))
-                    .collect();
-            }
+            let knots = knots_on_interval(knots, span.is_finite().then_some(span), a, b)?;
             cuts(a, b, 1, &knots)
         }
         _ => cuts(a, b, (b - a).abs().ceil() as usize, &[]),
@@ -159,12 +184,7 @@ fn curve_cuts(surface: &Surface, curve: &Curve, t0: f64, t1: f64) -> Option<Vec<
         Curve::Nurbs(n) => {
             // Includes the reader's exact quadratic parabola and hyperbola spans.
             // A closed curve's edge may run past its domain's end.
-            let period = curve.period().unwrap_or(0.0);
-            breaks.extend(
-                n.breaks()
-                    .into_iter()
-                    .flat_map(|k| [k - period, k, k + period]),
-            );
+            breaks.extend(knots_on_interval(n.breaks(), curve.period(), t0, t1)?);
             cuts(t0, t1, 4, &breaks)
         }
     }
