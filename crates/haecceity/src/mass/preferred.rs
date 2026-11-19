@@ -701,14 +701,18 @@ mod tests {
     fn master_trim_and_projected_boundary_both_integrate() {
         let source = include_str!("../../tests/fixtures/master-trim-square.step");
         let unmarked = source.replace(".PCURVE_S1.", ".CURVE_3D.");
-        let excessive = source.replace("0.0004", "0.0012");
-        assert_ne!(excessive, source);
+        let wide = source.replace("0.0004", "0.04");
+        let narrow = source.replace("0.0004", "0.0012");
+        let crossed = source.replace("0.0004", "2.4");
         // The lower edge is y=2h*x*(1-x), so the retained area is 1-h/3.
         // Its first y-moment is 1/2-h²/15. Projection encloses the unit square.
         for (text, h, preferred) in [
             (source, 0.0004, true),
             (unmarked.as_str(), 0., false),
-            (excessive.as_str(), 0., false),
+            (narrow.as_str(), 0.0012, true),
+            (wide.as_str(), 0.04, true),
+            // The larger bow crosses the opposite coedge twice.
+            (crossed.as_str(), 0., false),
         ] {
             let area = 1. - h / 3.;
             let y = (0.5 - h * h / 15.) / area;
@@ -821,13 +825,22 @@ mod tests {
         assert!(p.face_mass(0).is_none());
     }
 
+    // S(u,v) = (width*u + v, eps*v, v²), with u in [0.2,0.8].
+    fn narrow_parabola_area(width: f64) -> f64 {
+        let eps: f64 = 0.001;
+        let primitive = |v: f64| {
+            0.5 * v * (eps * eps + 4. * v * v).sqrt() + eps * eps / 4. * (2. * v / eps).asinh()
+        };
+        0.6 * width * (primitive(0.005) - primitive(0.001))
+    }
+
     #[test]
-    fn master_trim_interior_disagreement_refuses_recovery() {
-        // Retain the original regression's geometry: its 0.001005 mm
-        // disagreement / ~0.604 mm box diagonal now correctly exceeds the band.
+    fn the_selected_parabolic_patch_outlives_the_spatial_diagonal_guard() {
+        // The specialised same-parameter formulation refuses this discrepancy,
+        // but the file still selects a valid rectangular trim on the parabola.
         let original = narrow_parabola_with_width(1.);
         assert!(original.integration_pcurves(0).is_none());
-        assert!(original.face_mass(0).is_none());
+        assert!((original.face_mass(0).unwrap()[0] - narrow_parabola_area(1.)).abs() < 1e-13);
 
         let p = narrow_parabola_with_width(2.);
         assert!(p.integration_pcurves(0).is_some());
@@ -875,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn long_thin_master_trim_passes_diagonal_but_fails_area_guard() {
+    fn a_thin_declared_region_has_its_own_area_despite_the_spatial_strip_guard() {
         // Retain the previous recovery regression's exact width-two geometry.
         // Its box is long, but the ~2.4e-5 mm strip is narrower than its offset.
         let p = narrow_parabola_with_width(2.);
@@ -897,14 +910,10 @@ mod tests {
             unreachable!()
         };
         let perimeter = master_boundary_length(&p.faces[0].surface, surface, &paths).unwrap();
-        let eps: f64 = 0.001;
-        let primitive = |v: f64| {
-            0.5 * v * (eps * eps + 4. * v * v).sqrt() + eps * eps / 4. * (2. * v / eps).asinh()
-        };
-        let area = 1.2 * (primitive(0.005) - primitive(0.001));
+        let area = narrow_parabola_area(2.);
         assert!(trim.maximum_deviation * perimeter / area > 0.001);
-        assert!(p.face_mass(0).is_none(), "thin trim must not recover");
-        assert!(p.face_moments(0).is_none());
+        assert!((p.face_mass(0).unwrap()[0] - area).abs() < 1e-13);
+        assert!((p.face_moments(0).unwrap().area - area).abs() < 1e-13);
     }
 
     #[test]

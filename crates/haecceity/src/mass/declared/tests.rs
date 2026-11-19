@@ -285,9 +285,8 @@ fn declared_outer_and_hole_survive_a_step_round_trip() {
         );
     }
     extra += "#220=EDGE_LOOP('',(#216,#217,#218,#219));\n#221=FACE_BOUND('',#220,.F.);\n";
-    // A hole adds perimeter and removes area. Keep the input within the
-    // existing relative disagreement guard after adding the hole.
-    let text = plane().replace("(0.5,0.0004)", "(0.5,0.0002)").replace(
+    // The outer pcurve bows inward while the explicit square hole stays fixed.
+    let text = plane().replace("(0.5,0.0004)", "(0.5,0.04)").replace(
         "#159=ADVANCED_FACE('',(#158)",
         &(extra + "#159=ADVANCED_FACE('',(#221,#158)"),
     );
@@ -298,7 +297,7 @@ fn declared_outer_and_hole_survive_a_step_round_trip() {
         assert_eq!(p.outer_bounds.get(&0), Some(&1));
         assert_eq!(p.outer_loop(0), Some(1));
         assert!(!p.domain(0).unwrap().contains(0.5, 0.5));
-        assert!((p.face_mass(0).unwrap()[0] - (0.75 - 0.0002 / 3.)).abs() < 1e-12);
+        assert!((p.face_mass(0).unwrap()[0] - (0.75 - 0.04 / 3.)).abs() < 1e-12);
     }
 }
 

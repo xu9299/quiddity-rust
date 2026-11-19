@@ -1004,6 +1004,44 @@ fn region_overlaps(regions: &[FlatRegion], thickness: f64) -> Vec<FlatOverlapWit
         .collect()
 }
 
+/// Divide a selected rational spline rim by physical arc length. The kernel has
+/// bounded its full distance to the incident circle and proved monotone angular
+/// travel. A segment of length l can turn by at most l/(r - tolerance). Its
+/// chord error is the circular sagitta plus the deviations of the curve and
+/// its chord endpoints from the circle.
+fn checking_spline_rim(part: &Part, edge: usize, deflection: f64) -> Option<(Vec<V3>, f64)> {
+    if !matches!(part.boundary_edge_curve(edge), Some(Curve::Nurbs(_))) {
+        return None;
+    }
+    let Curve::Circle { radius, .. } = part.boundary_edge_support(edge)? else {
+        return None;
+    };
+    let tolerance = geom::COORD_FLOOR;
+    if *radius <= 2. * tolerance {
+        return None;
+    }
+    let turn = part.declared_edge_length(edge)? / (radius - tolerance);
+    let step = (8. * deflection / radius).sqrt().min(PI / 2.);
+    let segments = (turn / step).ceil().max(1.) as usize;
+    let mut points = Vec::new();
+    points.try_reserve_exact(segments.checked_add(1)?).ok()?;
+    for i in 0..=segments {
+        points.push(
+            part.declared_edge_at_length(edge, i as f64 / segments as f64)?
+                .0,
+        );
+    }
+    let source = &part.edges[edge];
+    let pin = geom::dist(points[0], source.start).max(geom::dist(points[segments], source.end));
+    points[0] = source.start;
+    points[segments] = source.end;
+    let angle = turn / segments as f64;
+    Some((
+        points,
+        radius * (1. - (angle / 2.).cos()) + 2. * tolerance + pin,
+    ))
+}
+
 /// Checking curves are independent of the display mesh. Circle chord sagitta scales with
 /// thickness and radius, without a fixed angular minimum vertex count. Other curves reuse
 /// kernel samples: CHORD_TOLERANCE is absolute millimetres because that is the accuracy of
@@ -1045,13 +1083,16 @@ fn checking_boundary(
                             )
                         }
                         _ => {
-                            let mut points = Vec::new();
-                            thin(part.boundary_edge_samples(e), deflection, &mut points);
-                            (
-                                points,
-                                deflection + crate::kernel::sampling::CHORD_TOLERANCE,
-                                None,
-                            )
+                            let (points, error) = checking_spline_rim(part, e, deflection)
+                                .unwrap_or_else(|| {
+                                    let mut points = Vec::new();
+                                    thin(part.boundary_edge_samples(e), deflection, &mut points);
+                                    (
+                                        points,
+                                        deflection + crate::kernel::sampling::CHORD_TOLERANCE,
+                                    )
+                                });
+                            (points, error, None)
                         }
                     };
                 if !forward {

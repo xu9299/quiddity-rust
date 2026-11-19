@@ -92,18 +92,17 @@ trim bounds and edge queries. Solid volume consumes the face flux. A whole
 sphere with a vertex loop uses its analytic formula.
 
 Endpoint matches and closing paths are checked against the file's length
-uncertainty plus the coordinate floor. Interior checks sample the union of the
-two representations' knot spans in physical coordinates. A sampled departure
-over one thousandth of the boundary's reference diagonal, or a departure times
-perimeter greater than one thousandth of area, rejects the declared region.
-The perimeter is the physical length of the master on its STEP carrier. For a
-foreign pcurve the integrand uses the carrier's partial derivatives directly.
-Transferring the trim to the receiving surface is necessary for the area
-integral. The length check uses the same adaptive error budget on its carrier.
-These are sampled representation checks. Independent curve parameters can
-advance at different rates on the same spatial arc. The spatial curve remains
-available if a declaration cannot be evaluated or the integral fails its error
-checks. The mass cache publishes the chosen method along with its result so
+uncertainty plus the coordinate floor. A foreign master is evaluated on its
+named carrier and its transfer must lie within that physical tolerance of the
+receiving face. The selected parameter interval must remain on the carrier.
+A proper intersection of two selected trims in the same chart invalidates the
+loop. Candidate chord intersections are checked on the STEP curves and away
+from their common vertices before refusing the boundary.
+A discrepancy with a subordinate 3D curve alone does not change the chosen
+boundary. The specialised spline-patch formulation retains its original
+sufficient conditions. If these do not hold, the general integrator still
+tries the declared region before falling back to the projected boundary.
+The mass cache publishes the chosen method along with its result so
 the first query for a centroid cannot choose another boundary.
 
 A master on an adjacent surface reaches its target through the same constrained
@@ -120,10 +119,16 @@ Two public faces separate the declared and alternate answers. The cylindrical
 face #13471 in cgb217 uses edge #12691. Its first pcurve is a line on spline
 surface #12488. OpenCascade evaluation of those raw STEP entities puts the
 maximum axial coordinate at 24.518993418091 mm. The second pcurve, on
-the cylinder itself, fixes that coordinate at 24.5 mm. Selecting that flat
-alternate with the original bowed spatial spline fails the strip guard and
-gives the projected bound of 24.51868961048 mm. Pairing it with the adjacent
-rim’s 3D circle on the same parallel accepts the declared 24.5 mm bound.
+the cylinder itself, fixes that coordinate at 24.5 mm. Selecting that pcurve instead changes the declared bound to 24.5 mm
+even when the alternate spatial spline still bows. Selecting the 3D curve
+itself gives the projected bound of 24.51868961048 mm.
+
+In the sheet-metal hanger, the planar spline selected by surface curve #6011
+lies within 1.34 × 10⁻¹² mm of its radius-5 mm circular support over all three
+rational quadratic spans. Flattening that rim with the general display chords
+changed one overlap by 5.86 × 10⁻⁵ mm². The independent blank check evaluates
+the selected spline at equal physical arc lengths. Its error band includes the
+circular sagitta, the certified curve-to-circle error and STEP vertex pinning.
 
 On cgb242 face #84456, the lower boundary lifts from a line on plane #31961.
 The upper boundary lifts pcurve #44970 on cylinder #32222 onto the receiving

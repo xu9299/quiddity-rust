@@ -1,5 +1,5 @@
 //! Areas and volumes (`BRepGProp`): surface integrals over each face's trimmed parameter
-//! domain, reduced by Green's theorem to boundary integrals. An eligible explicit
+//! domain, reduced by Green's theorem to boundary integrals. An evaluable explicit
 //! STEP master trim defines the region. If it cannot be integrated, use the
 //! foot points of the 3D edge curves on the surface. The two regions may differ
 //! by the file's own 2D/3D disagreement. See `docs/face-integration-work.md`.
@@ -792,9 +792,6 @@ impl Part {
         )?;
         terms[1] += geom::dot(origin, [terms[2], terms[3], terms[4]]);
         let terms = valid_mass(terms)?;
-        if !boundary.within_strip(self, face, terms[0])? {
-            return None;
-        }
         Some(FaceMass {
             terms: Some(terms),
             method: BoundaryMethod::Declared,
