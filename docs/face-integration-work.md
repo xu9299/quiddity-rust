@@ -68,7 +68,9 @@ A STEP surface curve has a spatial curve and up to two associated geometric
 representations. Its master flag selects the 3D curve or one of those slots.
 The pcurve's two coordinates belong to its named carrier. For a different
 incident face, the evaluator lifts it on its carrier and locates that spatial
-point on the receiving face. A retained analytic carrier can also stand alone
+point on the receiving face. A pcurve outside its carrier's finite knot domain
+has no valid lift. Clamping it to the edge of that patch changes both the
+geometry and the tangent. A retained analytic carrier can also stand alone
 without a topological face. A spatial master goes through the existing
 projection. Both choices may appear in the same loop. An explicit
 `FACE_OUTER_BOUND` supplies the outer contour. Where the file gives only

@@ -22,21 +22,38 @@ struct Transfer {
     face_spans: (f64, f64),
 }
 
+/// The bounded evaluator clamps its inputs. A trim outside a carrier's native
+/// patch has no point or tangent there. Crossing a genuinely closed seam is
+/// different and is handled by wrapping before checking the domain.
+fn on_carrier(surface: &Surface, spans: (f64, f64), q: V3) -> Option<(f64, f64)> {
+    if !q[0].is_finite() || !q[1].is_finite() {
+        return None;
+    }
+    let (u, v) = wrap_closed(surface, spans, (q[0], q[1]));
+    if let Surface::Freeform { surface, .. } = surface {
+        let (u0, u1, v0, v1) = surface.domain();
+        let bounded = |x: f64, lo: f64, hi: f64| {
+            let roundoff = 64. * f64::EPSILON * lo.abs().max(hi.abs()).max(hi - lo);
+            (x >= lo - roundoff && x <= hi + roundoff).then(|| x.clamp(lo, hi))
+        };
+        return Some((bounded(u, u0, u1)?, bounded(v, v0, v1)?));
+    }
+    Some((u, v))
+}
+
 impl ParamCurve {
     fn carrier_uv(&self, t: f64) -> V3 {
         let p = self.source.value(t);
         [self.axes[0].at(p[0]).0, self.axes[1].at(p[1]).0, 0.]
     }
-    fn lifted(&self, t: f64, tr: &Transfer) -> ((f64, f64), V3) {
-        let q = self.carrier_uv(t);
-        let uv = wrap_closed(&tr.carrier, tr.carrier_spans, (q[0], q[1]));
-        (uv, tr.carrier.value(uv.0, uv.1))
+    fn lifted(&self, t: f64, tr: &Transfer) -> Option<((f64, f64), V3)> {
+        let uv = on_carrier(&tr.carrier, tr.carrier_spans, self.carrier_uv(t))?;
+        Some((uv, tr.carrier.value(uv.0, uv.1)))
     }
     pub(crate) fn value(&self, t: f64) -> V3 {
         if let Some(tr) = &self.transfer {
-            let (_, p) = self.lifted(t, tr);
-            tr.face
-                .parameters(p, None)
+            self.lifted(t, tr)
+                .and_then(|(_, p)| tr.face.parameters(p, None))
                 .map_or([f64::NAN; 3], |(u, v)| [u, v, 0.])
         } else {
             self.carrier_uv(t)
@@ -53,7 +70,9 @@ impl ParamCurve {
         let Some(tr) = &self.transfer else {
             return velocity;
         };
-        let ((u, v), xyz) = self.lifted(t, tr);
+        let Some(((u, v), xyz)) = self.lifted(t, tr) else {
+            return [f64::NAN; 3];
+        };
         let (su, sv) = tr.carrier.partials(u, v);
         let tangent = geom::add(geom::scale(su, velocity[0]), geom::scale(sv, velocity[1]));
         let Some((u, v)) = tr.face.parameters(xyz, None) else {
@@ -127,7 +146,7 @@ fn stationary_parameters(ts: &mut Vec<f64>, dirs: &[V3], velocity: impl Fn(f64) 
 impl EdgeTrim {
     fn point(&self, s: &Surface, t: f64) -> V3 {
         if let Some(tr) = &self.curve.transfer {
-            return self.curve.lifted(t, tr).1;
+            return self.curve.lifted(t, tr).map_or([f64::NAN; 3], |(_, p)| p);
         }
         let (u, v) = self.surface_uv(s, t);
         s.value(u, v)
@@ -560,17 +579,7 @@ fn resolve(
         });
         // A bounded NURBS evaluator clamps outside parameters to its endpoint.
         // Such a match must not suppress inversion of the pcurve's own endpoints.
-        let on_surface = |t| {
-            let q = curve.value(t);
-            let (u, v) = wrap_closed(surface, spans, (q[0], q[1]));
-            match surface {
-                Surface::Freeform { surface: s, .. } => {
-                    let (u0, u1, v0, v1) = s.domain();
-                    (u0..=u1).contains(&u) && (v0..=v1).contains(&v)
-                }
-                _ => u.is_finite() && v.is_finite(),
-            }
-        };
+        let on_surface = |t| on_carrier(surface, spans, curve.value(t)).is_some();
         in_domain
             && on_surface(a)
             && on_surface(b)
@@ -650,23 +659,15 @@ fn resolve(
     for span in breaks.windows(2) {
         for j in 0..=32 {
             let t = span[0] + (span[1] - span[0]) * (j as f64 / 32.);
-            let (u, v) = trim.surface_uv(surface, t);
-            if !u.is_finite() || !v.is_finite() {
-                return None;
-            }
-            if let Surface::Freeform { surface: s, .. } = surface {
-                let (u0, u1, v0, v1) = s.domain();
-                if u < u0 || u > u1 || v < v0 || v > v1 {
-                    return None;
-                }
-            }
+            let (u, v) = on_carrier(surface, spans, trim.curve.value(t))?;
             let p = surface.value(u, v);
             if let Some(tr) = &trim.curve.transfer {
-                let (_, xyz) = trim.curve.lifted(t, tr);
+                let (_, xyz) = trim.curve.lifted(t, tr)?;
                 let residual = geom::dist(p, xyz);
                 if !residual.is_finite() || residual > tolerance {
                     return None;
                 }
+                trim.deviation = trim.deviation.max(residual);
             }
             let t3 = spatial.0 + (spatial.1 - spatial.0) * ((t - a) / (b - a));
             let mut d = geom::dist(p, edge.curve.value(t3));

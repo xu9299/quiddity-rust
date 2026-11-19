@@ -1170,6 +1170,13 @@ impl Part {
                 if let Some(trim) = trim {
                     let p = trim.curve.value(t);
                     let v = trim.curve.derivative(t);
+                    if !(p[0].is_finite()
+                        && p[1].is_finite()
+                        && v[0].is_finite()
+                        && v[1].is_finite())
+                    {
+                        return None;
+                    }
                     let q = unwrap((p[0], p[1]), walk.last);
                     let velocity = (v[0], v[1]);
                     walk.last = q;

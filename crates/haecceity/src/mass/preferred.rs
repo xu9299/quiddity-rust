@@ -254,8 +254,8 @@ impl Part {
         let inside = |p: V3| {
             p.iter().all(|x| x.is_finite()) && p[0] >= u0 && p[0] <= u1 && p[1] >= v0 && p[1] <= v1
         };
-        // Use the same face bounding-box diagonal as centroid evidence (mm),
-        // with no unit-size floor; inertia evidence uses its trace separately.
+        // Bound the scale using the spatial edge samples, independently of the
+        // trimmed bounds that this choice will supply. There is no unit-size floor.
         let length = self.trim_reference_length(face);
         if !length.is_finite() || length <= 0. {
             return None;

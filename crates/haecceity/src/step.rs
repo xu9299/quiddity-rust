@@ -444,7 +444,48 @@ impl Reader<'_> {
                 minor,
             })
         };
+        // ISO knot families specify their knot vector by degree and pole count.
+        let family = |degree: i64, controls: &[m::CartesianPointRef], interior: Option<i64>| {
+            let d = usize::try_from(degree).ok()?;
+            let n = controls.len();
+            if d == 0 || d >= n {
+                return None;
+            }
+            let mult = if let Some(interior) = interior {
+                let inner = usize::try_from(interior).ok()?;
+                if !(n - d - 1).is_multiple_of(inner) {
+                    return None;
+                }
+                let spans = (n - d - 1) / inner + 1;
+                let mut counts = vec![interior; spans + 1];
+                counts[0] = degree + 1;
+                counts[spans] = degree + 1;
+                counts
+            } else {
+                vec![1; n + d + 1]
+            };
+            let knots = (0..mult.len()).map(|i| i as f64).collect();
+            Some(RawCurve2d::BSpline {
+                degree,
+                points: controls.iter().map(point).collect::<Option<_>>()?,
+                knots,
+                multiplicities: mult,
+                weights: None,
+            })
+        };
         Some(match item {
+            m::RepresentationItemRef::BezierCurve(i) => {
+                let c = model.get(m::BezierCurveId(i.0))?;
+                family(c.degree, &c.control_points_list, Some(c.degree))?
+            }
+            m::RepresentationItemRef::QuasiUniformCurve(i) => {
+                let c = model.get(m::QuasiUniformCurveId(i.0))?;
+                family(c.degree, &c.control_points_list, Some(1))?
+            }
+            m::RepresentationItemRef::UniformCurve(i) => {
+                let c = model.get(m::UniformCurveId(i.0))?;
+                family(c.degree, &c.control_points_list, None)?
+            }
             m::RepresentationItemRef::Circle(i) => {
                 let c = model.get(m::CircleId(i.0))?;
                 conic(&c.position, c.radius, None)?

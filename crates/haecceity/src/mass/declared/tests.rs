@@ -12,6 +12,43 @@ fn plane() -> String {
 }
 
 #[test]
+fn implicit_knot_families_keep_their_parameter_curve() {
+    for kind in ["BEZIER_CURVE", "QUASI_UNIFORM_CURVE"] {
+        let file = entity(
+            &plane(),
+            115,
+            &format!("{kind}('',2,(#112,#113,#114),.UNSPECIFIED.,.F.,.F.)"),
+        );
+        let p = crate::step::read_step(file.as_bytes()).unwrap();
+        assert!(
+            (p.face_mass(0).unwrap()[0] - (1. - 0.0004 / 3.)).abs() < 1e-12,
+            "{kind}"
+        );
+    }
+    let file = entity(
+        &plane(),
+        127,
+        "UNIFORM_CURVE('',1,(#124,#136),.UNSPECIFIED.,.F.,.F.)",
+    );
+    let p = crate::step::read_step(file.as_bytes()).unwrap();
+    assert_eq!(p.primary_pcurves(0).count(), 4);
+    assert!((p.face_mass(0).unwrap()[0] - (1. - 0.0004 / 3.)).abs() < 1e-12);
+}
+
+#[test]
+fn a_foreign_pcurve_cannot_be_clamped_to_its_carriers_boundary() {
+    let text = SQUARE
+        .replace("(0.5,0.0004)", "(0.5,-0.0004)")
+        .replace("#21=OPEN_SHELL('',(#159))", "#201=PLANE('',#11);\n#202=ADVANCED_FACE('',(#158),#201,.T.);\n#21=OPEN_SHELL('',(#159,#202))");
+    let part = crate::step::read_step(text.as_bytes()).unwrap();
+    assert_eq!(part.faces.len(), 2);
+    for f in 0..2 {
+        assert!(part.measured_boundary(f).is_none());
+        assert!((part.face_mass(f).unwrap()[0] - 1.).abs() < 1e-12);
+    }
+}
+
+#[test]
 fn master_on_another_surface_is_lifted_in_its_own_frame() {
     let extra = "#201=AXIS2_PLACEMENT_3D('',#12,#13,#121);\n#202=PLANE('',#201);\n#203=PCURVE('',#202,#116);\n#204=ADVANCED_FACE('',(#158),#202,.T.);\n";
     let mut text = plane().replace("#111=LINE", &format!("{extra}#111=LINE"));
