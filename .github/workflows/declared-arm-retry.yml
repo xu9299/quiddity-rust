@@ -1,0 +1,112 @@
+name: Complete STEP boundary ARM checks
+on:
+  push:
+    branches: [validation/step-declared-arm-20261119]
+permissions:
+  contents: read
+jobs:
+  arm:
+    runs-on: macos-26
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      CARGO_BUILD_JOBS: "6"
+      RUST_TEST_THREADS: "3"
+      RUSTUP_TOOLCHAIN: "1.99.1"
+      QUIDDITY_CORPUS_REQUIRED: "1"
+      QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 6113e798055181e19ecd8d1e0c6a61b68cd5e54c
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - name: Identify exact input, source, OS and compiler
+        run: |
+          mkdir -p ../evidence
+          test "$(git rev-parse HEAD^{tree})" = 4a7a4e9581a842ab8cc4ae30151028154d70aabb
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } | tee ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source
+          shared-key: declared-nextest-macos
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - name: Build and list the complete workspace once on the acquired ARM runner
+        id: build
+        run: |
+          if ! command -v uv >/dev/null; then brew install uv; fi
+          cargo nextest list --workspace --release --locked --profile ci --message-format json > ../evidence/tests.json
+          for n in 1 2 3 4; do
+            uv run --no-project --python 3.13 .github/shards.py ../evidence/tests.json .config/test-times.json macOS "$n" 4 > "../evidence/filter-$n"
+          done
+      - name: Workspace documentation tests
+        if: "!cancelled() && steps.build.outcome == 'success'"
+        run: cargo test --doc --workspace --release --locked 2>&1 | tee ../evidence/doc.log
+      - name: Reproduce the committed snapshot
+        if: "!cancelled() && steps.build.outcome == 'success'"
+        run: cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+      - name: Preserve the strict check and test inventory
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-arm-checks
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Workspace shard 1
+        if: "!cancelled() && steps.build.outcome == 'success'"
+        run: cargo nextest run --profile ci --workspace --release --locked --no-fail-fast -E "$(cat ../evidence/filter-1)" 2>&1 | tee ../evidence/workspace-1.log
+      - name: Preserve shard 1 results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-arm-shard-1
+          path: evidence/workspace-1.log
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Workspace shard 2
+        if: "!cancelled() && steps.build.outcome == 'success'"
+        run: cargo nextest run --profile ci --workspace --release --locked --no-fail-fast -E "$(cat ../evidence/filter-2)" 2>&1 | tee ../evidence/workspace-2.log
+      - name: Preserve shard 2 results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-arm-shard-2
+          path: evidence/workspace-2.log
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Workspace shard 3
+        if: "!cancelled() && steps.build.outcome == 'success'"
+        run: cargo nextest run --profile ci --workspace --release --locked --no-fail-fast -E "$(cat ../evidence/filter-3)" 2>&1 | tee ../evidence/workspace-3.log
+      - name: Preserve shard 3 results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-arm-shard-3
+          path: evidence/workspace-3.log
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Workspace shard 4
+        if: "!cancelled() && steps.build.outcome == 'success'"
+        run: cargo nextest run --profile ci --workspace --release --locked --no-fail-fast -E "$(cat ../evidence/filter-4)" 2>&1 | tee ../evidence/workspace-4.log
+      - name: Preserve shard 4 results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-arm-shard-4
+          path: evidence/workspace-4.log
+          if-no-files-found: warn
+          retention-days: 30
