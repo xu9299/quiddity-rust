@@ -764,7 +764,14 @@ fn uv_bounds_are_the_range_of_the_boundary_edges() {
             -2.916583493,
             1e-8,
         ),
-        ("cadgenbench_inputs/cgb243.step.gz", 19, 0, PI, 1e-9),
+        // On the cone at its apex, the selected spline ends at pole #2628.
+        (
+            "cadgenbench_inputs/cgb243.step.gz",
+            19,
+            0,
+            2.988943325195,
+            1e-9,
+        ),
         ("nist/nist_ftc_07_asme1_rd.stp", 49, 3, 1.553343034, 1e-8),
         ("nist/nist_ftc_07_asme1_rd.stp", 51, 2, -1.553343034, 1e-8),
         ("nist/nist_ctc_05_asme1_rd.stp", 79, 1, 0.9030627005, 1e-9),
@@ -802,6 +809,12 @@ fn uv_bounds_are_the_range_of_the_boundary_edges() {
             "{file} face {face} side {side}: {got} vs {want}"
         );
     }
+    // The original reference projects the spatial edge at the same cone tip.
+    let spatial = common::with_spatial_edges(
+        &dir.join("cadgenbench_inputs/cgb243.step.gz"),
+        &[2586, 2619, 2643].into_iter().collect(),
+    );
+    assert!((spatial.uv_bounds(19).unwrap().0 - PI).abs() <= 1e-9);
 }
 
 #[test]

@@ -18,7 +18,7 @@
 
 mod declared;
 mod preferred;
-pub(super) use declared::DeclaredBoundary;
+pub(super) use declared::{DeclaredBoundary, TrimCrossings};
 
 use std::sync::OnceLock;
 

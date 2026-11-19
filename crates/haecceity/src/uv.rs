@@ -7,7 +7,7 @@ use std::f64::consts::{PI, TAU};
 use super::brep::{Face, Loop, Part, Pcurve};
 use super::geom::{self, Frame, Surface, V3};
 use super::sampling::{edge_interval, extremes_along};
-use crate::mass::DeclaredBoundary;
+use crate::mass::{DeclaredBoundary, TrimCrossings};
 
 /// The face's boundary as (u, v) polylines.
 ///
@@ -665,6 +665,9 @@ impl Part {
         let f = &self.faces[face];
         let (pu, pv) = f.surface.periodic();
         let mut loops = Vec::new();
+        let mut crossings = boundary
+            .filter(|_| !mesh)
+            .and_then(|b| TrimCrossings::new(&f.surface, b));
         for lp in &f.loops {
             let mut pts: Vec<(f64, f64)> = Vec::new();
             if let Some(apex) = lp.vertex {
@@ -784,6 +787,12 @@ impl Part {
                     points.push(*p);
                 }
             }
+            if let Some(check) = &mut crossings {
+                let ends = firsts.iter().copied().skip(1).chain([raw.len()]);
+                for ((&(edge, forward), &start), end) in lp.edges.iter().zip(&firsts).zip(ends) {
+                    check.add_edge(edge, forward, &raw[start..end]);
+                }
+            }
             // The loop's first samples are inverted with nothing to follow; on a closed B-spline
             // surface (not marked periodic) a seam point has two parameter values. Walk the start
             // again following on from the loop's end, until it agrees with the first pass.
@@ -875,6 +884,12 @@ impl Part {
                 winds_v,
                 sources,
             });
+        }
+        if let (Some(check), Some(boundary)) = (crossings, boundary) {
+            let tolerance = self.file_uncertainty().unwrap_or(0.).max(0.) + geom::COORD_FLOOR;
+            if check.crosses(boundary, self, &f.surface, tolerance) {
+                return None;
+            }
         }
         Some(loops)
     }

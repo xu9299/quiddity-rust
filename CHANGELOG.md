@@ -20,37 +20,12 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
-- Honour the per-edge STEP master representation and explicit outer face bound
-  when measuring and querying trimmed faces. Area, moments, containment,
-  bounds and edge witnesses can now follow a selected pcurve even when the
-  independently approximated 3D edge encloses a different measurable area. A
-  disagreement with the alternate curve alone no longer rejects a valid master. Trimmed
-  drawings, mesh joins, edge distances and feature measurements use the same
-  edge selection. A planar sweep preserves the finite interval of a selected spline in both caps and
-  its side wall. Hole, rim and profile proofs use the selected curve. Sheet-metal overlap checks
-  measure certified spline rims at equal intervals along the selected arc.
-  Circular hole, recess and turned-feature proofs can recognise an arc encoded
-  as a rational spline on an incident cylinder or cone.
-  The area guard measures the selected boundary's length on its STEP carrier.
-  A transferred trim near a collapsed spline side uses the closer physical
-  point. The selected loop's flux is integrated about a face vertex so a
-  rigid translation does not decide whether to use that loop.
-  Mesh edge thinning measures the turning angle on the selected curve when
-  its endpoint misses the shared STEP vertex within file precision.
-  Lengths and fractional arc-length positions split a closed spline at the
-  STEP knots on its actual parameter interval, including across turns.
-  Winding queries close regular trim loops at their shared STEP vertex; a ray
-  through independently rounded pcurve ends now reads both sides of an annular groove.
-  Probe rays near a selected common edge can resolve a duplicate entry within
-  the file's own uncertainty when the material intervals agree on both sides.
-  Periodic face domains share the STEP vertex at regular coedge ends so a ray
-  through the seam uses the same trimmed region as neighbouring rays.
-  The integral follows a closed spline rim through a full turn at its knot seam.
-  Transferring a trim between adjacent surfaces checks both sides of a closed
-  spline seam. A mixed-normal repair keeps the original trim during its proof.
-  In drawings, a selected closed spline crossing its last knot retains the full
-  visible or hidden stretch.
-  STEP export preserves retained master and outer-bound declarations.
+- Honour each STEP edge's master representation and explicit outer bound on
+  trimmed faces. Area, moments, containment, sections, drawings, meshing and
+  feature measurements use the selected finite curves, including pcurves on
+  adjacent surfaces. When both representations enclose a measurable area, the
+  selected one determines the result. A missing or unusable trim retains the
+  existing whole-face projection. STEP export preserves the selections.
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's
   outward-shell proof and the ray casters keep their face boxes and membership for the

@@ -258,6 +258,14 @@ fn second_moments_match_independently_verified_boundaries() {
     let groups: Vec<_> = groups.into_iter().collect();
     let _ = common::parallel::map(&groups, |(file, rows)| {
         let part = read_step_file_placed(&dir.join(file), &IDENTITY).unwrap();
+        let edges: std::collections::BTreeSet<u64> = rows
+            .iter()
+            .filter_map(|row| row["spatial_control_edges"].as_array())
+            .flatten()
+            .map(|edge| edge.as_u64().unwrap())
+            .collect();
+        let spatial =
+            (!edges.is_empty()).then(|| common::with_spatial_edges(&dir.join(file), &edges));
         for row in rows {
             let face = row["face"].as_u64().unwrap() as usize;
             let m = part
@@ -286,34 +294,12 @@ fn second_moments_match_independently_verified_boundaries() {
                     }
                 }
             };
-            if let Some(entities) = row["spatial_control_edges"].as_array() {
+            if row["spatial_control_edges"].is_array() {
                 check(m, &row["step_master"]);
-                // This reference used the 3D edges. Select only those edges on
-                // a second copy, retaining their coordinates, curves and faces.
-                let path = dir.join(file);
-                let bytes =
-                    haecceity::step::decode_step_file_bytes(&path, std::fs::read(&path).unwrap())
-                        .unwrap();
-                let text = std::str::from_utf8(&bytes).unwrap();
-                let mut changed = 0;
-                let control: String = text
-                    .split_inclusive(';')
-                    .map(|record| {
-                        let id = record.trim_start().split_once('=').and_then(|(lhs, _)| {
-                            lhs.trim_end().strip_prefix('#')?.parse::<u64>().ok()
-                        });
-                        if id.is_some_and(|id| entities.iter().any(|e| e.as_u64() == Some(id))) {
-                            assert_eq!(record.matches(".PCURVE_S1.").count(), 1);
-                            changed += 1;
-                            record.replace(".PCURVE_S1.", ".CURVE_3D.")
-                        } else {
-                            record.to_owned()
-                        }
-                    })
-                    .collect();
-                assert_eq!(changed, entities.len());
-                let part = haecceity::read_step(control.as_bytes()).unwrap();
-                check(part.face_moments(face).unwrap(), &row["rust"]);
+                check(
+                    spatial.as_ref().unwrap().face_moments(face).unwrap(),
+                    &row["rust"],
+                );
             } else {
                 check(m, &row["rust"]);
             }
