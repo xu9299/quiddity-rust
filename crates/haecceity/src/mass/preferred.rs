@@ -322,13 +322,15 @@ impl Part {
     /// Integrate the explicit STEP trim. The outer
     /// criterion is unchanged. Half its fixed floor budgets all inner primitives;
     /// their measured errors also enter each outer panel's error estimate.
-    /// The first density component must be area; its certified result also
-    /// normalizes the representation-disagreement guard for thin faces.
+    /// On the initial mass query the first component is physical area. It
+    /// normalizes the strip check once. A later query may integrate a signed
+    /// projection, whose area changes sign with the viewing direction.
     pub(super) fn integrate_preferred_face<const N: usize>(
         &self,
         face: usize,
         density: impl Fn(V3, V3, V3) -> [f64; N],
         components: Components,
+        check_strip: bool,
     ) -> Option<[f64; N]> {
         let trim = self.integration_pcurves(face)?;
         let curves = &trim.curves;
@@ -525,7 +527,7 @@ impl Part {
             return None;
         }
         let total = total.map(|y| y * swept.signum());
-        if trim.maximum_deviation > 0. {
+        if check_strip && trim.maximum_deviation > 0. {
             let length = master_boundary_length(&fc.surface, &local, &paths)?;
             let strip_ratio = trim.maximum_deviation * length / total[0];
             if total[0] <= 0. || !strip_ratio.is_finite() || strip_ratio > 0.001 {

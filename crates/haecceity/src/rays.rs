@@ -991,7 +991,8 @@ pub(super) fn polyline_distance(p: V3, samples: &[V3]) -> f64 {
 }
 
 impl Part {
-    fn nearest_boundary_point(&self, e: usize, q: V3) -> (V3, bool) {
+    /// The nearest point on the selected finite edge and whether it lies in its interior.
+    pub fn nearest_boundary_point(&self, e: usize, q: V3) -> (V3, bool) {
         self.spatial_trim(e)
             .and_then(|(s, c)| c.nearest(s, &self.edges[e], q))
             .unwrap_or_else(|| nearest_on_edge(&self.edges[e], q))

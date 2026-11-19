@@ -23,7 +23,7 @@ impl Part {
     pub fn face_cloud(&self, face: usize, deflection: f64) -> Vec<V3> {
         let mut out = Vec::new();
         for e in self.face_edges(face) {
-            thin(&self.edges[e].samples, deflection, &mut out);
+            thin(self.boundary_edge_samples(e), deflection, &mut out);
         }
         let surface = &self.faces[face].surface;
         if matches!(surface, Surface::Plane { .. }) {

@@ -221,8 +221,9 @@ pub fn analyse_modelled_threads(part: &Part) -> ThreadAnalysis {
         let mut helices = BTreeMap::new();
         let mut varying = BTreeSet::new();
         for (e, edge) in part.edges.iter().enumerate() {
-            if edge.samples.len() < 9
-                || !matches!(edge.curve, Curve::Nurbs(_))
+            let samples = part.boundary_edge_samples(e);
+            if samples.len() < 9
+                || matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. } | Curve::Circle { .. } | Curve::Ellipse { .. }))
                 || !part.edge_faces()[e]
                     .iter()
                     .any(|&f| part.faces[f].solid == solid)
@@ -231,18 +232,18 @@ pub fn analyse_modelled_threads(part: &Part) -> ThreadAnalysis {
             }
             // Cheap radius rejection before unwrapping a potentially long edge.
             let r = axis.polar(edge.start).0;
-            if [edge.end, edge.samples[edge.samples.len() / 2]]
+            if [edge.end, samples[samples.len() / 2]]
                 .iter()
                 .any(|&p| (axis.polar(p).0 - r).abs() > 2.0 * tolerance(r))
             {
-                if sustained_winding(axis, &edge.samples) {
+                if sustained_winding(axis, samples) {
                     varying.extend(part.edge_faces()[e].iter().copied());
                 }
                 continue;
             }
-            if let Some(helix) = fit_helix(axis, e, &edge.samples) {
+            if let Some(helix) = fit_helix(axis,e,samples) {
                 helices.insert(e, helix);
-            } else if sustained_winding(axis, &edge.samples) {
+            } else if sustained_winding(axis, samples) {
                 varying.extend(part.edge_faces()[e].iter().copied());
             }
         }
@@ -361,7 +362,7 @@ fn sample_face(part: &Part, face: usize) -> Samples {
     let mut points: Vec<_> = part
         .face_edges(face)
         .iter()
-        .flat_map(|&e| part.edges[e].samples.iter().copied())
+        .flat_map(|&e| part.boundary_edge_samples(e).iter().copied())
         .collect();
     let mut normals = Vec::new();
     if let Some((u0, u1, v0, v1)) = part.uv_bounds(face) {
@@ -539,7 +540,7 @@ fn measure(part: &Part, axis: ThreadAxis, group: &[&Helix], result: &mut ThreadA
                         || part
                             .face_edges(f)
                             .iter()
-                            .any(|&e| sustained_winding(axis, &part.edges[e].samples)));
+                            .any(|&e| sustained_winding(axis, part.boundary_edge_samples(e))));
                 if !continues {
                     continue;
                 }
@@ -555,7 +556,7 @@ fn measure(part: &Part, axis: ThreadAxis, group: &[&Helix], result: &mut ThreadA
     }
     let all_edges: BTreeSet<_> = faces.iter().flat_map(|&f| part.face_edges(f)).collect();
     for e in all_edges {
-        if let Some(h) = fit_helix(axis, e, &part.edges[e].samples)
+        if let Some(h) = fit_helix(axis, e, part.boundary_edge_samples(e))
             && h.turns >= 0.45
         {
             leads.push(h.lead);

@@ -1583,7 +1583,14 @@ impl<'p> Writer<'p> {
             let mut master = m::PreferredSurfaceCurveRepresentation::Curve3d;
             if let Some((s, raw)) = part.detached_pcurves.get(&i) {
                 let held = s.placed(&self.edge_at(i));
-                if let Some(carrier) = analytic_surface(&mut self.b, &held, None)? {
+                let carrier = match &held {
+                    Surface::Freeform {
+                        surface,
+                        kind: "BSPLINE" | "BEZIER",
+                    } => Some(nurbs_surface(&mut self.b, surface)?),
+                    _ => analytic_surface(&mut self.b, &held, None)?,
+                };
+                if let Some(carrier) = carrier {
                     match self.raw_pcurve(raw, &held, &carrier)? {
                         Ok(p) => {
                             master = m::PreferredSurfaceCurveRepresentation::PcurveS1;

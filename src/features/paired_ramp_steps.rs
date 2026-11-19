@@ -270,7 +270,9 @@ fn candidate(
     }
     let edge_bounds = {
         let mut b = crate::kernel::geom::Bounds::empty();
-        ed.samples.iter().for_each(|p| b.add(*p));
+        part.boundary_edge_samples(edge)
+            .iter()
+            .for_each(|p| b.add(*p));
         [0, 1, 2].map(|i| (b.min[i], b.max[i]))
     };
     let run_tolerance = policy::length_tol(

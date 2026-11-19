@@ -5,6 +5,7 @@
 
 #[cfg(feature = "manifest")]
 pub mod manifest;
+mod trim_carrier;
 
 use std::collections::HashMap;
 
@@ -446,25 +447,7 @@ impl Reader<'_> {
         };
         // ISO knot families specify their knot vector by degree and pole count.
         let family = |degree: i64, controls: &[m::CartesianPointRef], interior: Option<i64>| {
-            let d = usize::try_from(degree).ok()?;
-            let n = controls.len();
-            if d == 0 || d >= n {
-                return None;
-            }
-            let mult = if let Some(interior) = interior {
-                let inner = usize::try_from(interior).ok()?;
-                if !(n - d - 1).is_multiple_of(inner) {
-                    return None;
-                }
-                let spans = (n - d - 1) / inner + 1;
-                let mut counts = vec![interior; spans + 1];
-                counts[0] = degree + 1;
-                counts[spans] = degree + 1;
-                counts
-            } else {
-                vec![1; n + d + 1]
-            };
-            let knots = (0..mult.len()).map(|i| i as f64).collect();
+            let (knots, mult) = trim_carrier::standard_knots(degree, controls.len(), interior)?;
             Some(RawCurve2d::BSpline {
                 degree,
                 points: controls.iter().map(point).collect::<Option<_>>()?,
@@ -546,7 +529,7 @@ impl Reader<'_> {
         &self,
         face: &StepFace<'_>,
         edge_index: &HashMap<m::EntityKey, usize>,
-        detached: &mut std::collections::BTreeMap<usize, (Surface, RawCurve2d)>,
+        detached: &mut std::collections::BTreeMap<usize, (m::SurfaceRef, RawCurve2d)>,
     ) -> (Vec<(usize, RawCurve2d)>, Vec<usize>) {
         let basis = face.surface().key();
         let mut out = Vec::new();
@@ -593,13 +576,7 @@ impl Reader<'_> {
                     {
                         if let Some(curve) = self.raw_curve_2d(item) {
                             if !own {
-                                let native = Reader {
-                                    placement: IDENTITY,
-                                    ..*self
-                                };
-                                if let Some(s) = native.independent_carrier(&pcurve.basis_surface) {
-                                    detached.insert(index, (s, curve));
-                                }
+                                detached.insert(index, (pcurve.basis_surface.clone(), curve));
                                 break;
                             }
                             if selected {
@@ -614,7 +591,7 @@ impl Reader<'_> {
         (out, primary)
     }
 
-    /// An unbounded carrier referenced by a pcurve without an incident topological face.
+    /// A carrier referenced by a pcurve without an incident topological face.
     fn independent_carrier(&self, r: &m::SurfaceRef) -> Option<Surface> {
         let m = self.model;
         Some(match r {
@@ -651,7 +628,7 @@ impl Reader<'_> {
                     minor: self.to_mm * s.minor_radius,
                 }
             }
-            _ => return None,
+            _ => return self.independent_spline(r),
         })
     }
 
@@ -2561,7 +2538,16 @@ fn build(parsed: &Parsed, scope: Scope<'_>) -> Result<Read, StepError> {
         )
         .with_native_geometry(native_faces, native_edges);
     part.outer_bounds = outer_bounds;
-    part.detached_pcurves = detached_pcurves;
+    let native = Reader {
+        placement: IDENTITY,
+        ..reader
+    };
+    part.detached_pcurves = detached_pcurves
+        .into_iter()
+        .filter_map(|(edge, (source, curve))| {
+            Some((edge, (native.independent_carrier(&source)?, curve)))
+        })
+        .collect();
     let part = part.repair_inverted_shells();
     Ok(Read {
         part,
@@ -3715,8 +3701,11 @@ mod tests {
     /// generator. Independent 60-digit integration: with r=10-z/2, c=r-6,
     /// A(r)=r²(π/2+asin(c/r))+c*sqrt(r²-c²), V=2∫[5,10] A(r)dr.
     /// Area sums the two caps, the remaining cone and the planar section.
-    /// OCCT's pcurve integrals give V=1178.246345909645 (1.37e-7 low) and
-    /// A=723.863727273429 (6.55e-8 low), so use the analytic reference.
+    /// The exported master pcurves approximate the exact spatial parabola.
+    /// OCCT gives V=1178.246345909645. Direct Green integrals along both selected
+    /// degree-seven cone pcurves, including their projection onto the cut plane,
+    /// give A=723.863727303646. OCCT uses its own pcurve on the plane.
+    /// Keep both independent references and change only the master declaration.
     #[test]
     fn a_parabola_boundary_resolves_and_moves_exactly() {
         let path = fixture("parabola_cut_cone.step");
@@ -3740,12 +3729,6 @@ mod tests {
                 assert!((p[0].hypot(p[1]) - (10.0 - 0.5 * p[2])).abs() < 1e-9);
             }
         }
-        let check_mass = |part: &Part| {
-            let (v, a) = part.solid_mass(0).unwrap();
-            assert!((v - 1178.246346046747).abs() < 1e-8, "{v}");
-            assert!((a - 723.8637273389423).abs() < 1e-8, "{a}");
-        };
-        check_mass(&part);
         let (s, c) = 0.37_f64.sin_cos();
         let at = [
             [c, -s, 0.0, 17.0],
@@ -3755,8 +3738,23 @@ mod tests {
         let moved = part.transformed(&at).unwrap();
         let reread = read_step_file_placed(&path, &at).unwrap();
         assert!(moved.solid_is_valid(0));
-        check_mass(&moved);
-        check_mass(&reread);
+        let check_mass = |p: &Part, volume: f64, area: f64| {
+            let (v, a) = p.solid_mass(0).unwrap();
+            assert!((v - volume).abs() < 1e-8, "{v} (expected {volume})");
+            assert!((a - area).abs() < 1e-8, "{a} (expected {area})");
+        };
+        for p in [&part, &moved, &reread] {
+            check_mass(p, 1178.246345909645, 723.863727303646);
+        }
+        let file = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(file.matches(".PCURVE_S1.").count(), 6);
+        let spatial = file.replace(".PCURVE_S1.", ".CURVE_3D.");
+        let original = read_step(spatial.as_bytes()).unwrap();
+        let transformed = original.transformed(&at).unwrap();
+        let placed = read_step_placed(spatial.as_bytes(), &at).unwrap();
+        for p in [&original, &transformed, &placed] {
+            check_mass(p, 1178.246346046747, 723.8637273389423);
+        }
         for (a, b) in moved.edges.iter().zip(&reread.edges) {
             assert_eq!(a.vertices, b.vertices);
             assert_eq!(a.samples, b.samples);

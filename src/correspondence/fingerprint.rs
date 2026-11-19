@@ -2061,7 +2061,7 @@ fn face(part: &Part, i: usize, measured: Option<FaceMeasure>) -> FaceFingerprint
     let centroid = moments.map(|m| m.centroid).unwrap_or_else(|| {
         let (mut sum, mut n) = ([0.0; 3], 0usize);
         for e in part.face_edges(i) {
-            for p in &part.edges[e].samples {
+            for p in part.boundary_edge_samples(e) {
                 sum = geom::add(sum, *p);
                 n += 1;
             }

@@ -376,7 +376,7 @@ fn cut(part: &Part, plane: &Plane, faces: &[usize]) -> Result<Vec<Vec<V3>>, Unre
     let step = 1e-4 * classifier.rays().bounds().diagonal().max(1.0);
     for e in edges {
         let edge = &part.edges[e];
-        let s = &edge.samples;
+        let s = part.boundary_edge_samples(e);
         let near = |p: &V3| plane.distance(*p).abs() <= ON_TOLERANCE;
         let end_in = |p: &V3, v: usize| near(p) || in_plane.binary_search(&v).is_ok();
         if s.len() < 2
@@ -389,7 +389,7 @@ fn cut(part: &Part, plane: &Plane, faces: &[usize]) -> Result<Vec<Vec<V3>>, Unre
         let k = s.len() / 2;
         let along = geom::sub(s[k], s[k - 1]);
         let mid = geom::scale(geom::add(s[k], s[k - 1]), 0.5);
-        let mid = edge.curve.value(edge.curve.parameter(mid));
+        let mid = part.nearest_boundary_point(e, mid).0;
         let Some(across) = geom::unit(geom::cross(plane.normal, along)) else {
             continue;
         };
@@ -403,13 +403,13 @@ fn cut(part: &Part, plane: &Plane, faces: &[usize]) -> Result<Vec<Vec<V3>>, Unre
         match (side(1.0), side(-1.0)) {
             (Some(a), Some(b)) => {
                 if a != b {
-                    out.push(s.clone());
+                    out.push(s.to_vec());
                 }
             }
             // Where the classifier cannot say, a seam or a join within one surface that crosses
             // the plane there (its normal off the plane's by more than the tolerance across the
             // probe's step) has material across it on one side only, by the surface alone.
-            _ if crosses_along(part, e, mid, plane, step) => out.push(s.clone()),
+            _ if crosses_along(part, e, mid, plane, step) => out.push(s.to_vec()),
             _ => {
                 return Err(Unresolved {
                     faces: part.edge_faces()[e].clone(),
@@ -457,8 +457,8 @@ fn drawn_faces(part: &Part) -> Vec<usize> {
 
 /// What a drawn curve lies on, which decides where its pieces are judged.
 #[derive(Clone, Copy)]
-enum On<'p> {
-    Edge(&'p Curve, usize),
+enum On {
+    Edge(usize),
     /// A face's silhouette.
     Silhouette(usize),
     /// A section's outline, its chords in the cutting plane.
@@ -513,11 +513,11 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
         curves = curves
             .into_iter()
             .flat_map(|(class, c, on)| {
-                let curve = match on {
-                    On::Edge(curve, _) => Some(curve),
-                    _ => None,
+                let point = |p| match on {
+                    On::Edge(e) => part.nearest_boundary_point(e, p).0,
+                    _ => p,
                 };
-                kept(&c, plane, 1e-9 * scale, curve)
+                kept(&c, plane, 1e-9 * scale, point)
                     .into_iter()
                     .map(move |k| (class, k, on))
             })
@@ -603,7 +603,7 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
         // inside them: the ray starts clear of that stand-off, so the edge does not hide itself.
         let start = 1e-6 * scale
             + match on {
-                On::Edge(_, e) => {
+                On::Edge(e) => {
                     let stand_off = part.edge_faces()[*e]
                         .iter()
                         .flat_map(|&f| part.edge_deviation(f).iter())
@@ -621,8 +621,8 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
                 // (its faces are tangent there). From the curve, which may stand a hair inside
                 // the surface (ctc05's edge 375, 1.5e-8), the ray grazing the surface would meet
                 // the face across the join.
-                On::Edge(c, e) if *class == Class::Outline => {
-                    let at = c.value(c.parameter(p));
+                On::Edge(e) if *class == Class::Outline => {
+                    let at = part.nearest_boundary_point(*e, p).0;
                     part.edge_faces()[*e]
                         .iter()
                         .find(|f| faces.binary_search(f).is_ok())
@@ -630,14 +630,14 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
                 }
                 // On the curve itself: a chord's middle can lie exactly on another face's
                 // boundary drawn by the same samples.
-                On::Edge(c, _) => c.value(c.parameter(p)),
+                On::Edge(e) => part.nearest_boundary_point(*e, p).0,
                 // From a chord's middle (inside a curved face) the ray would strike the face.
                 On::Silhouette(face) => off_face(*face, p),
                 On::Section => p,
             };
             let verdict = hidden(at, start).ok_or(at)?;
             match on {
-                On::Edge(_, e) if verdict && start > 1e-6 * scale => {
+                On::Edge(e) if verdict && start > 1e-6 * scale => {
                     let ray = (view, reach, 1e-6 * scale);
                     let hidden_from = |start: f64| hidden(at, start);
                     Ok(
@@ -700,13 +700,15 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
                 })
                 .collect(),
             edges: match on {
-                On::Edge(_, e) => vec![*e],
+                On::Edge(e) => vec![*e],
                 _ => Vec::new(),
             },
         })?;
         for (visible, run) in runs {
             let exact = match on {
-                On::Edge(curve, _) => exact(curve, view, &run),
+                On::Edge(e) => part
+                    .boundary_edge_curve(*e)
+                    .and_then(|c| exact(c, view, &run)),
                 _ => None,
             };
             out.push(Projected {
@@ -850,12 +852,12 @@ fn parallel<R: Send>(items: &[usize], f: impl Fn(usize) -> R + Sync) -> Vec<R> {
 
 /// The stretches of polyline *c* on the plane's kept side (or within *tol* of it), each
 /// crossing placed on the chord and moved onto *curve* when there is one.
-fn kept(c: &[V3], plane: &Plane, tol: f64, curve: Option<&Curve>) -> Vec<Vec<V3>> {
+fn kept(c: &[V3], plane: &Plane, tol: f64, point: impl Fn(V3) -> V3) -> Vec<Vec<V3>> {
     let d: Vec<f64> = c.iter().map(|p| plane.distance(*p)).collect();
     let crossing = |i: usize| {
         let t = (d[i] / (d[i] - d[i + 1])).clamp(0.0, 1.0);
         let p = geom::add(c[i], geom::scale(geom::sub(c[i + 1], c[i]), t));
-        curve.map_or(p, |k| k.value(k.parameter(p)))
+        point(p)
     };
     let mut out = Vec::new();
     let mut run: Vec<V3> = Vec::new();
@@ -881,17 +883,16 @@ fn kept(c: &[V3], plane: &Plane, tol: f64, curve: Option<&Curve>) -> Vec<Vec<V3>
 /// The edges drawn, of the *drawn* faces: every edge between two that is not a seam or a join within one
 /// surface, classed smooth where the faces meet tangentially, and every free edge. A seam or
 /// join that runs along the surface's silhouette is drawn, as the outline it is there.
-fn edges<'p>(part: &'p Part, view: &View, drawn: &[usize]) -> Vec<(Class, Vec<V3>, On<'p>)> {
+fn edges(part: &Part, view: &View, drawn: &[usize]) -> Vec<(Class, Vec<V3>, On)> {
     let on_outline = |e: usize, face: usize| {
         // On the curve halfway along a middle chord (a line's samples are its two vertices,
         // which a file may leave off the curve: cgb242's edge 83, 2e-4 at one end), and within
         // 1e-6 rad of the view (the curve itself may stray off its face by 1e-8, ftc_09's).
-        let (edge, s) = (&part.edges[e], &part.edges[e].samples);
+        let s = part.boundary_edge_samples(e);
         let k = (s.len() / 2).max(1);
-        let mid = edge.curve.value(
-            edge.curve
-                .parameter(geom::scale(geom::add(s[k - 1], s[k]), 0.5)),
-        );
+        let mid = part
+            .nearest_boundary_point(e, geom::scale(geom::add(s[k - 1], s[k]), 0.5))
+            .0;
         part.faces[face]
             .surface
             .parameters(mid, None)
@@ -952,8 +953,7 @@ fn edges<'p>(part: &'p Part, view: &View, drawn: &[usize]) -> Vec<(Class, Vec<V3
             },
             _ => Class::Sharp,
         };
-        let edge = &part.edges[e];
-        out.push((class, edge.samples.clone(), On::Edge(&edge.curve, e)));
+        out.push((class, part.boundary_edge_samples(e).to_vec(), On::Edge(e)));
     }
     out
 }
@@ -961,13 +961,11 @@ fn edges<'p>(part: &'p Part, view: &View, drawn: &[usize]) -> Vec<(Class, Vec<V3
 /// Whether faces *a* and *b* bend alike across edge *e*, at its middle: their normal
 /// curvatures across it, measured on each untrimmed surface against one normal, agree.
 fn curvature_continuous(part: &Part, e: usize, a: usize, b: usize) -> bool {
-    let edge = &part.edges[e];
-    let s = &edge.samples;
+    let s = part.boundary_edge_samples(e);
     let k = (s.len() / 2).max(1);
-    let p = edge.curve.value(
-        edge.curve
-            .parameter(geom::scale(geom::add(s[k - 1], s[k]), 0.5)),
-    );
+    let p = part
+        .nearest_boundary_point(e, geom::scale(geom::add(s[k - 1], s[k]), 0.5))
+        .0;
     let surface = |f: usize| &part.faces[f].surface;
     let Some(n) = surface(a)
         .parameters(p, None)
@@ -1151,8 +1149,9 @@ fn contour(
             .map(|(i, j)| values[i][j])
             .chain(part.face_edges(face).into_iter().flat_map(|e| {
                 let edge = &part.edges[e];
-                let last = edge.samples.len().saturating_sub(1);
-                edge.samples
+                let samples = part.boundary_edge_samples(e);
+                let last = samples.len().saturating_sub(1);
+                samples
                     .iter()
                     .enumerate()
                     .filter_map(|(k, p)| match k {
@@ -1232,10 +1231,9 @@ fn contour(
                     // off a curved edge by its sagitta), and on the face: an edge standing off
                     // the face lies that much further from them (counted on a section).
                     let on_edge = |&(e, stand_off): &(usize, f64)| {
-                        let edge = &part.edges[e];
                         let on = |x: V3| {
-                            polyline_distance(x, &edge.samples) <= 1e-3
-                                && geom::dist(edge.curve.value(edge.curve.parameter(x)), x)
+                            polyline_distance(x, part.boundary_edge_samples(e)) <= 1e-3
+                                && geom::dist(part.nearest_boundary_point(e, x).0, x)
                                     <= ON_TOLERANCE + stand_off
                         };
                         on(p) && on(q)

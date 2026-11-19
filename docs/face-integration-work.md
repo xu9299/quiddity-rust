@@ -70,7 +70,7 @@ The pcurve's two coordinates belong to its named carrier. For a different
 incident face, the evaluator lifts it on its carrier and locates that spatial
 point on the receiving face. A pcurve outside its carrier's finite knot domain
 has no valid lift. Clamping it to the edge of that patch changes both the
-geometry and the tangent. A retained analytic carrier can also stand alone
+geometry and the tangent. An elementary surface or a native spline carrier can stand alone
 without a topological face. A spatial master goes through the existing
 projection. Both choices may appear in the same loop. An explicit
 `FACE_OUTER_BOUND` supplies the outer contour. Where the file gives only
@@ -109,6 +109,30 @@ The two areas are 1 and `1 − h/3` mm². For `h = 0.0004` the file selects
 a trimmed patch with a hole, a seam-crossing cylinder and swept surfaces.
 STEP export retains selected raw pcurves and the explicit outer bound without
 requiring an area calculation.
+
+A spatial query on a topological edge first resolves the selected carrier. A
+plane lifts its parameter curves to lines, conics or NURBS in space, and
+straight isoparameters of elementary quadrics can lift to lines or circles.
+Section outlines, hidden lines, closest points, overlap sampling and feature
+measurements use this geometry. A general surface curve is evaluated on its
+carrier; a chord only locates the interval for a closest-point search. Mesh
+coedges share the STEP vertex at their regular endpoints. The mass integral
+still uses the actual trim and its checked closing segment.
+
+On a plane, position is affine in both parameters and the normal is constant.
+Consequently every area, flux and first- or second-moment density is at most
+quadratic along the inner integration line. The two-point Gauss rule is exact
+there. This avoids a spurious refusal on a short, fast-parameterised curve
+when a translated world coordinate loses precision in the embedded error
+estimate. The outer boundary integral retains its error test.
+
+The STEP fixture `parabola_cut_cone.step` gives two independently approximated
+degree-seven Bézier pcurves and selects `PCURVE_S1` on its six surface curves.
+Integrating the two Bernstein curves on the cone and the cutting plane, and
+adding the analytic caps, gives 723.863727303646 mm². The same file with its
+six selections set to `CURVE_3D` has the analytic spatial-parabola area
+723.863727338942 mm². The regression exercises both representations under
+translation and rotation at the original absolute tolerance.
 
 ## Settled volume queries
 

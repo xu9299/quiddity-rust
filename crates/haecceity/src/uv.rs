@@ -722,8 +722,42 @@ impl Part {
                     }
                     for (j, t) in nodes.into_iter().enumerate() {
                         let (u, v) = trim.surface_uv(&f.surface, t);
-                        raw.push((u, v));
-                        points.push(f.surface.value(u, v));
+                        // Mesh edges share the topological vertex in space. At a
+                        // regular endpoint, give its two coedges the same UV as well.
+                        // A seam or singularity keeps the branch of the pcurve.
+                        let is_end = t == trim.interval.0 || t == trim.interval.1;
+                        let (uv, point) = if mesh
+                            && is_end
+                            && !on_collapsed((u, v))
+                            && f.surface.singular_v(v).is_none()
+                        {
+                            let edge = &self.edges[e];
+                            let point = if t == trim.interval.0 {
+                                edge.start
+                            } else {
+                                edge.end
+                            };
+                            let uv = f.surface.parameters(point, Some((u, v)))?;
+                            (
+                                (
+                                    if pu {
+                                        geom::nearest_turn(uv.0, u)
+                                    } else {
+                                        uv.0
+                                    },
+                                    if pv {
+                                        geom::nearest_turn(uv.1, v)
+                                    } else {
+                                        uv.1
+                                    },
+                                ),
+                                point,
+                            )
+                        } else {
+                            ((u, v), f.surface.value(u, v))
+                        };
+                        raw.push(uv);
+                        points.push(point);
                         let sample = if mesh && j < n {
                             Some(if forward { j } else { n - 1 - j })
                         } else if t == trim.interval.0 {

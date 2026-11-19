@@ -50,7 +50,7 @@ fn recover(part: &Part, face: usize) -> Option<Surface> {
     let mut points: Vec<V3> = part
         .face_edges(face)
         .into_iter()
-        .flat_map(|e| part.edges[e].samples.iter().copied())
+        .flat_map(|e| part.boundary_edge_samples(e).iter().copied())
         .collect();
     // Interior points with their normals: those the face holds a neighbourhood of, as the grid's
     // outer lines run along the face's boundary, where whether a point is inside is round-off.
@@ -113,7 +113,7 @@ fn nominal(part: &Part, face: usize) -> Option<f64> {
         .iter()
         .filter(|&(_, &n)| n == 1)
         .map(|(&e, _)| {
-            let s = &part.edges[e].samples;
+            let s = part.boundary_edge_samples(e);
             s.windows(2).map(|w| geom::dist(w[0], w[1])).sum::<f64>()
         })
         .sum();

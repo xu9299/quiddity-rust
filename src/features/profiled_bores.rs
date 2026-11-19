@@ -197,14 +197,16 @@ fn recognise_one(
                     low.wire
                         .iter()
                         .map(|&(e, forward)| {
-                            let edge = &part.edges[e];
-                            let mut points = edge.samples.clone();
+                            let mut points = part.boundary_edge_samples(e).to_vec();
                             if !forward {
                                 points.reverse();
                             }
                             PrismEdge {
                                 points,
-                                straight: matches!(edge.curve, Curve::Line { .. }),
+                                straight: matches!(
+                                    part.boundary_edge_curve(e),
+                                    Some(Curve::Line { .. })
+                                ),
                             }
                         })
                         .collect(),
@@ -264,6 +266,14 @@ pub(crate) fn principal_boundary_plane(
 fn wire_bounds(part: &Part, wire: &[(usize, bool)]) -> Bounds {
     let mut b = Bounds::empty();
     for &(e, _) in wire {
+        if let Some(points) =
+            part.declared_edge_extrema(e, &[[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+        {
+            for p in points {
+                b.add(p);
+            }
+            continue;
+        }
         let edge = &part.edges[e];
         for p in edge.samples.iter().copied().chain(arc_extremes(
             &edge.curve,

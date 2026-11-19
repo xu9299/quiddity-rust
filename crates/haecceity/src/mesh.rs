@@ -759,6 +759,7 @@ fn triangulate_face(
 
     // Each loop as polygon points, sorted into closed loops and loops that run once round.
     let mut closed: Vec<Vec<BNode>> = Vec::new();
+    let mut declared_outer = None;
     let mut winding_u: Vec<Vec<BNode>> = Vec::new();
     let mut winding_v: Vec<Vec<BNode>> = Vec::new();
     for (li, lp) in raw.iter().enumerate() {
@@ -804,6 +805,9 @@ fn triangulate_face(
             if nodes.len() < 3 {
                 return Err("a boundary loop has fewer than three points".into());
             }
+            if part.outer_bounds.get(&face) == Some(&li) {
+                declared_outer = Some(closed.len());
+            }
             closed.push(nodes);
         }
     }
@@ -823,7 +827,7 @@ fn triangulate_face(
     }
 
     let mut polygons = match (winding_u.len(), winding_v.len()) {
-        (0, 0) => outer_and_holes(closed, period)?,
+        (0, 0) => outer_and_holes(closed, period, declared_outer)?,
         (2, 0) => strip(
             &sheet,
             setup.scale,
@@ -1323,22 +1327,25 @@ fn inside(polygon: &[BNode], p: (f64, f64)) -> bool {
     odd
 }
 
-/// Closed loops only: the largest is the outer boundary, the rest holes, each moved by whole
-/// periods so it lies in the outer boundary.
+/// Use the declared outer bound if present, otherwise the largest closed loop.
+/// Move the holes by whole periods into that boundary.
 fn outer_and_holes(
     mut closed: Vec<Vec<BNode>>,
     period: [Option<f64>; 2],
+    declared_outer: Option<usize>,
 ) -> Result<Vec<Vec<BNode>>, String> {
     if closed.is_empty() {
         return Err("it has no boundary loop".into());
     }
-    // The largest by area in parameter space; the first of equals.
-    let mut outer = 0;
-    for (i, lp) in closed.iter().enumerate() {
-        if signed_area(lp).abs() > signed_area(&closed[outer]).abs() {
-            outer = i;
-        }
-    }
+    let outer = declared_outer.unwrap_or_else(|| {
+        (1..closed.len()).fold(0, |best, i| {
+            if signed_area(&closed[i]).abs() > signed_area(&closed[best]).abs() {
+                i
+            } else {
+                best
+            }
+        })
+    });
     let outer_loop = closed.remove(outer);
     let mut polygons = vec![outer_loop];
     for hole in closed {

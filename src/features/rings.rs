@@ -174,11 +174,11 @@ pub(crate) fn cross_section(
                 // ends: the file's vertices can sit off it by round-off (808.step: 6e-17 across
                 // the run), which moves the corner and with it the void probe's point.
                 let edge = &part.edges[e];
-                match edge.curve {
-                    Curve::Line { .. } => [edge.start, edge.end]
+                match part.boundary_edge_curve(e) {
+                    Some(curve @ Curve::Line { .. }) => [edge.start, edge.end]
                         .iter()
-                        .for_each(|&p| b.add(edge.curve.value(edge.curve.parameter(p)))),
-                    _ => edge.samples.iter().for_each(|p| b.add(*p)),
+                        .for_each(|&p| b.add(curve.value(curve.parameter(p)))),
+                    _ => part.boundary_edge_samples(e).iter().for_each(|p| b.add(*p)),
                 }
             }
             [0.5 * (b.min[a0] + b.max[a0]), 0.5 * (b.min[a1] + b.max[a1])]

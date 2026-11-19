@@ -1547,7 +1547,7 @@ fn supports(
 fn disk_distance(part: &Part, edges: &[usize], centre: V3, radius: f64) -> f64 {
     let mut nearest = f64::INFINITY;
     for &e in edges {
-        for pair in part.edges[e].samples.windows(2) {
+        for pair in part.boundary_edge_samples(e).windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let ab = geom::sub(b, a);
             let length = geom::dot(ab, ab);

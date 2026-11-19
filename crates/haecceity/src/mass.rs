@@ -736,7 +736,7 @@ impl Part {
     fn preferred_face_mass(&self, face: usize) -> Option<FaceMass> {
         let boundary = self.declared_boundary(face)?;
         if let Some(terms) = self
-            .integrate_preferred_face(face, mass_density, Components::Prefix(5))
+            .integrate_preferred_face(face, mass_density, Components::Prefix(5), true)
             .and_then(valid_mass)
         {
             return Some(FaceMass {
@@ -829,20 +829,23 @@ impl Part {
             observed.unwrap_or_else(|| self.projected_face_mass(face))
         });
         choice.terms?;
-        if choice.method == BoundaryMethod::CertifiedPatch {
-            return self.integrate_preferred_face(
+        if choice.method == BoundaryMethod::CertifiedPatch
+            && let Some(sum) = self.integrate_preferred_face(
                 face,
                 |p, su, sv| {
                     let y = f(p, su, sv);
                     std::array::from_fn(|k| y[k])
                 },
                 Components::Prefix(M),
-            );
+                false,
+            )
+        {
+            return Some(sum);
         }
         if attempted {
             return shared.map(|y| std::array::from_fn(|k| y[k]));
         }
-        let boundary = if choice.method == BoundaryMethod::Declared {
+        let boundary = if choice.method != BoundaryMethod::Projected {
             Some(self.declared_boundary(face)?)
         } else {
             None
@@ -952,8 +955,20 @@ impl Part {
             } else {
                 (dv, spans.0, u)
             };
-            let cuts = surface_cuts(surface, span, along_v, reference, end)?;
             let primitive = |s| if along_v { f(u, s) } else { f(s, v) };
+            if boundary.is_some() && matches!(surface, Surface::Plane { .. }) {
+                // The position is affine and the normal constant on a plane.
+                // Every area, flux or moment density used here has degree at
+                // most two along a parameter line. Two Gauss nodes integrate
+                // it exactly, including when a short edge has high UV speed.
+                let half = 0.5 * (end - reference);
+                let middle = reference + half;
+                let delta = half / 3.0_f64.sqrt();
+                let from = primitive(middle - delta);
+                let to = primitive(middle + delta);
+                return Some(std::array::from_fn(|k| (weight * half) * (from[k] + to[k])));
+            }
+            let cuts = surface_cuts(surface, span, along_v, reference, end)?;
             let y = if let Some(budget) = inner_budget.get() {
                 if weight == 0. {
                     return Some([0.; N]);
@@ -1168,7 +1183,7 @@ impl Part {
             // One node: its parameters, unwrapped against the walk's, and their velocity.
             let node = |walk: &mut Walk, t: f64| -> Option<((f64, f64), (f64, f64))> {
                 if let Some(trim) = trim {
-                    let p = trim.curve.value(t);
+                    let p = trim.checked_uv(surface, t)?;
                     let v = trim.curve.derivative(t);
                     if !(p[0].is_finite()
                         && p[1].is_finite()

@@ -465,6 +465,14 @@ fn gauss_length(curve: &Curve, a: f64, b: f64) -> f64 {
 fn wire_bounds(part: &Part, wire: &[(usize, bool)]) -> Bounds {
     let mut b = Bounds::empty();
     for &(e, _) in wire {
+        if let Some(points) =
+            part.declared_edge_extrema(e, &[[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+        {
+            for p in points {
+                b.add(p);
+            }
+            continue;
+        }
         let edge = &part.edges[e];
         let interval = edge_interval(
             &edge.curve,

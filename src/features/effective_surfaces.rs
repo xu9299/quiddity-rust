@@ -551,7 +551,7 @@ fn grid_samples(
 fn clearance(part: &Part, edges: &[usize], p: V3) -> f64 {
     edges
         .iter()
-        .flat_map(|&e| part.edges[e].samples.windows(2))
+        .flat_map(|&e| part.boundary_edge_samples(e).windows(2))
         .map(|w| segment_distance(p, w[0], w[1]))
         .fold(f64::INFINITY, f64::min)
 }

@@ -14,7 +14,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use super::brep::Edge;
+use super::brep::Part;
 use super::classify::{Classifier, State};
 use super::geom::{self, Bounds, COORD_FLOOR, Curve, Frame, Surface, V3};
 use super::rays::{RayCaster, ray_meets_box};
@@ -339,10 +339,7 @@ impl<'a> Side<'a> {
         let mut ids: Vec<usize> = faces.iter().flat_map(|&f| part.face_edges(f)).collect();
         ids.sort_unstable();
         ids.dedup();
-        let edges = ids
-            .into_iter()
-            .map(|e| Polyline::of(&part.edges[e]))
-            .collect();
+        let edges = ids.into_iter().map(|e| Polyline::of(part, e)).collect();
         let mut planes = Vec::new();
         let mut curved_faces = Vec::new();
         for &f in &faces {
@@ -447,14 +444,14 @@ impl Side<'_> {
 }
 
 impl<'a> Polyline<'a> {
-    fn of(edge: &'a Edge) -> Self {
+    fn of(part: &'a Part, e: usize) -> Self {
         // Conics invert in closed form; other curves keep their samples' crossing, within the
         // chordal error, and the adaptive rule absorbs the difference.
-        let conic = matches!(edge.curve, Curve::Circle { .. } | Curve::Ellipse { .. });
-        let curve = conic.then_some(&edge.curve);
-        let straight = matches!(edge.curve, Curve::Line { .. });
+        let selected = part.boundary_edge_curve(e);
+        let curve = selected.filter(|c| matches!(c, Curve::Circle { .. } | Curve::Ellipse { .. }));
+        let straight = matches!(selected, Some(Curve::Line { .. }));
         Polyline {
-            points: edge.samples.as_slice().into(),
+            points: part.boundary_edge_samples(e).into(),
             curve,
             straight,
         }

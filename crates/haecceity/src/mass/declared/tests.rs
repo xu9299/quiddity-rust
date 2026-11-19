@@ -12,6 +12,20 @@ fn plane() -> String {
 }
 
 #[test]
+fn a_certified_trim_has_opposite_projections_from_opposite_sides() {
+    let part = crate::step::read_step(SQUARE.as_bytes()).unwrap();
+    let (up, centre) = part.face_projected_moments(0, [0., 0., 1.]).unwrap();
+    let (down, other) = part.face_projected_moments(0, [0., 0., -1.]).unwrap();
+    assert_eq!(
+        part.cache[0].mass.get().unwrap().method,
+        BoundaryMethod::CertifiedPatch
+    );
+    assert!((up.abs() - (1. - 0.0004 / 3.)).abs() < 1e-12);
+    assert_eq!(up, -down);
+    assert_eq!(centre, other);
+}
+
+#[test]
 fn implicit_knot_families_keep_their_parameter_curve() {
     for kind in ["BEZIER_CURVE", "QUASI_UNIFORM_CURVE"] {
         let file = entity(
@@ -33,6 +47,11 @@ fn implicit_knot_families_keep_their_parameter_curve() {
     let p = crate::step::read_step(file.as_bytes()).unwrap();
     assert_eq!(p.primary_pcurves(0).count(), 4);
     assert!((p.face_mass(0).unwrap()[0] - (1. - 0.0004 / 3.)).abs() < 1e-12);
+    assert!(matches!(p.boundary_edge_curve(1), Some(Curve::Line { .. })));
+    let (a, b) = p.boundary_edge_interval(1).unwrap();
+    let line = p.boundary_edge_curve(1).unwrap();
+    assert!(geom::dist(line.value(a), p.edges[1].start) < 1e-12);
+    assert!(geom::dist(line.value(b), p.edges[1].end) < 1e-12);
 }
 
 #[test]
@@ -85,6 +104,38 @@ fn master_on_another_surface_is_lifted_in_its_own_frame() {
     let rejected = crate::step::read_step(off.as_bytes()).unwrap();
     assert!(rejected.measured_boundary(0).is_none());
     assert!((rejected.face_mass(0).unwrap()[0] - 1.).abs() < 1e-12);
+}
+
+#[test]
+fn detached_native_spline_supplies_its_own_master_across_a_round_trip() {
+    let file = SQUARE.replace(
+        "#159=ADVANCED_FACE('',(#158),#108",
+        "#201=PLANE('',#11);\n#159=ADVANCED_FACE('',(#158),#201",
+    );
+    let bezier = entity(
+        &file,
+        108,
+        "BEZIER_SURFACE('',1,1,((#100,#103),(#101,#102)),.UNSPECIFIED.,.F.,.F.,.F.)",
+    );
+    let rational = entity(
+        &file,
+        108,
+        "(BOUNDED_SURFACE() B_SPLINE_SURFACE(1,1,((#100,#103),(#101,#102)),.UNSPECIFIED.,.F.,.F.,.F.) B_SPLINE_SURFACE_WITH_KNOTS((2,2),(2,2),(0.,1.),(0.,1.),.UNSPECIFIED.) GEOMETRIC_REPRESENTATION_ITEM() RATIONAL_B_SPLINE_SURFACE(((1.,1.),(1.,1.))) REPRESENTATION_ITEM('') SURFACE())",
+    );
+    let expected = 1. - 0.0004 / 3.;
+    for input in [file, bezier, rational] {
+        let part = crate::step::read_step(input.as_bytes()).unwrap();
+        assert_eq!(part.detached_pcurves.len(), 4);
+        assert!((part.face_mass(0).unwrap()[0] - expected).abs() < 1e-11);
+        let (written, report) = crate::brep_write::write_step(
+            &part,
+            &crate::brep_write::WriteOptions::new("detached spline"),
+        )
+        .unwrap();
+        assert!(report.pcurves_not_written.is_empty());
+        let reopened = crate::step::read_step(&written).unwrap();
+        assert!((reopened.face_mass(0).unwrap()[0] - expected).abs() < 1e-11);
+    }
 }
 
 #[test]
@@ -167,6 +218,33 @@ fn declared_plane_drives_mass_domain_bounds_and_centre() {
         assert!((q.face_bounds(0).min[1] + 0.0002).abs() < 1e-12);
         assert!((q.uv_bounds(0).unwrap().2 + 0.0002).abs() < 1e-12);
     }
+}
+
+#[test]
+fn edge_witness_and_drawing_follow_the_same_quadratic_master() {
+    use crate::hlr::{Exact, View, project};
+    let part = crate::step::read_step(plane().as_bytes()).unwrap();
+    let expected = [0.5, 0.0002, 0.];
+    let (mid, tangent) = part.declared_edge_at_length(0, 0.5).unwrap();
+    assert!(geom::dist(mid, expected) < 1e-12);
+    assert!(geom::dist(geom::unit(tangent).unwrap(), [1., 0., 0.]) < 1e-12);
+    let (foot, interior) = part.nearest_boundary_point(0, [0.5, 0.0003, 0.]);
+    assert!(interior && geom::dist(foot, expected) < 1e-10);
+    let view = View::new([0., 0., 1.], [0., 1., 0.]).unwrap();
+    let projected = project(&part, &view).unwrap();
+    assert!(
+        projected
+            .iter()
+            .filter_map(|p| p.exact.as_ref())
+            .any(|curve| {
+                if !matches!(curve, Exact::Nurbs { .. }) {
+                    return false;
+                }
+                let (a, b) = curve.range();
+                let q = curve.at(0.5 * (a + b));
+                (q[0] - expected[0]).abs() < 1e-10 && (q[1] - expected[1]).abs() < 1e-10
+            })
+    );
 }
 
 #[test]

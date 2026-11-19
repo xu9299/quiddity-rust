@@ -1336,17 +1336,27 @@ impl Part {
             return Arc::Unknown;
         };
         let ed = &self.edges[edge];
-        let (t0, t1) = edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
-        let middle = 0.5 * (t0 + t1);
-        let h = 1e-6 * (t1 - t0).abs().max(1e-12);
-        let tangent = geom::sub(ed.curve.value(middle + h), ed.curve.value(middle - h));
-        // The interval already runs start → end; the loop may use the edge the other way.
-        let walk = if (t1 >= t0) == forward {
+        let (point, tangent) = self.declared_edge_at_length(edge, 0.5).unwrap_or_else(|| {
+            let (t0, t1) =
+                edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
+            let middle = 0.5 * (t0 + t1);
+            let h = 1e-6 * (t1 - t0).abs().max(1e-12);
+            let tangent = geom::sub(ed.curve.value(middle + h), ed.curve.value(middle - h));
+            (
+                ed.curve.value(middle),
+                if t1 >= t0 {
+                    tangent
+                } else {
+                    geom::scale(tangent, -1.)
+                },
+            )
+        });
+        let walk = if forward {
             tangent
         } else {
-            geom::scale(tangent, -1.0)
+            geom::scale(tangent, -1.)
         };
-        let (Some(direction), point) = (geom::unit(walk), ed.curve.value(middle)) else {
+        let Some(direction) = geom::unit(walk) else {
             return Arc::Unknown;
         };
         let normal = |face: usize| {
