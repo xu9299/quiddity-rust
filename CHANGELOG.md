@@ -30,6 +30,9 @@ in [docs/alpha1.md](docs/alpha1.md).
   Circular hole, recess and turned-feature proofs can recognise an arc encoded
   as a rational spline on an incident cylinder or cone.
   The area guard measures the selected boundary's length on its STEP carrier.
+  A transferred trim near a collapsed spline side uses the closer physical
+  point. The selected loop's flux is integrated about a face vertex so a
+  rigid translation does not decide whether to use that loop.
   Winding queries close regular trim loops at their shared STEP vertex; a ray
   through independently rounded pcurve ends now reads both sides of an annular groove.
   Probe rays near a selected common edge can resolve a duplicate entry within

@@ -738,6 +738,13 @@ impl Part {
             .terms
     }
 
+    fn face_mass_origin(&self, face: usize) -> Option<V3> {
+        self.faces[face].loops.iter().find_map(|lp| {
+            lp.vertex
+                .or_else(|| lp.edges.first().map(|&(e, _)| self.edges[e].start))
+        })
+    }
+
     fn preferred_face_mass(&self, face: usize) -> Option<FaceMass> {
         let boundary = self.declared_boundary(face)?;
         if let Some(terms) = self
@@ -749,18 +756,22 @@ impl Part {
                 method: BoundaryMethod::CertifiedPatch,
             });
         }
-        let terms = self
-            .integrate_boundary(
-                face,
-                Some(boundary),
-                mass_density,
-                IntegralRule {
-                    components: Components::Prefix(5),
-                    observe_mass: None,
-                },
-                &mut None,
-            )
-            .and_then(valid_mass)?;
+        // Translating the part adds a constant multiple of its area vector to
+        // the position flux. Integrate about a boundary vertex so a change of
+        // placement cannot dominate the error test for the selected trim.
+        let origin = self.face_mass_origin(face)?;
+        let mut terms = self.integrate_boundary(
+            face,
+            Some(boundary),
+            |p, su, sv| mass_density(geom::sub(p, origin), su, sv),
+            IntegralRule {
+                components: Components::Prefix(5),
+                observe_mass: None,
+            },
+            &mut None,
+        )?;
+        terms[1] += geom::dot(origin, [terms[2], terms[3], terms[4]]);
+        let terms = valid_mass(terms)?;
         if !boundary.within_strip(self, face, terms[0])? {
             return None;
         }
@@ -1683,10 +1694,7 @@ impl Part {
     /// folded projection cancel. Used to measure a skin's adjoining edge-treatment strips.
     pub fn face_projected_moments(&self, face: usize, direction: V3) -> Option<(f64, V3)> {
         let fc = &self.faces[face];
-        let origin = fc.loops.iter().find_map(|lp| {
-            lp.vertex
-                .or_else(|| lp.edges.first().map(|&(e, _)| self.edges[e].start))
-        })?;
+        let origin = self.face_mass_origin(face)?;
         let [area, x, y, z] = self.moment_integral(face, [4, 5, 6, 7, 8], |p, su, sv| {
             let n = geom::cross(su, sv);
             let w = geom::dot(n, direction);
@@ -1752,10 +1760,7 @@ impl Part {
         // cost more than the integral itself on B-splines). This conditions the
         // error estimate before a cold mass query. The boundary integral below
         // independently chooses the file's selected geometric representation.
-        let origin = fc.loops.iter().find_map(|lp| {
-            lp.vertex
-                .or_else(|| lp.edges.first().map(|&(e, _)| self.edges[e].start))
-        })?;
+        let origin = self.face_mass_origin(face)?;
         let scale = fc
             .loops
             .iter()
