@@ -722,11 +722,13 @@ impl Part {
                     }
                     for (j, t) in nodes.into_iter().enumerate() {
                         let (u, v) = trim.surface_uv(&f.surface, t);
-                        // Mesh edges share the topological vertex in space. At a
-                        // regular endpoint, give its two coedges the same UV as well.
-                        // A seam or singularity keeps the branch of the pcurve.
+                        // Coedges meet at one STEP vertex. At a regular endpoint
+                        // of a periodic face, independently rounded pcurves may
+                        // straddle a winding ray through the seam. Map the shared
+                        // vertex once per coedge, keeping its branch of the period.
+                        // A singularity still needs the pcurve's own longitude.
                         let is_end = t == trim.interval.0 || t == trim.interval.1;
-                        let (uv, point) = if mesh
+                        let (uv, point) = if (mesh || pu || pv)
                             && is_end
                             && !on_collapsed((u, v))
                             && f.surface.singular_v(v).is_none()

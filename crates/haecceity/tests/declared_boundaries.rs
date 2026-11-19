@@ -108,6 +108,30 @@ fn trim_moments_survive_placement() {
 }
 
 #[test]
+fn an_oblique_cylinder_cut_has_the_same_domain_on_both_sides_of_its_seam() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    // Two planes bound each cylindrical wall. At u = 0 their intersections
+    // place the probe below outside the oblique end, and v = -5 inside.
+    for (file, entity, below) in [("10096", 1989, -17.), ("10138", 2636, -20.33)] {
+        let part = read_step_file(&dir.join(format!("mfcadpp/{file}.step"))).unwrap();
+        let f = (0..part.faces.len())
+            .find(|&f| part.face_source(f).unwrap().entity == entity)
+            .unwrap();
+        let domain = part.domain(f).unwrap();
+        for u in [-1e-10, 0., 1e-10, std::f64::consts::TAU] {
+            assert!(!domain.contains(u, below), "{file} #{entity} {u}");
+            assert!(domain.contains(u, -5.), "{file} #{entity} {u}");
+        }
+        if file == "10096" {
+            assert!(domain.contains(std::f64::consts::PI, below));
+        }
+    }
+}
+
+#[test]
 fn a_shared_vertex_closes_the_declared_mesh_loop() {
     let Some(dir) = common::corpus_dir() else {
         assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());

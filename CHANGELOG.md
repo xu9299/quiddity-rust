@@ -20,6 +20,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   The area guard measures the selected boundary's length on its STEP carrier.
   Probe rays near a selected common edge can resolve a duplicate entry within
   the file's own uncertainty when the material intervals agree on both sides.
+  Periodic face domains share the STEP vertex at regular coedge ends so a ray
+  through the seam uses the same trimmed region as neighbouring rays.
   STEP export preserves retained master and outer-bound declarations.
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's

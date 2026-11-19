@@ -166,6 +166,13 @@ STEP vertices is bounded by the larger endpoint mismatch plus `r Δu²/8`.
 The wall classifier and the adjoining slot end-wall proof accept it as straight at the kernel coordinate floor
 when this bound fits. Area, length and proximity still evaluate the helix.
 
+In a periodic face domain, regular ends of selected coedges use their shared
+STEP vertex in the parameter branch of each coedge. A winding ray exactly on
+a cylindrical seam must see the same finite cut as the two neighbouring
+generators. For `mfcadpp/10096.step` face #1989 the file's two planes put
+the lower end at −14.83003931168 mm at zero longitude and −19.24211871677 mm
+at half a turn. The wall contains −17 mm only on the latter generator.
+
 In `cadgenbench_inputs/cgb243.step.gz`, spherical face `#55337` has radius
 2.5 mm. Its three surface curves select `PCURVE_S1`. One is on the sphere and
 two are on rational B-spline patches. An independent calculation evaluates
