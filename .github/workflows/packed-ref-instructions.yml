@@ -1,0 +1,97 @@
+name: Count instructions for packed STEP imports
+on:
+  push:
+    branches: [validation/packed-ref-instructions-20261120]
+permissions:
+  contents: read
+env:
+  BASE: f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0
+  SOURCE: 4511303bec624405812a9e79e56ab9dea5e113d5
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  RUSTUP_TOOLCHAIN: '1.99.1'
+  CARGO_BUILD_JOBS: '4'
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+jobs:
+  import:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+          sparse-checkout: cadgenbench_inputs/cgb202.step.gz
+          sparse-checkout-cone-mode: false
+      - name: Prepare the two pinned inputs and the import-only measurement
+        run: |
+          mkdir -p results
+          git -C source worktree add --detach ../baseline "$BASE"
+          test "$(git -C source rev-parse HEAD^)" = "$BASE"
+          gzip -dc corpus/cadgenbench_inputs/cgb202.step.gz > cgb202.step
+          cp source/tests/fixtures/ap242/assembly/assembly.step assembly.step
+          sha256sum cgb202.step assembly.step | tee results/inputs.log
+          echo "661210dec702f8347603884bec0476da0a1af5376a55bf842c45ba25181e2860  cgb202.step" | sha256sum -c -
+          rustup toolchain install 1.99.1 --profile minimal
+          if ! command -v valgrind >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y valgrind; fi
+          { uname -a; lscpu; rustc -vV; cargo -V; valgrind --version; git -C source rev-parse HEAD HEAD^{tree}; git -C baseline rev-parse HEAD; git -C corpus rev-parse HEAD; } > results/environment.log
+          cat > import.rs <<'RS'
+          use haecceity::step::read_step_owned;
+          fn main() {
+              let path = std::env::args().nth(1).unwrap();
+              let part = read_step_owned(std::fs::read(path).unwrap()).unwrap();
+              println!("faces={} edges={} solids={}", part.faces.len(), part.edges.len(), part.solids.len());
+              std::hint::black_box(&part);
+          }
+          RS
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: packed-step-instructions
+      - name: Build the same driver against each revision
+        run: |
+          for variant in baseline source; do
+            touch "$variant/crates/haecceity/src/step/packed.rs"
+            cargo build --manifest-path "$variant/Cargo.toml" --release --locked -p haecceity --lib --message-format=json > "results/$variant-build.jsonl"
+            jq -es --arg manifest "$(realpath "$variant/crates/haecceity/Cargo.toml")" '[.[] | select(.reason=="compiler-artifact" and .target.name=="haecceity")] | length == 1 and .[0].manifest_path == $manifest and (.[0].fresh | not)' "results/$variant-build.jsonl" > /dev/null
+            lib="$(jq -r 'select(.reason=="compiler-artifact" and .target.name=="haecceity") | .filenames[] | select(endswith(".rlib"))' "results/$variant-build.jsonl")"
+            test -f "$lib"
+            rustc --edition=2024 -O --extern "haecceity=$lib" -L "dependency=$CARGO_TARGET_DIR/release/deps" import.rs -o "import-$variant"
+            test -z "$(git -C "$variant" status --porcelain)"
+          done
+          sha256sum import-baseline import-source > results/binaries.log
+      - name: Count executed instructions through import and destruction
+        run: |
+          echo "case,round,variant,instructions" > results/counts.csv
+          for input in cgb202 assembly; do
+            for round in 1 2; do
+              variants=(baseline source)
+              if test "$round" = 2; then variants=(source baseline); fi
+              for variant in "${variants[@]}"; do
+                label="$input-$round-$variant"
+                valgrind --tool=callgrind --quiet --cache-sim=no --branch-sim=no \
+                  --callgrind-out-file="$RUNNER_TEMP/$label.cg" "./import-$variant" "$input.step" > "results/$label.out"
+                grep -q '^events: Ir$' "$RUNNER_TEMP/$label.cg"
+                n="$(awk '/^summary: /{print $2}' "$RUNNER_TEMP/$label.cg")"
+                test "$n" -gt 0
+                echo "$input,$round,$variant,$n" | tee -a results/counts.csv
+              done
+              cmp "results/$input-$round-baseline.out" "results/$input-$round-source.out"
+            done
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: packed-ref-instructions
+          path: results/
+          retention-days: 30
