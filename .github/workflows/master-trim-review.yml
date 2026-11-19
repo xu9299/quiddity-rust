@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0
-  SOURCE: 9e7c5dcb5540fd41b200da6ac19c0be530f6f578
-  TREE: f9b109227125d1614a99e4af28df3efe146caf09
+  SOURCE: 2ad6bc35575e34c36ca630d5a06680daa1aec4b8
+  TREE: 3b446d930cbde5c165cb9472e4968e0f6dc25560
 jobs:
   verify:
     strategy:
@@ -137,6 +137,18 @@ jobs:
           gzip -dc tests/fixtures/rust-snapshot/probes.json.gz > "$RUNNER_TEMP/expected-probes.json"
           cargo run --release --locked --example master_trim_probe_diff -- "$RUNNER_TEMP/input-probes.json" "$RUNNER_TEMP/expected-probes.json" "$QUIDDITY_CORPUS" ../evidence/probe-differences.json
           rm examples/master_trim_probe_diff.rs
+      - name: Install pinned Rust API checker
+        continue-on-error: true
+        if: "!cancelled() && matrix.task == 'survey'"
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: cargo-semver-checks@0.51.0
+      - name: Check the public drawing API against the published releases
+        if: "!cancelled() && matrix.task == 'survey'"
+        run: |
+          if ! cargo semver-checks --version 2>/dev/null | grep -Fq '0.51.0'; then cargo install cargo-semver-checks --version 0.51.0 --locked; fi
+          uv run --no-project --python 3.13 .github/test_check_semver.py
+          uv run --no-project --python 3.13 .github/check_semver.py 2>&1 | tee ../evidence/semver.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
