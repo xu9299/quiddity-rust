@@ -12,7 +12,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   when measuring and querying trimmed faces. Area, moments, containment,
   bounds and edge witnesses can now follow a selected pcurve even when the
   independently approximated 3D edge also encloses a measurable area. Trimmed
-  drawings, mesh joins and feature measurements use the same edge selection.
+  drawings, mesh joins, edge distances and feature measurements use the same
+  edge selection. Hole, rim and profile proofs test the selected curve's type.
   STEP export preserves retained master and outer-bound declarations.
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's

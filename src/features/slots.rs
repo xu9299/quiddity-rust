@@ -107,10 +107,9 @@ pub(crate) fn claim_rectangular_end_walls(part: &Part, slot: &Slot, defining: &m
                             && (frame.origin[l] - (at + sign * r)).abs() <= tol
                             && ((if low { b.min[w] } else { b.max[w] }) - inset).abs() <= tol
                             && part.frame_points_outward(g) == Some(false)
-                            && part
-                                .shared_edges(f, g)
-                                .iter()
-                                .any(|&e| matches!(part.edges[e].curve, Curve::Line { .. }))
+                            && part.shared_edges(f, g).iter().any(|&e| {
+                                matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. }))
+                            })
                             && part.neighbours(g).iter().any(|h| {
                                 walls.contains(h) && {
                                     let hb = part.face_bounds(*h);

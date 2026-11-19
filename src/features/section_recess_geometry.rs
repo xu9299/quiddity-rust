@@ -50,7 +50,7 @@ use super::support_patches::covered_patch;
 use crate::kernel::brep::{Arc, Edge, Face, Loop, Part};
 use crate::kernel::geom::{Curve, Frame, Surface, V3};
 use crate::kernel::py;
-use crate::kernel::sampling::{edge_interval, sample_edge};
+use crate::kernel::sampling::sample_edge;
 use crate::kernel::sweep::extrude_face;
 
 const DIRECTION_TOL: f64 = 1e-6;
@@ -224,17 +224,11 @@ fn is_cylinder(part: &Part, node: usize) -> bool {
 }
 
 /// A circular edge's length (`edge.length`).
-fn circle_length(edge: &Edge) -> Option<f64> {
-    let Curve::Circle { radius, .. } = edge.curve else {
+fn circle_length(part: &Part, e: usize) -> Option<f64> {
+    let Curve::Circle { radius, .. } = part.boundary_edge_curve(e)? else {
         return None;
     };
-    let (a, b) = edge_interval(
-        &edge.curve,
-        edge.start,
-        edge.end,
-        edge.same_sense,
-        edge.is_closed(),
-    );
+    let (a, b) = part.boundary_edge_interval(e)?;
     Some(radius * (b - a).abs())
 }
 
@@ -246,7 +240,7 @@ fn edge_sweep(part: &Part, floor: usize, cylinder: usize, radius: f64) -> Option
     }
     let lengths: Option<Vec<f64>> = occurrences
         .iter()
-        .map(|&e| circle_length(&part.edges[e]))
+        .map(|&e| circle_length(part, e))
         .collect();
     Some(py::sum(lengths?) / radius)
 }
@@ -323,7 +317,7 @@ fn polygonal_section(part: &Part, floor: usize, frame: &LocalFrame) -> Option<Pl
     if edges.len() < 3
         || edges
             .iter()
-            .any(|&e| !matches!(part.edges[e].curve, Curve::Line { .. }))
+            .any(|&e| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
     {
         return None;
     }
@@ -898,9 +892,9 @@ fn mixed_floor_section(
     let kinds: BTreeSet<&str> = loops[0]
         .edges
         .iter()
-        .map(|&(e, _)| match part.edges[e].curve {
-            Curve::Line { .. } => "LINE",
-            Curve::Circle { .. } => "CIRCLE",
+        .map(|&(e, _)| match part.boundary_edge_curve(e) {
+            Some(&Curve::Line { .. }) => "LINE",
+            Some(&Curve::Circle { .. }) => "CIRCLE",
             _ => "OTHER",
         })
         .collect();
@@ -913,16 +907,17 @@ fn mixed_floor_section(
     let mut vertices = Vec::new();
     for (index, &e) in edges.iter().enumerate() {
         let (start, end) = (corners[index], corners[(index + 1) % corners.len()]);
-        let edge = &part.edges[e];
         let mut bulge = 0.0;
-        if let Curve::Circle { radius, .. } = edge.curve {
+        if let Some(&Curve::Circle { radius, .. }) = part.boundary_edge_curve(e) {
             let mid = project(part.edge_midpoint(e), &frame);
             let turn =
                 (mid[0] - start[0]) * (end[1] - mid[1]) - (mid[1] - start[1]) * (end[0] - mid[0]);
             if turn.abs() <= 1e-12 {
                 return None;
             }
-            bulge = (circle_length(edge)? / radius / 4.0).tan().copysign(turn);
+            bulge = (circle_length(part, e)? / radius / 4.0)
+                .tan()
+                .copysign(turn);
         }
         vertices.push(SectionVertex::new(start, bulge).ok()?);
     }

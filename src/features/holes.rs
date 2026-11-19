@@ -896,8 +896,8 @@ fn mouth_chamfer(part: &Part, seg: &Segment, hi: bool) -> Option<(MouthChamfer, 
                     && geom::dot(geom::sub(wide, frame.origin), normal).abs() <= tol
             }) && part.arc(face, support) == Some(Arc::Convex)
                 && part.shared_edges(face, support).iter().any(|&edge| {
-                    let crate::kernel::geom::Curve::Circle { frame, radius } =
-                        part.edges[edge].curve
+                    let Some(&crate::kernel::geom::Curve::Circle { frame, radius }) =
+                        part.boundary_edge_curve(edge)
                     else {
                         return false;
                     };

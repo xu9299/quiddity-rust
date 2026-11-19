@@ -134,6 +134,23 @@ six selections set to `CURVE_3D` has the analytic spatial-parabola area
 723.863727338942 mm². The regression exercises both representations under
 translation and rotation at the original absolute tolerance.
 
+Feature proofs that require a straight or circular boundary query the selected
+primitive and its finite parameter interval. Length, points at a fraction of arc
+length and nearest-point queries also evaluate a general curve on its carrier.
+A planar extrusion can copy straight sides and circular arcs. If the selected
+side is a general curve, this constructor cannot form its side wall.
+
+In `cadgenbench_inputs/cgb243.step.gz`, spherical face `#55337` has radius
+2.5 mm. Its three surface curves select `PCURVE_S1`. One is on the sphere and
+two are on rational B-spline patches. An independent calculation evaluates
+their two-dimensional splines and the two rational tensor products, maps the
+lifted points to sphere longitude and latitude, and integrates the Cartesian
+moment densities with the spherical Jacobian. Gauss integration with 24 and 48
+nodes per span gives 3.541993373916 mm² to twelve decimal places. Selecting
+`CURVE_3D` on just those three edges reproduces the independently pinned
+spatial area of 3.541992339312 mm². The regression checks both centroids and
+all six independent central second moments at their original tolerances.
+
 ## Settled volume queries
 
 A volume pass refuses as soon as a sampled line is unresolved. Later samples

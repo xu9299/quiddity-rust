@@ -205,7 +205,7 @@ fn candidate(
     let shared = part.shared_edges(left, right);
     let [edge] = shared[..] else { return None };
     let ed = &part.edges[edge];
-    let Curve::Line { .. } = ed.curve else {
+    let Some(&Curve::Line { .. }) = part.boundary_edge_curve(edge) else {
         return None;
     };
     let tangent = py::unit(crate::kernel::geom::sub(ed.end, ed.start))?;

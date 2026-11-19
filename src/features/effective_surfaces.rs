@@ -399,6 +399,9 @@ pub(crate) fn physical_boundary_length(part: &Part, face: usize) -> f64 {
 /// speed: a B-spline's short knot span can carry a fast stretch that fixed integration panels
 /// step over (nist_ftc_10 face 178's edge, 3e-6 short at 64 Gauss panels).
 pub(crate) fn arc_length(part: &Part, edge: usize) -> f64 {
+    if let Some(length) = part.declared_edge_length(edge) {
+        return length;
+    }
     let e = &part.edges[edge];
     let curve = &e.curve;
     if matches!(curve, Curve::Line { .. } | Curve::Circle { .. }) {

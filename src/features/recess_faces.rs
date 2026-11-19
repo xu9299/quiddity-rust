@@ -41,9 +41,9 @@ fn is_wall(part: &Part, face: usize) -> bool {
     let edges = part.face_edges(face);
     let (mut lines, mut circles) = (0, 0);
     for e in &edges {
-        match part.edges[*e].curve {
-            Curve::Line { .. } => lines += 1,
-            Curve::Circle { .. } => circles += 1,
+        match part.boundary_edge_curve(*e) {
+            Some(&Curve::Line { .. }) => lines += 1,
+            Some(&Curve::Circle { .. }) => circles += 1,
             _ => return false,
         }
     }

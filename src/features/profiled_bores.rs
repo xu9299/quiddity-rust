@@ -305,12 +305,12 @@ fn double_d_profile(part: &Part, wire: &[(usize, bool)], axis: usize, tol: f64) 
     let lines: Vec<usize> = edges
         .iter()
         .copied()
-        .filter(|&e| matches!(part.edges[e].curve, Curve::Line { .. }))
+        .filter(|&e| matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
         .collect();
     let arcs: Vec<(usize, V3, f64)> = edges
         .iter()
-        .filter_map(|&e| match &part.edges[e].curve {
-            Curve::Circle { frame, radius } => Some((e, frame.origin, *radius)),
+        .filter_map(|&e| match part.boundary_edge_curve(e) {
+            Some(Curve::Circle { frame, radius }) => Some((e, frame.origin, *radius)),
             _ => None,
         })
         .collect();

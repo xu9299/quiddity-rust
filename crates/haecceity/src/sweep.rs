@@ -30,15 +30,12 @@ pub fn extrude_face(part: &Part, face: usize, offset: V3, sweep: V3) -> Option<P
     let vertex_ids = sweepable_vertices(part, &source, up)?;
     let n_vertices = vertex_ids.len();
     // Edges: bottom copies, top copies, then one rising edge per vertex.
-    let mut edges: Vec<Edge> = source
-        .iter()
-        .map(|&e| copy_edge(&part.edges[e], offset, 0, &vertex_ids))
-        .collect();
-    edges.extend(
-        source
-            .iter()
-            .map(|&e| copy_edge(&part.edges[e], top_by, 1, &vertex_ids)),
-    );
+    let mut edges = Vec::with_capacity(2 * source.len() + n_vertices);
+    for (level, by) in [offset, top_by].into_iter().enumerate() {
+        for &e in &source {
+            edges.push(copy_edge(part, e, by, level, &vertex_ids)?);
+        }
+    }
     let riser = push_risers(part, &source, &vertex_ids, offset, sweep, &mut edges);
     #[allow(
         clippy::expect_used,
@@ -72,7 +69,12 @@ pub fn extrude_face(part: &Part, face: usize, offset: V3, sweep: V3) -> Option<P
     let solid = Solid {
         faces: (0..faces.len()).collect(),
     };
-    Some(Part::new(faces, edges, vec![solid]))
+    let mut swept = Part::new(faces, edges, vec![solid]);
+    if let Some(&outer) = part.outer_bounds.get(&face) {
+        swept.outer_bounds.insert(0, outer);
+        swept.outer_bounds.insert(1, outer);
+    }
+    Some(swept)
 }
 
 /// The vertices of the *source* edges, each once in order of first use, or `None` when an edge
@@ -81,7 +83,7 @@ fn sweepable_vertices(part: &Part, source: &[usize], up: V3) -> Option<Vec<usize
     let mut vertex_ids: Vec<usize> = Vec::new();
     for &e in source {
         let edge = &part.edges[e];
-        match &edge.curve {
+        match part.boundary_edge_curve(e)? {
             Curve::Line { .. } if !edge.is_closed() => {}
             Curve::Circle { frame: c, .. } if 1.0 - geom::dot(c.z, up).abs() <= 1e-9 => {}
             _ => return None,
@@ -109,10 +111,13 @@ fn vertex_index(vertex_ids: &[usize], v: usize) -> usize {
     clippy::unreachable,
     reason = "sweepable_vertices admits only line and circle edges and collects both ends of each"
 )]
-fn copy_edge(edge: &Edge, by: V3, level: usize, vertex_ids: &[usize]) -> Edge {
+fn copy_edge(part: &Part, e: usize, by: V3, level: usize, vertex_ids: &[usize]) -> Option<Edge> {
+    let edge = &part.edges[e];
+    let curve = part.boundary_edge_curve(e)?;
+    let (a, b) = part.boundary_edge_interval(e)?;
     let n_vertices = vertex_ids.len();
-    Edge {
-        curve: match &edge.curve {
+    Some(Edge {
+        curve: match curve {
             Curve::Line { origin, dir } => Curve::Line {
                 origin: geom::add(*origin, by),
                 dir: *dir,
@@ -132,9 +137,17 @@ fn copy_edge(edge: &Edge, by: V3, level: usize, vertex_ids: &[usize]) -> Edge {
             vertex_index(vertex_ids, edge.vertices.0) + level * n_vertices,
             vertex_index(vertex_ids, edge.vertices.1) + level * n_vertices,
         ),
-        same_sense: edge.same_sense,
-        samples: edge.samples.iter().map(|&p| geom::add(p, by)).collect(),
-    }
+        same_sense: if part.spatial_trim(e).is_some() && a != b {
+            b > a
+        } else {
+            edge.same_sense
+        },
+        samples: part
+            .boundary_edge_samples(e)
+            .iter()
+            .map(|&p| geom::add(p, by))
+            .collect(),
+    })
 }
 
 /// Pushes onto *edges* a rising edge for each vertex an open edge ends at (a closed circle's

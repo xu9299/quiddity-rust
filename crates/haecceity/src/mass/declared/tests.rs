@@ -248,6 +248,21 @@ fn edge_witness_and_drawing_follow_the_same_quadratic_master() {
 }
 
 #[test]
+fn edge_distance_and_planar_sweep_respect_a_bowed_master() {
+    let part = crate::step::read_step(plane().as_bytes()).unwrap();
+    let expected = [0.5, 0.0002, 0.];
+    assert!(part.edge_distance(0, expected, 0.5) < 1e-10);
+    assert!(part.declared_edge_length(0).unwrap() > 1.);
+    // The planar sweep accepts only straight or circular boundaries.
+    assert!(crate::sweep::extrude_face(&part, 0, [0.; 3], [0., 0., 1.]).is_none());
+    let spatial = plane().replace(".PCURVE_S1.", ".CURVE_3D.");
+    let part = crate::step::read_step(spatial.as_bytes()).unwrap();
+    assert!((part.edge_distance(0, expected, 0.5) - 0.0002).abs() < 1e-12);
+    let prism = crate::sweep::extrude_face(&part, 0, [0.; 3], [0., 0., 1.]).unwrap();
+    assert!((prism.solid_mass(0).unwrap().0 - 1.).abs() < 1e-12);
+}
+
+#[test]
 fn declared_outer_and_hole_survive_a_step_round_trip() {
     let mut extra = String::new();
     for (i, (x, y), line) in [

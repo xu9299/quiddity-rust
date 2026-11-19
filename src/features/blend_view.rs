@@ -279,13 +279,13 @@ fn second_partials(surface: &Surface, u: f64, v: f64) -> Option<(V3, V3, V3)> {
 /// derivative there (`GCPnts_AbscissaPoint` on `BRepAdaptor_Curve`).
 fn edge_point(part: &Part, edge: usize, fraction: f64) -> (V3, V3) {
     let e = &part.edges[edge];
-    let (t0, t1) = edge_interval(&e.curve, e.start, e.end, e.same_sense, e.is_closed());
     let forward = e.same_sense;
     if let Some((p, d)) =
         part.declared_edge_at_length(edge, if forward { fraction } else { 1. - fraction })
     {
         return (p, if forward { d } else { geom::scale(d, -1.) });
     }
+    let (t0, t1) = edge_interval(&e.curve, e.start, e.end, e.same_sense, e.is_closed());
     match e.curve {
         Curve::Line { .. } | Curve::Circle { .. } => {
             let t = t0.min(t1) + fraction * (t1 - t0).abs();

@@ -56,7 +56,7 @@ struct Slab<'a> {
 const PERPENDICULAR: f64 = 1e-9;
 
 fn line(part: &Part, edge: usize) -> bool {
-    matches!(part.edges[edge].curve, Curve::Line { .. })
+    matches!(part.boundary_edge_curve(edge), Some(Curve::Line { .. }))
 }
 
 impl Slab<'_> {

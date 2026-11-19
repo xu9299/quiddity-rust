@@ -55,11 +55,11 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
     let mut rails = Vec::new();
     for edge in edges {
         let e = &part.edges[edge];
-        match e.curve {
-            Curve::Circle {
+        match part.boundary_edge_curve(edge) {
+            Some(&Curve::Circle {
                 frame: cf,
                 radius: r,
-            } if !e.is_closed()
+            }) if !e.is_closed()
                 && geom::dot(cf.z, frame.z).abs() > 1. - 1e-9
                 && (r - radius).abs() <= length_tolerance(&[radius])
                 && (edge_length(part, edge) - PI * radius).abs()
@@ -69,7 +69,9 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
             {
                 rims.push((edge, cf.origin));
             }
-            Curve::Line { dir, .. } if geom::dot(geom::unit(dir)?, frame.z).abs() > 1. - 1e-9 => {
+            Some(&Curve::Line { dir, .. })
+                if geom::dot(geom::unit(dir)?, frame.z).abs() > 1. - 1e-9 =>
+            {
                 rails.push(edge)
             }
             _ => return None,
@@ -158,7 +160,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
         .filter(|e| *e != cap_rim && !cap_sides.contains(e))
         .collect();
     let [top] = top[..] else { return None };
-    if !matches!(part.edges[top].curve, Curve::Line { .. })
+    if !matches!(part.boundary_edge_curve(top), Some(Curve::Line { .. }))
         || (edge_length(part, top) - 2. * radius).abs() > tolerance
     {
         return None;

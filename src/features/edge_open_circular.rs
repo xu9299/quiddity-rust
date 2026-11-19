@@ -216,9 +216,9 @@ fn segment(
     // `orient_segments`, which tries both and keeps the canonical direction.
     let start = rounded(project(e.start, axis));
     let end = rounded(project(e.end, axis));
-    match &e.curve {
-        Curve::Line { .. } => OpenCircularSectionSegment::line(start, end),
-        Curve::Circle { frame, radius } => {
+    match part.boundary_edge_curve(edge) {
+        Some(Curve::Line { .. }) => OpenCircularSectionSegment::line(start, end),
+        Some(Curve::Circle { frame, radius }) => {
             let centre = project(frame.origin, axis);
             let sweep = arc_sweep(
                 centre,

@@ -1590,8 +1590,15 @@ impl Part {
             .filter(|&(e, _)| uses(e) == 1)
             .collect();
         let length = |e: usize| {
-            let s = &self.edges[e].samples;
-            s.windows(2).map(|w| geom::dist(w[0], w[1])).sum::<f64>()
+            let edge = &self.edges[e];
+            let points = boundary
+                .and_then(|b| b.edges.get(&e))
+                .and_then(|trim| trim.samples(surface, edge))
+                .map_or(&edge.samples, |samples| &samples.points);
+            points
+                .windows(2)
+                .map(|w| geom::dist(w[0], w[1]))
+                .sum::<f64>()
         };
         edges.sort_by(|a, b| length(b.0).total_cmp(&length(a.0)));
         let (du_range, dv_range) = (domain.u_range(), domain.v_range());
@@ -1724,7 +1731,9 @@ impl Part {
         // quadrature's error test, including faces with a constant area density.
         // A boundary vertex moves rigidly with the face. Existing edge samples give a cheap
         // length scale without asking for extrema (which require surface inversion and can
-        // cost more than the integral itself on B-splines).
+        // cost more than the integral itself on B-splines). This conditions the
+        // error estimate before a cold mass query. The boundary integral below
+        // independently chooses the file's selected geometric representation.
         let origin = fc.loops.iter().find_map(|lp| {
             lp.vertex
                 .or_else(|| lp.edges.first().map(|&(e, _)| self.edges[e].start))

@@ -160,7 +160,7 @@ pub(super) fn relation(part: &Part, left: &Region, right: &Region) -> Option<Arc
 /// A line edge's box per axis and its direction; `None` for any other curve.
 pub(super) fn line(part: &Part, edge: usize) -> Option<(Spans, [f64; 3])> {
     let e = &part.edges[edge];
-    let Curve::Line { dir, .. } = e.curve else {
+    let Some(&Curve::Line { dir, .. }) = part.boundary_edge_curve(edge) else {
         return None;
     };
     let span = [0, 1, 2].map(|i| (e.start[i].min(e.end[i]), e.start[i].max(e.end[i])));

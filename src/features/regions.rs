@@ -174,6 +174,9 @@ pub fn edge_radius(part: &Part, edge: usize) -> Option<f64> {
 internal_entry! {
 /// An edge's length: exact for lines and circular arcs, along its samples otherwise.
 pub fn edge_length(part: &Part, edge: usize) -> f64 {
+    if let Some(length) = part.declared_edge_length(edge) {
+        return length;
+    }
     let e = &part.edges[edge];
     match (part.boundary_edge_curve(edge), part.boundary_edge_interval(edge)) {
         (Some(Curve::Line { .. }), _) => geom::dist(e.start, e.end),

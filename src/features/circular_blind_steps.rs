@@ -124,8 +124,8 @@ fn complete_quarter_wall(
     let mut generators: Vec<Generator> = Vec::new();
     for edge in part.face_edges(cylinder) {
         let e = &part.edges[edge];
-        match e.curve {
-            geom::Curve::Line { dir, .. } => {
+        match part.boundary_edge_curve(edge) {
+            Some(&geom::Curve::Line { dir, .. }) => {
                 let Some(unit) = py::unit(dir) else {
                     return false;
                 };
@@ -147,7 +147,7 @@ fn complete_quarter_wall(
                     generators.push((transverse, vec![interval]));
                 }
             }
-            geom::Curve::Circle { frame, radius } => {
+            Some(&geom::Curve::Circle { frame, radius }) => {
                 if (1.0 - frame.z[axis].abs()) > SMOOTH_ARC_GAP
                     || (radius - wall_radius).abs() > COORD_FLOOR
                     || (0..3).any(|i| {
@@ -218,12 +218,11 @@ fn conical_entry(
     let mut rims = Vec::new();
     let mut generators = 0;
     for edge in part.face_edges(cone) {
-        let e = &part.edges[edge];
-        match e.curve {
-            geom::Curve::Circle {
+        match part.boundary_edge_curve(edge) {
+            Some(&geom::Curve::Circle {
                 frame: rim,
                 radius: r,
-            } => {
+            }) => {
                 if rim.z[axis].abs() < PRINCIPAL_AXIS_COS
                     || (0..3).any(|i| {
                         i != axis && (rim.origin[i] - evidence.axis_point[i]).abs() > COORD_FLOOR
@@ -238,7 +237,7 @@ fn conical_entry(
                 }
                 rims.push((rim.origin[axis], r, edge));
             }
-            geom::Curve::Line { .. } => generators += 1,
+            Some(&geom::Curve::Line { .. }) => generators += 1,
             _ => return None,
         }
     }

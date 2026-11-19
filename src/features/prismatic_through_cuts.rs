@@ -84,7 +84,7 @@ fn junction(p: &Part, a: usize, b: usize, f: &LocalFrame) -> Option<[f64; 4]> {
     let mut points = Vec::new();
     for e in p.shared_edges(a, b) {
         let edge = &p.edges[e];
-        let Curve::Line { dir, .. } = edge.curve else {
+        let Some(&Curve::Line { dir, .. }) = p.boundary_edge_curve(e) else {
             return None;
         };
         if geom::norm(geom::cross(geom::unit(dir)?, f.run)) > ANG {

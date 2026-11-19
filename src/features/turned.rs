@@ -79,8 +79,8 @@ pub fn transverse_planes(part: &Part, neighbours: &[usize], axis: V3) -> Vec<usi
 
 /// A circular edge's radius and centre.
 fn circle(part: &Part, edge: usize) -> Option<(f64, V3)> {
-    match part.edges[edge].curve {
-        Curve::Circle { frame, radius } => Some((radius, frame.origin)),
+    match part.boundary_edge_curve(edge) {
+        Some(&Curve::Circle { frame, radius }) => Some((radius, frame.origin)),
         _ => None,
     }
 }

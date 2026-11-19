@@ -120,6 +120,7 @@ pub(crate) struct EdgeTrim {
     samples: OnceLock<Option<TrimSamples>>,
     nodes: OnceLock<Option<Vec<f64>>>,
     midpoint: OnceLock<Option<(V3, V3)>>,
+    span_lengths: OnceLock<Option<Vec<f64>>>,
     spatial_curve: OnceLock<Option<Curve>>,
 }
 
@@ -307,6 +308,30 @@ impl EdgeTrim {
         )
     }
 
+    fn span_lengths(&self, s: &Surface) -> Option<&[f64]> {
+        self.span_lengths
+            .get_or_init(|| {
+                let nodes = self.nodes()?;
+                nodes
+                    .windows(2)
+                    .map(|w| {
+                        let value =
+                            integrate(w, |t| [geom::norm(self.spatial_velocity(s, t))])[0].abs();
+                        value.is_finite().then_some(value)
+                    })
+                    .collect()
+            })
+            .as_deref()
+    }
+
+    fn length(&self, s: &Surface) -> Option<f64> {
+        if let Some(c @ (Curve::Line { .. } | Curve::Circle { .. })) = self.spatial_curve(s) {
+            let (a, b) = self.primitive_interval(s);
+            return Some(geom::norm(c.derivative(a)) * (b - a).abs());
+        }
+        Some(self.span_lengths(s)?.iter().sum())
+    }
+
     fn point_and_tangent(&self, s: &Surface, fraction: f64) -> Option<(V3, V3)> {
         if fraction == 0.5 {
             return *self.midpoint.get_or_init(|| self.at_length(s, fraction));
@@ -328,12 +353,9 @@ impl EdgeTrim {
         }
         let nodes = self.nodes()?;
         let speed = |t| [geom::norm(self.spatial_velocity(s, t))];
-        let lengths: Vec<_> = nodes
-            .windows(2)
-            .map(|w| integrate(w, speed)[0].abs())
-            .collect();
+        let lengths = self.span_lengths(s)?;
         let mut remaining = fraction * lengths.iter().sum::<f64>();
-        for (i, (w, length)) in nodes.windows(2).zip(lengths).enumerate() {
+        for (i, (w, length)) in nodes.windows(2).zip(lengths.iter().copied()).enumerate() {
             if remaining > length && i + 2 < nodes.len() {
                 remaining -= length;
                 continue;
@@ -737,6 +759,12 @@ impl Part {
         c.point_and_tangent(s, fraction)
     }
 
+    /// Physical length of a file-selected surface curve, in millimetres.
+    pub fn declared_edge_length(&self, edge: usize) -> Option<f64> {
+        let (surface, trim) = self.spatial_trim(edge)?;
+        trim.length(surface)
+    }
+
     /// The arc-length midpoint of the selected spatial boundary of edge `e`.
     pub fn edge_midpoint(&self, e: usize) -> V3 {
         self.declared_edge_at_length(e, 0.5)
@@ -985,6 +1013,7 @@ fn resolve(
         samples: OnceLock::new(),
         nodes: OnceLock::new(),
         midpoint: OnceLock::new(),
+        span_lengths: OnceLock::new(),
         spatial_curve: OnceLock::new(),
     };
     let (a, b) = interval;

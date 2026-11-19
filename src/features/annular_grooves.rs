@@ -8,7 +8,6 @@ use super::graph::normal;
 use super::regions::{edge_length, length_tolerance};
 use crate::kernel::brep::{Arc, Part};
 use crate::kernel::geom::{self, Curve, Surface, V3};
-use crate::kernel::sampling::edge_interval;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
@@ -75,7 +74,7 @@ pub(super) fn ring(part: &Part, edges: Vec<usize>, axis: V3) -> Option<Ring> {
         return None;
     }
     let first = *edges.first()?;
-    let Curve::Circle { frame, radius } = part.edges[first].curve else {
+    let Some(&Curve::Circle { frame, radius }) = part.boundary_edge_curve(first) else {
         return None;
     };
     let tolerance = length_tolerance(&[radius]);
@@ -83,10 +82,10 @@ pub(super) fn ring(part: &Part, edges: Vec<usize>, axis: V3) -> Option<Ring> {
         return None;
     }
     for &edge in &edges {
-        let Curve::Circle {
+        let Some(&Curve::Circle {
             frame: other,
             radius: r,
-        } = part.edges[edge].curve
+        }) = part.boundary_edge_curve(edge)
         else {
             return None;
         };
@@ -107,10 +106,10 @@ pub(super) fn ring(part: &Part, edges: Vec<usize>, axis: V3) -> Option<Ring> {
     let mut intervals = Vec::new();
     for &edge in &edges {
         let e = &part.edges[edge];
-        let Curve::Circle { frame: other, .. } = e.curve else {
+        let Some(&Curve::Circle { frame: other, .. }) = part.boundary_edge_curve(edge) else {
             unreachable!()
         };
-        let (a, b) = edge_interval(&e.curve, e.start, e.end, e.same_sense, e.is_closed());
+        let (a, b) = part.boundary_edge_interval(edge)?;
         let orientation =
             geom::dot(geom::cross(frame.x, frame.y), geom::cross(other.x, other.y)).signum();
         let span = (b - a) * orientation;
@@ -256,9 +255,9 @@ fn wall(
     let mut other_edges = Vec::new();
     let mut seams = 0;
     for (edge, directions) in uses {
-        match part.edges[edge].curve {
-            Curve::Circle { .. } if directions.len() == 1 => other_edges.push(edge),
-            Curve::Line { dir, .. }
+        match part.boundary_edge_curve(edge) {
+            Some(&Curve::Circle { .. }) if directions.len() == 1 => other_edges.push(edge),
+            Some(&Curve::Line { dir, .. })
                 if directions.len() == 2
                     && directions[0] != directions[1]
                     && geom::dot(geom::unit(dir)?, axis).abs() > 1. - 1e-9 =>
@@ -351,7 +350,7 @@ pub fn discover(ctx: &Context<'_>) -> Vec<Occurrence<AnnularGroove>> {
     let mut seen=BTreeSet::<usize>::new();let mut found=Vec::new();
     for seed in 0..ctx.part.faces.len() {
         if seen.contains(&seed) || !matches!(ctx.part.faces[seed].surface,Surface::Plane{..})
-            || !ctx.part.face_edges(seed).iter().any(|&e|matches!(ctx.part.edges[e].curve,Curve::Circle{..})) { continue }
+            || !ctx.part.face_edges(seed).iter().any(|&e|matches!(ctx.part.boundary_edge_curve(e), Some(Curve::Circle{..}))) { continue }
         let Some(floor)=floor_region(ctx.part,seed) else { continue };
         seen.extend(floor.iter().copied());
         if let Some(o)=from_floor(ctx.part,&floor) { found.push(o); }
