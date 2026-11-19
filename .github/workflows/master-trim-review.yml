@@ -5,19 +5,19 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: declared-boundary-survey-${{ github.ref }}
+  group: declared-boundary-${{ github.sha }}
   cancel-in-progress: false
 env:
   CARGO_BUILD_JOBS: "6"
-  RUST_TEST_THREADS: "6"
+  RUST_TEST_THREADS: "3"
   CARGO_TERM_COLOR: never
   RUSTUP_TOOLCHAIN: "1.99.1"
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
-  SOURCE: 2e9b3971c1ee36d34e22f419d8ddc83c397aa37f
-  TREE: 353d0a1e2fffa12773b13c36291cd2ade556fced
+  SOURCE: 5785ece611a13495aaefd259a2fdf8c42e5aea1a
+  TREE: 43278ae83d35819c5146c6b7549931984af6ab26
 jobs:
   verify:
     strategy:
@@ -25,7 +25,7 @@ jobs:
       matrix:
         include:
           - runner: macos-15
-            task: survey-and-strict
+            task: survey
           - runner: macos-15
             task: workspace
     runs-on: ${{ matrix.runner }}
@@ -48,7 +48,7 @@ jobs:
           path: corpus
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        if: matrix.task == 'survey-and-strict'
+        if: matrix.task == 'survey'
         with:
           path: harness
           sparse-checkout: .github/master-trim-survey
@@ -66,7 +66,7 @@ jobs:
           workspaces: source -> ../target
           shared-key: master-trim-${{ matrix.runner }}
       - name: Build identical survey drivers against both source revisions
-        if: matrix.task == 'survey-and-strict'
+        if: matrix.task == 'survey'
         run: |
           for rev in "$BASE" "$SOURCE"; do
             git checkout --quiet --detach "$rev"
@@ -79,7 +79,7 @@ jobs:
           done
           shasum -a 256 "$RUNNER_TEMP/survey-$BASE" "$RUNNER_TEMP/survey-$SOURCE" > ../evidence/drivers.sha256
       - name: Compare face areas, fingerprints and recognition on all pinned inputs
-        if: matrix.task == 'survey-and-strict'
+        if: matrix.task == 'survey'
         run: |
           if ! command -v uv >/dev/null; then brew install uv; fi
           uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
@@ -87,10 +87,10 @@ jobs:
             --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
             --control crates/haecceity/tests/fixtures/master-trim-square.step --out ../evidence | tee ../evidence/survey.log
       - name: Upload corpus survey
-        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        if: "!cancelled() && matrix.task == 'survey'"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: master-trim-survey
+          name: declared-corpus-survey
           path: |
             evidence/summary.json
             evidence/per-file.json
@@ -100,7 +100,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Format, lint and feature-off builds
-        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        if: "!cancelled() && matrix.task == 'survey'"
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE"
           cargo fmt --all --check
@@ -108,25 +108,19 @@ jobs:
           cargo check -p haecceity --release --locked --no-default-features
           cargo check -p quiddity --release --locked --no-default-features --features presentation
       - name: Run all workspace tests against pinned references
+        timeout-minutes: 310
         if: matrix.task == 'workspace'
         env:
           QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/evidence/verified
         run: cargo test --workspace --release --locked --no-fail-fast 2>&1 | tee ../evidence/workspace.log
-      - name: Run Rust snapshot producers under their original comparison bands
-        if: "!cancelled() && matrix.task == 'survey-and-strict'"
-        env:
-          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/evidence/verified
-        run: |
-          test "$(git rev-parse HEAD)" = "$SOURCE"
-          cargo test --workspace --release --locked --no-fail-fast rust_snapshot 2>&1 | tee ../evidence/snapshot-tests.log
       - name: Check complete coverage and provenance
-        if: "!cancelled()"
+        if: "!cancelled() && matrix.task == 'workspace'"
         run: cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../evidence/verified 2>&1 | tee ../evidence/coverage.log
       - name: Check strict ARM snapshot reproduction
-        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        if: "!cancelled() && matrix.task == 'workspace'"
         run: cargo run -p snapshot-tool --release --locked -- --check --verify-dir ../evidence/verified 2>&1 | tee ../evidence/strict.log
       - name: Compare all committed captured effective-surface parts
-        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        if: "!cancelled() && matrix.task == 'survey'"
         run: |
           mkdir -p ../evidence/captured
           uv run --no-project --python 3.13 - <<'PY'
@@ -145,7 +139,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: master-trim-${{ matrix.task }}-evidence
+          name: declared-${{ matrix.task }}-evidence
           path: evidence/
           if-no-files-found: error
           retention-days: 30
