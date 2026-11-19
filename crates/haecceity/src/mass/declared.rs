@@ -68,7 +68,7 @@ impl ParamCurve {
     pub(crate) fn value(&self, t: f64) -> V3 {
         if let Some(tr) = &self.transfer {
             self.lifted(t, tr)
-                .and_then(|(_, p)| tr.face.parameters(p, None))
+                .and_then(|(_, p)| foot(&tr.face, tr.face_spans, p, None))
                 .map_or([f64::NAN; 3], |(u, v)| [u, v, 0.])
         } else {
             self.carrier_uv(t)
@@ -90,7 +90,7 @@ impl ParamCurve {
         };
         let (su, sv) = tr.carrier.partials(u, v);
         let tangent = geom::add(geom::scale(su, velocity[0]), geom::scale(sv, velocity[1]));
-        let Some((u, v)) = tr.face.parameters(xyz, None) else {
+        let Some((u, v)) = foot(&tr.face, tr.face_spans, xyz, None) else {
             return [f64::NAN; 3];
         };
         let (du, dv) = uv_velocity(&tr.face, tr.face_spans, u, v, xyz, tangent);
@@ -100,7 +100,7 @@ impl ParamCurve {
         let q = if let Some(tr) = &self.transfer {
             let (u, v) = wrap_closed(&tr.face, tr.face_spans, (q[0], q[1]));
             let p = tr.face.value(u, v);
-            let Some((u, v)) = tr.carrier.parameters(p, None) else {
+            let Some((u, v)) = foot(&tr.carrier, tr.carrier_spans, p, None) else {
                 return f64::NAN;
             };
             [u, v, 0.]
