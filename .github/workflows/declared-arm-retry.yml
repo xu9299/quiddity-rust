@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   arm:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 360
     defaults:
       run:
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: 6113e798055181e19ecd8d1e0c6a61b68cd5e54c
+          ref: 213ebc3f364155c7e766ceb6eb959ae36d06dc75
           path: source
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -33,7 +33,7 @@ jobs:
       - name: Identify exact input, source, OS and compiler
         run: |
           mkdir -p ../evidence
-          test "$(git rev-parse HEAD^{tree})" = 4a7a4e9581a842ab8cc4ae30151028154d70aabb
+          test "$(git rev-parse HEAD^{tree})" = ded4ec8b6d1857c0d4e07a3e5bc36d559eb1bd07
           test "$(uname -m)" = arm64
           rustup toolchain install 1.99.1 --profile minimal
           { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } | tee ../evidence/environment.log
