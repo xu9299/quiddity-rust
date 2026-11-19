@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   arm:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 360
     defaults:
       run:
