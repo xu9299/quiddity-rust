@@ -106,6 +106,33 @@ available if a declaration cannot be evaluated or the integral fails its error
 checks. The mass cache publishes the chosen method along with its result so
 the first query for a centroid cannot choose another boundary.
 
+A master on an adjacent surface reaches its target through the same constrained
+foot-point calculation as a spatial edge. An inversion stalled at a closed
+spline seam is retried from the other side. On the line-profile revolution
+shaft, the outer rim of the far-side annulus is declared on its neighbouring
+cylinder. Its quadrant is bounded by 15 mm and 10 mm radii and has area
+(15² − 10²)π/4. Selecting each edge by its STEP declaration reproduces
+this area, its signed flux and the shaft's analytic volume. A mixed-normal
+repair also tries its new senses on the original part with these trims and
+restores the previous senses if the material-side proof fails.
+
+Two public faces separate the declared and alternate answers. The cylindrical
+face #13471 in cgb217 uses edge #12691. Its first pcurve is a line on spline
+surface #12488. OpenCascade evaluation of those raw STEP entities puts the
+maximum axial coordinate at 24.518993418091 mm. The second pcurve, on
+the cylinder itself, fixes that coordinate at 24.5 mm. Selecting that flat
+alternate with the original bowed spatial spline fails the strip guard and
+gives the projected bound of 24.51868961048 mm. Pairing it with the adjacent
+rim’s 3D circle on the same parallel accepts the declared 24.5 mm bound.
+
+On cgb242 face #84456, the lower boundary lifts from a line on plane #31961.
+The upper boundary lifts pcurve #44970 on cylinder #32222 onto the receiving
+spline. Its remaining side is at u = 0, and u = 1 collapses to a point.
+Directly integrating the spline Jacobian from v = 0 to the upper curve gives
+18.22922444 and 18.22922442 mm² at 1,024 and 4,096 trim intervals. Projecting
+the spatial edges gives 18.22923018 mm². Both definitions are checked under
+the same rigid motion and at the original error bounds.
+
 The bowed edge in `master-trim-square.step` has height
 `y = 2 h x (1 − x)` for `0 ≤ x ≤ 1`. Its 3D approximation is straight.
 The two areas are 1 and `1 − h/3` mm². For `h = 0.0004` the file selects
@@ -169,6 +196,11 @@ component defines a helix. Its maximum distance from the segment joining the
 STEP vertices is bounded by the larger endpoint mismatch plus `r Δu²/8`.
 The wall classifier and the adjoining slot end-wall proof accept it as straight at the kernel coordinate floor
 when this bound fits. Area, length and proximity still evaluate the helix.
+
+A visible or hidden drawing stretch may cross the last knot of a closed
+selected spline. The projection supplies the finite homogeneous spans covering
+that unwrapped interval, so its 2D endpoints and intervening points use the
+knot vector returned to the drawing consumer.
 
 The two rims of a swept closed spline can start and end at the same knot
 value despite traversing a full period. Summing successive parameter changes

@@ -1269,12 +1269,23 @@ mod tests {
         assert_eq!(repaired.edge_runs, fresh.edge_runs);
         drop(repaired);
         let flipped = part.solids[0].faces[0];
-        part.record_mixed_normal_repair(0, &[flipped]);
+        let original_sense = part.faces[flipped].reversed;
+        let repair_count = part.input_repairs().len();
+        part.try_mixed_normal_repair(0, &[flipped], |trial| {
+            assert_ne!(trial.faces[flipped].reversed, original_sense);
+            let _ = RayCaster::for_solid(trial, 0);
+            false
+        });
+        assert_eq!(part.faces[flipped].reversed, original_sense);
+        assert_eq!(part.input_repairs().len(), repair_count);
+        assert!(part.ray_face_boxes.get().is_none());
+        assert!(part.ray_edges.get().is_none());
+        part.try_mixed_normal_repair(0, &[flipped], |_| true);
         assert!(part.ray_face_boxes.get().is_none());
         assert!(part.ray_edges.get().is_none());
         let mut independent = crate::read_step_file(&path).unwrap();
         independent.record_inverted_shell_repair(0, true);
-        independent.record_mixed_normal_repair(0, &[flipped]);
+        independent.try_mixed_normal_repair(0, &[flipped], |_| true);
         let repaired = RayCaster::for_solid(&part, 0);
         let fresh = RayCaster::for_solid(&independent, 0);
         assert_eq!(repaired.face_boxes, fresh.face_boxes);

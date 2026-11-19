@@ -487,8 +487,13 @@ const MAX_KINKS: usize = 64;
 /// it settles at is not the side's nearest point, and the boundary integrals need the point
 /// whose motion [`uv_velocity`] gives. A side where the surface closes (`spans`) is its seam,
 /// not a boundary: an inversion stopped there from one side is tried again from the other.
-fn foot(surface: &Surface, spans: (f64, f64), p: V3, seed: (f64, f64)) -> Option<(f64, f64)> {
-    let (mut u, mut v) = surface.parameters(p, Some(seed))?;
+fn foot(
+    surface: &Surface,
+    spans: (f64, f64),
+    p: V3,
+    hint: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
+    let (mut u, mut v) = surface.parameters(p, hint)?;
     let Surface::Freeform { surface: s, .. } = surface else {
         return Some((u, v));
     };
@@ -1233,7 +1238,7 @@ impl Part {
                     }
                     _ => walk.last,
                 };
-                let (mut u, mut v) = foot(surface, spans, point, seed)?;
+                let (mut u, mut v) = foot(surface, spans, point, Some(seed))?;
                 // Round a closed B-spline surface the point takes the parameters a whole span
                 // round that lie beside the walk (on the surface's seam it has both, and a
                 // boundary may cross that seam anywhere: a face's own seam need not lie on it).
@@ -1345,7 +1350,8 @@ impl Part {
                     let p = trim.curve.value(t);
                     Some(unwrap((p[0], p[1]), near))
                 } else {
-                    foot(surface, spans, ed.curve.value(t), wrap(near)).map(|q| unwrap(q, near))
+                    foot(surface, spans, ed.curve.value(t), Some(wrap(near)))
+                        .map(|q| unwrap(q, near))
                 }
             };
             let corner = |(ta, pa): (f64, (f64, f64)), tb: f64| {

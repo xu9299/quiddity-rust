@@ -166,14 +166,27 @@ fn exact(curve: &Curve, view: &View, run: &[V3]) -> Option<Exact> {
             t0,
             t1,
         ),
-        Curve::Nurbs(n) => Some(Exact::Nurbs {
-            degree: n.degree(),
-            poles: n.control_points().iter().map(|p| view.map(*p)).collect(),
-            weights: n.weights().to_vec(),
-            knots: n.knots().to_vec(),
-            t0,
-            t1,
-        }),
+        Curve::Nurbs(n) => {
+            // An unwrapped run can cross the last knot of a closed curve.
+            // Export its actual two spans so drawing consumers evaluate the
+            // entire range with the knot vector they receive.
+            let (lo, hi) = n.domain();
+            let segment;
+            let n = if t0.min(t1) < lo || t0.max(t1) > hi {
+                segment = n.finite_segment(t0, t1)?;
+                &segment
+            } else {
+                n
+            };
+            Some(Exact::Nurbs {
+                degree: n.degree(),
+                poles: n.control_points().iter().map(|p| view.map(*p)).collect(),
+                weights: n.weights().to_vec(),
+                knots: n.knots().to_vec(),
+                t0,
+                t1,
+            })
+        }
         #[allow(clippy::unreachable, reason = "lines return above")]
         Curve::Line { .. } => unreachable!("returned above"),
     }
@@ -1529,6 +1542,37 @@ mod tests {
         let away = View::new([-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]).unwrap();
         let drawn = project(&part, &away).unwrap();
         assert!(drawn.iter().any(|p| p.visible) && drawn.iter().any(|p| !p.visible));
+    }
+
+    #[test]
+    fn a_projected_closed_spline_preserves_a_stretch_across_its_last_knot() {
+        let curve = Curve::Nurbs(
+            crate::nurbs::NurbsCurve::new(
+                1,
+                vec![
+                    [1., 0., 0.],
+                    [0., 1., 0.],
+                    [-1., 0., 0.],
+                    [0., -1., 0.],
+                    [1., 0., 0.],
+                ],
+                vec![1.; 5],
+                vec![0., 0., 1., 2., 3., 4., 4.],
+            )
+            .unwrap(),
+        );
+        let view = View::new([0., 0., 1.], [0., 1., 0.]).unwrap();
+        for (from, to) in [(3.5, 4.5), (0.5, -0.5)] {
+            let run: Vec<_> = (0..=8)
+                .map(|i| curve.value(from + (to - from) * i as f64 / 8.))
+                .collect();
+            let projected = exact(&curve, &view, &run).unwrap();
+            let (a, b) = projected.range();
+            for (i, p) in run.iter().enumerate() {
+                let got = projected.at(a + (b - a) * i as f64 / 8.);
+                assert!((got[0] - p[0]).hypot(got[1] - p[1]) < 1e-12);
+            }
+        }
     }
 
     #[test]

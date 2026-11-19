@@ -1075,20 +1075,34 @@ impl Part {
         self.ray_edges = OnceLock::new();
     }
 
-    pub(super) fn record_mixed_normal_repair(&mut self, solid: usize, flips: &[usize]) {
-        self.input_repairs.push(format!(
-            "solid {solid}: mixed face senses repaired ({} faces)",
-            flips.len()
-        ));
-        for &f in &self.solids[solid].faces {
-            if flips.contains(&f) {
-                self.faces[f].reversed = !self.faces[f].reversed;
+    /// Test the proposed face senses with all STEP boundary declarations in place.
+    /// A rejected repair restores the original senses and invalidates its trial queries.
+    pub(super) fn try_mixed_normal_repair(
+        &mut self,
+        solid: usize,
+        flips: &[usize],
+        proved: impl FnOnce(&Self) -> bool,
+    ) {
+        let toggle = |part: &mut Self| {
+            for &f in flips {
+                part.faces[f].reversed = !part.faces[f].reversed;
             }
-            self.cache[f] = FaceCache::default();
+            for &f in &part.solids[solid].faces {
+                part.cache[f] = FaceCache::default();
+            }
+            part.bad_faces = OnceLock::new();
+            part.ray_face_boxes = OnceLock::new();
+            part.ray_edges = OnceLock::new();
+        };
+        toggle(self);
+        if proved(self) {
+            self.input_repairs.push(format!(
+                "solid {solid}: mixed face senses repaired ({} faces)",
+                flips.len()
+            ));
+        } else {
+            toggle(self);
         }
-        self.bad_faces = OnceLock::new();
-        self.ray_face_boxes = OnceLock::new();
-        self.ray_edges = OnceLock::new();
     }
 
     /// The face's axis-aligned box: its boundary plus any interior axis extremes.
