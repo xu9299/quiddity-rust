@@ -818,6 +818,32 @@ impl Part {
                 }
                 _ => (false, false),
             };
+            if boundary.is_some()
+                && !pu
+                && !pv
+                && let (Some(&first), Some(&last)) = (pts.first(), pts.last())
+                && first != last
+                && let (Some(&(start, start_forward)), Some(&(end, end_forward))) =
+                    (lp.edges.first(), lp.edges.last())
+            {
+                let (a, b) = self.edges[start].vertices;
+                let (c, d) = self.edges[end].vertices;
+                let first_vertex = if start_forward { a } else { b };
+                let last_vertex = if end_forward { d } else { c };
+                let (us, vs) = crate::mass::closed_spans(&f.surface);
+                // An EDGE_LOOP joins its last coedge to the first at the same vertex.
+                // Retain both declared ends; an omitted final chord can invert the
+                // entire winding ray through a roundoff-sized gap. A closed spline
+                // chart can reach the same vertex on different parameter branches.
+                if first_vertex == last_vertex
+                    && (last.0 - first.0).abs() < 0.5 * us
+                    && (last.1 - first.1).abs() < 0.5 * vs
+                    && !on_collapsed(first)
+                    && !on_collapsed(last)
+                {
+                    pts.push(first);
+                }
+            }
             close_through_pole(&f.surface, &mut pts, f.reversed);
             let ends: Vec<usize> = firsts
                 .iter()

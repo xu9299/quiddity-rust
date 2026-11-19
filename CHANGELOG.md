@@ -30,6 +30,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   Circular hole, recess and turned-feature proofs can recognise an arc encoded
   as a rational spline on an incident cylinder or cone.
   The area guard measures the selected boundary's length on its STEP carrier.
+  Winding queries close regular trim loops at their shared STEP vertex; a ray
+  through independently rounded pcurve ends now reads both sides of an annular groove.
   Probe rays near a selected common edge can resolve a duplicate entry within
   the file's own uncertainty when the material intervals agree on both sides.
   Periodic face domains share the STEP vertex at regular coedge ends so a ray

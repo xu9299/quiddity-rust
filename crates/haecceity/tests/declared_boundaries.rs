@@ -228,3 +228,32 @@ fn a_shared_vertex_closes_the_declared_mesh_loop() {
         assert!(!mesh.triangles.is_empty());
     }
 }
+
+#[test]
+fn the_winding_ray_through_a_closed_pcurve_end_reads_the_annular_groove() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("mfcadpp_holdout/419.step")).unwrap();
+    let floor = 28;
+    assert_eq!(part.face_source(floor).unwrap().entity, 2005);
+    let domain = part.domain(floor).unwrap();
+    // The two concentric STEP cylinders bound radii 1.350424756018 and
+    // 2.071143801424 on this plane. Straddle the stored pcurve's endpoint
+    // and test material, the central hole and exterior on both sides.
+    for u in [-1e-8_f64, 0., 1e-13, 3e-13, 1e-8] {
+        for v in [-2.08_f64, -2.07, -1.36, -1.34, 0., 1.34, 1.36, 2.07, 2.08] {
+            let r = u.hypot(v);
+            assert_eq!(
+                domain.contains(u, v),
+                (1.350424756018..2.071143801424).contains(&r),
+                "{u} {v}"
+            );
+        }
+    }
+    for wall in [26, 30] {
+        assert_eq!(part.arc(floor, wall), Some(haecceity::brep::Arc::Concave));
+        assert_eq!(part.arc(wall, floor), Some(haecceity::brep::Arc::Concave));
+    }
+}
