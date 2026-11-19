@@ -460,7 +460,20 @@ impl<'a> PartMesher<'a> {
     /// Edge `edge`'s points at thinning level `level` (see [`BOUNDARY_LEVELS`]).
     fn make_plan(&self, edge: usize, level: usize) -> Plan {
         let part = self.part;
-        let samples = part.boundary_edge_samples(edge);
+        // The mesh shares STEP vertices. A vertex can miss its selected
+        // curve within file precision. Use the curve's own endpoints to
+        // measure its turning angle, retaining the shared positions in the
+        // chordal and on-surface deflection tests and in the mesh itself.
+        let geom = &part.edges[edge];
+        let selected = part.spatial_trim(edge).and_then(|(surface, trim)| {
+            let samples = trim.samples(surface, geom)?;
+            let (a, b) = trim.interval;
+            Some((samples, [trim.point(surface, a), trim.point(surface, b)]))
+        });
+        let (samples, curve_ends) = match selected {
+            Some((samples, ends)) => (samples.points.as_slice(), Some(ends)),
+            None => (geom.samples.as_slice(), None),
+        };
         let n = samples.len();
         let boundary = BOUNDARY_LEVELS[level] * self.deflection;
         // The faces' views of the samples.
@@ -493,7 +506,15 @@ impl<'a> PartMesher<'a> {
                 normals,
             })
             .collect();
-        let kept = thin(samples, &[], &skip, &on, boundary, Some(self.angular));
+        let kept = thin(
+            samples,
+            &[],
+            &skip,
+            &on,
+            boundary,
+            Some(self.angular),
+            curve_ends,
+        );
         // The points by place: each kept sample, and divisions where a kept chord is longer
         // than a curved face's spacing across it.
         let mut at: BTreeMap<(usize, u64), V3> = BTreeMap::new();
@@ -1141,6 +1162,7 @@ fn thin(
     on: &[OnSurface<'_>],
     deflection: f64,
     angular: Option<f64>,
+    curve_ends: Option<[V3; 2]>,
 ) -> Vec<usize> {
     let n = points.len();
     if n <= 2 {
@@ -1152,12 +1174,17 @@ fn thin(
     for (k, &forced) in keep.iter().enumerate().take(n) {
         kept[k] |= forced;
     }
+    let angular_point = |i: usize| match curve_ends {
+        Some([start, _]) if i == 0 => start,
+        Some([_, end]) if i + 1 == n => end,
+        _ => points[i],
+    };
     // Whether the chord from point i to point j stands for the points between.
     let stands = |i: usize, j: usize| -> bool {
         let (a, b) = (points[i], points[j]);
-        let chord = geom::unit(geom::sub(b, a));
-        for k in i + 1..j {
-            let mut off = segment_distance(points[k], a, b);
+        let chord = geom::unit(geom::sub(angular_point(j), angular_point(i)));
+        for (k, &point) in points.iter().enumerate().take(j).skip(i + 1) {
+            let mut off = segment_distance(point, a, b);
             for on in on {
                 let (Some(ua), Some(ub), Some(uk)) = (on.uv[i], on.uv[j], on.uv[k]) else {
                     continue;
@@ -1170,13 +1197,14 @@ fn thin(
                     0.0
                 };
                 let image = on.sheet.value(ua.0 + t * d.0, ua.1 + t * d.1);
-                off = off.max(geom::dist(image, points[k]));
+                off = off.max(geom::dist(image, point));
             }
             if off > deflection {
                 return false;
             }
             if let (Some(angular), Some(chord)) = (angular, chord) {
-                for (p, q) in [(points[k - 1], points[k]), (points[k], points[k + 1])] {
+                for (l, r) in [(k - 1, k), (k, k + 1)] {
+                    let (p, q) = (angular_point(l), angular_point(r));
                     // A sub-segment far shorter than the deflection has no direction to speak
                     // of (sample noise at an edge's ends).
                     if geom::dist(p, q) < 1e-6 * deflection {
@@ -1598,7 +1626,7 @@ fn straight_side(
         uv: &uv,
         normals: &normals,
     }];
-    let mut kept = thin(&space, &[], &[], &on, deflection, Some(angular));
+    let mut kept = thin(&space, &[], &[], &on, deflection, Some(angular), None);
     if let Some((su, sv)) = scale
         && !matches!(sheet.surface, Surface::Plane { .. })
     {
@@ -2064,7 +2092,27 @@ mod tests {
     #[test]
     fn thinning_keeps_the_ends_and_drops_collinear_points() {
         let points: Vec<V3> = (0..=10).map(|i| [i as f64, 0.0, 0.0]).collect();
-        assert_eq!(thin(&points, &[], &[], &[], 0.01, Some(0.3)), vec![0, 10]);
+        assert_eq!(
+            thin(&points, &[], &[], &[], 0.01, Some(0.3), None),
+            vec![0, 10]
+        );
+    }
+
+    #[test]
+    fn a_step_vertex_off_the_curve_does_not_add_a_turn_to_the_trim() {
+        let points = [
+            [0., 0., 9.5e-5],
+            [1e-12, 0., 0.],
+            [0.04, 0., 0.],
+            [1., 0., 0.],
+        ];
+        let ends = Some([[0., 0., 0.], points[3]]);
+        assert_eq!(
+            thin(&points, &[], &[], &[], 0.01, Some(0.3), ends),
+            vec![0, 3]
+        );
+        // With a finer deflection the drawn chord misses the first sample.
+        assert!(thin(&points, &[], &[], &[], 1e-6, Some(0.3), ends).contains(&1));
     }
 
     #[test]
@@ -2077,7 +2125,7 @@ mod tests {
             })
             .collect();
         // Coarse chordal deflection: the angular one (0.3 rad per segment) decides.
-        let kept = thin(&points, &[], &[], &[], 1.0, Some(0.3));
+        let kept = thin(&points, &[], &[], &[], 1.0, Some(0.3), None);
         assert!(kept.len() > (TAU / 0.3).ceil() as usize, "{}", kept.len());
         // The samples' directions stand for the tangent, so a segment may span the angular
         // deflection plus one sample step, and no more; greedy chords use most of it.
@@ -2092,7 +2140,7 @@ mod tests {
             kept.len()
         );
         // Chordal alone.
-        let kept = thin(&points, &[], &[], &[], 0.01, None);
+        let kept = thin(&points, &[], &[], &[], 0.01, None, None);
         for w in kept.windows(2) {
             let turn = TAU * (w[1] - w[0]) as f64 / 1000.0;
             assert!(r * (1.0 - (turn / 2.0).cos()) <= 0.01 + 1e-9);
@@ -2104,6 +2152,9 @@ mod tests {
         let points: Vec<V3> = (0..=10).map(|i| [i as f64, 0.0, 0.0]).collect();
         let mut keep = vec![false; 11];
         keep[4] = true;
-        assert_eq!(thin(&points, &keep, &[], &[], 0.01, None), vec![0, 4, 10]);
+        assert_eq!(
+            thin(&points, &keep, &[], &[], 0.01, None, None),
+            vec![0, 4, 10]
+        );
     }
 }

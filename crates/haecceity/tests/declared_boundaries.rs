@@ -257,3 +257,29 @@ fn the_winding_ray_through_a_closed_pcurve_end_reads_the_annular_groove() {
         assert_eq!(part.arc(wall, floor), Some(haecceity::brep::Arc::Concave));
     }
 }
+
+#[test]
+fn a_closed_master_repeats_its_knots_on_the_measured_turn() {
+    let file =
+        common::fixtures().join("captured/effective_surfaces/parts/201ebceb4462a612.step.gz");
+    let part = read_step_file(&file).unwrap();
+    let e = (0..part.edges.len())
+        .find(|&e| part.edge_source(e).unwrap().entity == 374)
+        .unwrap();
+    let Some(geom::Curve::Nurbs(curve)) = part.boundary_edge_curve(e) else {
+        panic!("the master on the plane is a rational quadratic")
+    };
+    let (a, b) = part.boundary_edge_interval(e).unwrap();
+    assert!((a - curve.domain().1).abs() < 1e-10 && b > curve.domain().1);
+    // The three 120-degree rational arcs describe the circle of radius 8.
+    let length = part.declared_edge_length(e).unwrap();
+    assert!(
+        (length - 16. * std::f64::consts::PI).abs() < 1e-9,
+        "{length}"
+    );
+    for fraction in [1. / 6., 0.25, 0.5, 0.875] {
+        let (p, _) = part.declared_edge_at_length(e, fraction).unwrap();
+        let chord = geom::dist(part.edges[e].start, p);
+        assert!((chord - 16. * (fraction * std::f64::consts::PI).sin()).abs() < 1e-9);
+    }
+}

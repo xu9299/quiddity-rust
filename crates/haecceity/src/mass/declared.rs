@@ -586,7 +586,7 @@ impl EdgeTrim {
     fn compute_nodes(&self) -> Option<Vec<f64>> {
         let (a, b) = self.interval;
         let breaks = match &self.curve.source {
-            Curve::Nurbs(c) => c.breaks(),
+            Curve::Nurbs(c) => knots_on_interval(c.breaks(), self.curve.source.period(), a, b)?,
             _ => Vec::new(),
         };
         let mut ts = cuts(a, b, 16, &breaks)?;
