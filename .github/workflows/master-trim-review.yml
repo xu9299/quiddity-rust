@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
-  SOURCE: 7432dd788b346b70503803ea35b7657f00d36458
-  TREE: e1cb3d8280e1d9e2d50220e730becd397d803a66
+  SOURCE: 12fb4f18d0074adea9ff497e6bcce214571249f2
+  TREE: 0f8b13e35ebd7cfd20b0f36d4a526d77da3a76a5
 jobs:
   verify:
     strategy:
@@ -209,7 +209,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 355
     strategy:
-      max-parallel: 2
+      max-parallel: 4
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]

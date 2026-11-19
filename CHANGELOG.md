@@ -22,6 +22,7 @@ in [docs/alpha1.md](docs/alpha1.md).
   the file's own uncertainty when the material intervals agree on both sides.
   Periodic face domains share the STEP vertex at regular coedge ends so a ray
   through the seam uses the same trimmed region as neighbouring rays.
+  The integral follows a closed spline rim through a full turn at its knot seam.
   STEP export preserves retained master and outer-bound declarations.
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's
