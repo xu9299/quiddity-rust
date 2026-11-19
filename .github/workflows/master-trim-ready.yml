@@ -1,0 +1,140 @@
+name: Review master trim snapshots on ARM macOS
+on:
+  push:
+    branches: [validation/master-trim-ready-20261119]
+permissions:
+  actions: read
+  contents: read
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  GEOMETRY: 8818c56edf67a1b2ea1d9b9c744c6a5471014e9a
+  REVIEW: 3c29cbf2542795b2d49f12cc78c017bf1a209c48
+  TREE: 64c32120a6c5f52fb9f0b783a4d5cf837a843dfc
+jobs:
+  review:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            task: strict
+          - os: xcode-27
+            task: workspace-recheck
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.REVIEW }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - name: Check source, snapshot origin and unchanged test inputs
+        run: |
+          mkdir -p ../evidence
+          test "$(git rev-parse HEAD)" = "$REVIEW"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(uname -m)" = arm64
+          if ! command -v uv >/dev/null; then brew install uv; fi
+          uv run --no-project --python 3.13 - <<'PY'
+          import json, os, pathlib, subprocess, tomllib
+          candidate, geometry = os.environ["REVIEW"], os.environ["GEOMETRY"]
+          p = "tests/fixtures/rust-snapshot/provenance.json"
+          def blob(rev, path):
+              return subprocess.check_output(["git", "show", rev + ":" + path])
+          def changes():
+              return subprocess.check_output(["git", "diff", "--name-only", geometry, candidate]).decode().splitlines()
+          previous, current = (json.loads(blob(rev, p)) for rev in (geometry, candidate))
+          assert previous["inputs"] == current["inputs"] and previous["snapshots"].keys() == current["snapshots"].keys()
+          assert current["source_commit"] == geometry and current["recorded_from"]["workspace_job_id"] == 135218587903
+          delta = {k for k in previous["snapshots"] if previous["snapshots"][k] != current["snapshots"][k]}
+          assert len(delta) == 11 and "probes.json.gz" in delta
+          assert all(k == "probes.json.gz" or k.startswith("effective_surfaces/test/parts/") for k in delta)
+          manifest = "crates/haecceity/Cargo.toml"
+          a, b = (tomllib.loads(blob(rev, manifest).decode()) for rev in (geometry, candidate))
+          b["package"]["include"].remove("/tests/fixtures/master-trim-square.step")
+          assert a == b
+          expected = {manifest, "docs/face-integration-work.md", p} | {"tests/fixtures/rust-snapshot/"+k for k in delta}
+          assert set(changes()) == expected
+          PY
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; sw_vers; rustc -vV; cargo -V; } | tee ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-${{ matrix.os }}
+      - name: Format, full workspace Clippy and supported feature-off builds
+        if: matrix.task == 'strict'
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings
+          cargo check --release --locked -p haecceity --no-default-features
+          cargo check --release --locked -p quiddity --no-default-features --features presentation
+      - name: Reproduce every committed expectation byte for byte
+        if: matrix.task == 'strict'
+        run: |
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: matrix.task == 'workspace-recheck'
+        with:
+          name: master-trim-workspace-evidence
+          path: previous
+          github-token: ${{ github.token }}
+          repository: xu9299/quiddity-rust
+          run-id: 44422440676
+      - name: Verify the completed workspace run at the identical geometry revision
+        if: matrix.task == 'workspace-recheck'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/xu9299/quiddity-rust/actions/jobs/135218587903 > ../evidence/full-workspace-job.json
+          jq -e '.run_id == 44422440676 and .conclusion == "success" and ([.steps[] | select(.name == "Run all workspace tests against pinned references" or .name == "Check complete coverage and provenance") | .conclusion] == ["success","success"])' ../evidence/full-workspace-job.json
+          test "$(head -1 ../previous/environment.log)" = "$GEOMETRY"
+          test "$(sed -n '3p' ../previous/environment.log)" = "$(git -C ../corpus rev-parse HEAD)"
+          grep -F '2702 snapshots under their original comparison bands' ../previous/coverage.log
+          cp -R ../previous/verified ../reverified
+      - name: Retest the changed snapshot producers and provenance
+        if: matrix.task == 'workspace-recheck'
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/current-verified
+        run: |
+          cargo test --release --locked -p haecceity --test probes 2>&1 | tee ../evidence/probes.log
+          cargo test --release --locked -p quiddity --lib regression_tests::effective_surfaces:: 2>&1 | tee ../evidence/effective-surfaces.log
+          cargo test --release --locked -p quiddity --test snapshot_provenance 2>&1 | tee ../evidence/provenance.log
+          cargo test --release --locked -p haecceity --lib master_trim_and_projected_boundary_both_integrate 2>&1 | tee ../evidence/analytic.log
+          uv run --no-project --python 3.13 - <<'PY'
+          import json, os, pathlib, subprocess
+          name = "tests/fixtures/rust-snapshot/provenance.json"
+          old = json.loads(subprocess.check_output(["git", "show", os.environ["GEOMETRY"]+":"+name]))["snapshots"]
+          new = json.loads(pathlib.Path(name).read_bytes())["snapshots"]
+          changed = {k for k in old if old[k] != new[k]}
+          assert len(changed) == 11
+          assert all((pathlib.Path("../current-verified") / k).is_file() for k in changed)
+          PY
+          cp -R ../current-verified/. ../reverified/
+          cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../reverified 2>&1 | tee ../evidence/coverage.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: master-trim-ready-${{ matrix.task }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
