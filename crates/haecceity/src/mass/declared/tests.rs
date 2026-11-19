@@ -172,6 +172,42 @@ fn declared_outer_and_hole_survive_a_step_round_trip() {
 }
 
 #[test]
+fn quarter_revolution_ends_at_a_collapsed_pole() {
+    // Rotate r = 1 - z through pi/2. Its area is (pi/2) times the integral
+    // of sqrt(2) (1 - z) from zero to one, including the collapsed upper end.
+    let mut text = entity(SQUARE, 108, "SURFACE_OF_REVOLUTION('',#201,#202)");
+    let extra = "#201=B_SPLINE_CURVE_WITH_KNOTS('',1,(#100,#102),.UNSPECIFIED.,.F.,.F.,(2,2),(0.,1.),.PIECEWISE_BEZIER_KNOTS.);\n#202=AXIS1_PLACEMENT('',#12,#13);\n#203=DIRECTION('',(1.,0.));\n#204=VECTOR('',#203,1.);\n";
+    text = text.replace(
+        "#108=SURFACE_OF_REVOLUTION",
+        &format!("{extra}#108=SURFACE_OF_REVOLUTION"),
+    );
+    for (id, body) in [
+        (100, "CARTESIAN_POINT('',(1.,0.,0.))"),
+        (101, "CARTESIAN_POINT('',(0.,1.,0.))"),
+        (102, "CARTESIAN_POINT('',(0.,0.,1.))"),
+        (111, "CIRCLE('',#11,1.)"),
+        (112, "CARTESIAN_POINT('',(-6.283185307179586,0.))"),
+        (115, "LINE('',#112,#204)"),
+        (121, "DIRECTION('',(0.,-1.,1.))"),
+        (124, "CARTESIAN_POINT('',(1.5707963267948966,0.))"),
+        (133, "DIRECTION('',(1.,0.,-1.))"),
+        (136, "CARTESIAN_POINT('',(0.,1.))"),
+        (137, "DIRECTION('',(0.,-1.))"),
+        (143, "EDGE_CURVE('',#106,#104,#142,.T.)"),
+        (157, "EDGE_LOOP('',(#120,#132,#144))"),
+    ] {
+        text = entity(&text, id, body);
+    }
+    let p = crate::step::read_step(text.as_bytes()).unwrap();
+    let area = p.face_mass(0).unwrap()[0];
+    assert!(p.measured_boundary(0).is_some());
+    assert!(
+        (area - std::f64::consts::FRAC_PI_4 * std::f64::consts::SQRT_2).abs() < 1e-10,
+        "{area}"
+    );
+}
+
+#[test]
 fn cylinder_crossing_the_seam_uses_its_declared_curve() {
     // One radian around a unit cylinder and one millimetre in height:
     // the area element is exactly du dv in these coordinates.
