@@ -703,8 +703,16 @@ impl Part {
                 let on = |c: Option<f64>, x: f64| c.is_some_and(|c| (x - c).abs() <= 1e-9);
                 on(collapsed.0, q.0) || on(collapsed.1, q.1)
             };
-            let invert = |p: V3, hint: Option<(f64, f64)>| match hint {
-                Some(q) if on_collapsed(q) => beside_collapsed(&f.surface, p, collapsed),
+            // A shared selected sample can reach a closed spline face from its
+            // neighbour. At the seam the previous seed may only find a clamped
+            // endpoint. The mass integrator checks the opposite end of the chart
+            // and keeps the closer point on the same receiving surface.
+            let mesh_spans = (mesh && matches!(&f.surface, Surface::Freeform { .. }))
+                .then(|| crate::mass::closed_spans(&f.surface))
+                .filter(|(u, v)| u.is_finite() || v.is_finite());
+            let invert = |p: V3, hint: Option<(f64, f64)>| match (hint, mesh_spans) {
+                (Some(q), _) if on_collapsed(q) => beside_collapsed(&f.surface, p, collapsed),
+                (_, Some(spans)) => crate::mass::foot(&f.surface, spans, p, hint),
                 _ => f.surface.parameters(p, hint),
             };
             for (place, &(e, forward)) in lp.edges.iter().enumerate() {

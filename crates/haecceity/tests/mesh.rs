@@ -161,6 +161,19 @@ fn a_selected_knot_near_a_step_vertex_has_one_shared_mesh_endpoint() {
     assert_eq!(unpaired_edges(&part.solids[0].faces, &meshes), 0);
 }
 
+#[test]
+fn a_selected_curve_on_a_cylinder_closes_the_adjacent_spline_mesh_at_its_seam() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("gramel/string_post.step")).unwrap();
+    // STEP edge #634 selects pcurve #797 on the cylinder. The next sample
+    // after the seam lies beside the high-v end of the closed spline #1020.
+    let meshes = part.mesh(deflection(&part), ANGULAR);
+    assert_eq!(unpaired_edges(&part.solids[0].faces, &meshes), 0);
+}
+
 fn mean(points: &[V3]) -> V3 {
     let sum = points.iter().fold([0.0; 3], |s, p| geom::add(s, *p));
     geom::scale(sum, 1.0 / points.len() as f64)

@@ -507,7 +507,7 @@ const MAX_KINKS: usize = 64;
 /// it settles at is not the side's nearest point, and the boundary integrals need the point
 /// whose motion [`uv_velocity`] gives. A side where the surface closes (`spans`) is its seam,
 /// not a boundary: an inversion stopped there from one side is tried again from the other.
-fn foot(
+pub(super) fn foot(
     surface: &Surface,
     spans: (f64, f64),
     p: V3,

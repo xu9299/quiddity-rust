@@ -155,6 +155,14 @@ coalesces consecutive samples at an endpoint only when the samples agree
 with both the actual pcurve endpoint and the STEP vertex within a millionth
 of the chordal budget, capped at the coordinate floor.
 
+In `gramel/string_post.step`, edge #634 selects pcurve #797 on cylinder #125.
+Spline face #1668 uses the same spatial samples on its closed v chart. At a
+sample just beyond the seam, inverting from the preceding point can stop at
+v = 0. The opposite chart end reaches the selected point at v = 5.34755713.
+The mesh uses the same closest-point comparison as integration when it maps
+shared points onto a closed spline. The resulting solid uses every directed
+triangle edge once in each direction.
+
 Before accepting a declared domain, the loop builder tests candidate crossings
 between its finite coedges in the receiving surface's parameters. It reuses the
 samples for that domain to locate candidates, follows the appropriate periodic
