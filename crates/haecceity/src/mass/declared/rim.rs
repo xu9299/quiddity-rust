@@ -1,47 +1,58 @@
-//! Circular-rim evidence from the selected boundary of a conical face.
+//! Circular supports of selected edges incident on cylinders or cones.
 use super::{EdgeTrim, Part};
-use crate::geom::{self, Curve, Frame, Surface, V3};
+use crate::geom::{self, Curve, Frame, Surface};
 use crate::nurbs::NurbsCurve;
 
 impl Part {
-    /// Radius and centre of a conical face's circular rim. A selected surface
-    /// curve can provide this evidence when its entire locus agrees with a
-    /// circle at coordinate precision. The measured boundary retains its own
-    /// curve and parameterisation.
-    pub fn cone_rim_circle(&self, face: usize, edge: usize) -> Option<(f64, V3)> {
-        let Surface::Cone {
-            frame,
-            radius,
-            semi_angle,
-        } = &self.faces.get(face)?.surface
-        else {
-            return None;
+    /// The spatial support used to recognise geometric features. A selected
+    /// pcurve can prove a circular rim at coordinate precision on an incident
+    /// cylinder or cone. Use `boundary_edge_curve` and `boundary_edge_interval`
+    /// for evaluation in the selected curve's own parameterisation.
+    pub fn boundary_edge_support(&self, edge: usize) -> Option<&Curve> {
+        let Some((carrier, trim)) = self.spatial_trim(edge) else {
+            return Some(&self.edges[edge].curve);
         };
-        if !self.edge_faces().get(edge)?.contains(&face) {
-            return None;
+        let selected = trim.spatial_curve(carrier);
+        if matches!(
+            selected,
+            Some(Curve::Line { .. } | Curve::Circle { .. } | Curve::Ellipse { .. })
+        ) {
+            return selected;
         }
-        let Some((surface, trim)) = self.spatial_trim(edge) else {
-            return exact_circle(&self.edges[edge].curve);
-        };
-        let curve = trim.spatial_curve(surface);
-        if let Some(circle) = curve.and_then(exact_circle) {
-            return Some(circle);
-        }
-        if let Some(Curve::Nurbs(spline)) = curve {
-            let height = frame.to_local(trim.point(surface, trim.interval.0))[2];
-            let r = (radius + height * semi_angle.tan()).abs();
-            if quadratic_rim(spline, frame, height, r) {
-                return Some((r, frame.to_world([0., 0., height])));
-            }
-        }
-        trim.parallel_circle(surface)
+        trim.rim
+            .get_or_init(|| {
+                let Some(Curve::Nurbs(spline)) = selected else {
+                    return trim.parallel_circle(carrier);
+                };
+                let point = trim.point(carrier, trim.interval.0);
+                self.edge_faces()[edge].iter().find_map(|&f| {
+                    let (frame, radius, slope) = match &self.faces[f].surface {
+                        Surface::Cylinder { frame, radius } => (frame, radius, 0.),
+                        Surface::Cone {
+                            frame,
+                            radius,
+                            semi_angle,
+                        } => (frame, radius, semi_angle.tan()),
+                        _ => return None,
+                    };
+                    let height = frame.to_local(point)[2];
+                    let r = (radius + height * slope).abs();
+                    quadratic_rim(spline, frame, height, r).then(|| circle(frame, height, r))
+                })
+            })
+            .as_ref()
+            .or(selected)
     }
 }
 
-fn exact_circle(curve: &Curve) -> Option<(f64, V3)> {
-    match curve {
-        Curve::Circle { frame, radius } => Some((*radius, frame.origin)),
-        _ => None,
+fn circle(frame: &Frame, height: f64, radius: f64) -> Curve {
+    Curve::Circle {
+        frame: Frame {
+            origin: frame.to_world([0., 0., height]),
+            z: geom::cross(frame.x, frame.y),
+            ..*frame
+        },
+        radius,
     }
 }
 
@@ -49,7 +60,7 @@ impl EdgeTrim {
     /// For a linear pcurve on a cone or cylinder, v is physical distance on
     /// the generator. At every angle its distance to the middle parallel is
     /// at most half the endpoint difference in v.
-    fn parallel_circle(&self, face: &Surface) -> Option<(f64, V3)> {
+    fn parallel_circle(&self, face: &Surface) -> Option<Curve> {
         self.curve.line()?;
         let carrier = self.curve.transfer.as_ref().map_or(face, |tr| &tr.carrier);
         let a = self.curve.carrier_uv(self.interval.0);
@@ -71,14 +82,15 @@ impl EdgeTrim {
         (error <= geom::COORD_FLOOR
             && r.abs() > geom::COORD_FLOOR
             && arc.is_finite()
-            && arc > geom::COORD_FLOOR)
-            .then(|| (r.abs(), frame.to_world([0., 0., height])))
+            && arc > geom::COORD_FLOOR
+            && (a[0] - b[0]).abs() <= std::f64::consts::TAU + 64. * f64::EPSILON)
+            .then(|| circle(frame, height, r.abs()))
     }
 }
 
 /// Bound the radial and axial errors of every point of a planar rational
-/// quadratic. The cone supplies the centre and radius independently of the
-/// edge's optional spatial representation. Interior knots of multiplicity
+/// quadratic. An incident cylinder or cone supplies the centre and radius
+/// independently of the optional spatial curve. Interior knots of multiplicity
 /// two separate quadratic Bezier spans. Other splines have no such proof.
 fn quadratic_rim(curve: &NurbsCurve, frame: &Frame, height: f64, radius: f64) -> bool {
     if curve.degree() != 2 || !radius.is_finite() || radius <= geom::COORD_FLOOR {
@@ -96,9 +108,27 @@ fn quadratic_rim(curve: &NurbsCurve, frame: &Frame, height: f64, radius: f64) ->
     {
         return false;
     }
+    let mut sweep = 0.0_f64;
     let mut curved = false;
     for i in (0..n - 2).step_by(2) {
         let p = [i, i + 1, i + 2].map(|j| frame.to_local(curve.control_points()[j]));
+        // The angular speed has a positive denominator. Its quadratic
+        // Bernstein coefficients have the signs of these three cross products.
+        // Each span and the complete rim must advance in one direction.
+        let cross = |a: usize, b: usize| p[a][0] * p[b][1] - p[a][1] * p[b][0];
+        let scale = p.iter().map(|q| q[0].hypot(q[1])).fold(radius, f64::max);
+        let angular_roundoff = 64. * f64::EPSILON * scale * (scale + geom::norm(frame.origin));
+        let chord = cross(0, 2);
+        let direction = chord.signum();
+        let turn = chord.atan2(p[0][0] * p[2][0] + p[0][1] * p[2][1]);
+        if !(chord.abs() > angular_roundoff
+            && cross(0, 1) * direction > angular_roundoff
+            && cross(1, 2) * direction > angular_roundoff)
+            || i > 0 && direction != sweep.signum()
+        {
+            return false;
+        }
+        sweep += turn;
         let weights = [i, i + 1, i + 2].map(|j| curve.weights()[j]);
         let max_w = weights[0].max(weights[1]).max(weights[2]);
         let w = weights.map(|v| v / max_w);
@@ -120,7 +150,6 @@ fn quadratic_rim(curve: &NurbsCurve, frame: &Frame, height: f64, radius: f64) ->
         let radial = h.into_iter().map(f64::abs).fold(0., f64::max) / (min_w * min_w * radius);
         // Include arithmetic roundoff in the coefficient bound. Extremely
         // ill-conditioned weights or large coordinates cannot certify a rim.
-        let scale = p.iter().map(|q| q[0].hypot(q[1])).fold(radius, f64::max);
         let weight_ratio = 1. / min_w;
         let roundoff = 64.
             * f64::EPSILON
@@ -139,7 +168,7 @@ fn quadratic_rim(curve: &NurbsCurve, frame: &Frame, height: f64, radius: f64) ->
         curved |= geom::norm(geom::cross(geom::sub(mid, ends[0]), chord))
             > geom::COORD_FLOOR * geom::norm(chord);
     }
-    curved
+    curved && sweep.abs() <= std::f64::consts::TAU + 64. * f64::EPSILON * n as f64
 }
 
 #[cfg(test)]
@@ -154,7 +183,7 @@ mod tests {
             y: [0., 1., 0.],
             z: [0., 0., 1.],
         };
-        let arc = |middle: V3, weight| {
+        let arc = |middle: geom::V3, weight| {
             NurbsCurve::new(
                 2,
                 vec![[1., 0., 0.], middle, [0., 1., 0.]],
@@ -167,5 +196,32 @@ mod tests {
         assert!(quadratic_rim(&arc([1., 1., 0.], w), &axes, 0., 1.));
         assert!(!quadratic_rim(&arc([1., 1., 0.], 1.), &axes, 0., 1.));
         assert!(!quadratic_rim(&arc([1., 1., 1e-4], w), &axes, 0., 1.));
+        // An arc followed back to its start lies on the same circle throughout.
+        let retraced = NurbsCurve::new(
+            2,
+            vec![
+                [1., 0., 0.],
+                [1., 1., 0.],
+                [0., 1., 0.],
+                [1., 1., 0.],
+                [1., 0., 0.],
+            ],
+            vec![1., w, 1., w, 1.],
+            vec![0., 0., 0., 1., 1., 2., 2., 2.],
+        )
+        .unwrap();
+        assert!(!quadratic_rim(&retraced, &axes, 0., 1.));
+        let mut poles = vec![[1., 0., 0.]];
+        let mut weights = vec![1.];
+        let mut knots = vec![0., 0., 0.];
+        for span in 1..=8 {
+            let [x, y, _] = *poles.last().unwrap();
+            poles.extend([[x - y, x + y, 0.], [-y, x, 0.]]);
+            weights.extend([w, 1.]);
+            knots.extend([f64::from(span); 2]);
+        }
+        knots.push(8.);
+        let two_turns = NurbsCurve::new(2, poles, weights, knots).unwrap();
+        assert!(!quadratic_rim(&two_turns, &axes, 0., 1.));
     }
 }

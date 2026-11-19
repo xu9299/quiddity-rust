@@ -55,7 +55,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
     let mut rails = Vec::new();
     for edge in edges {
         let e = &part.edges[edge];
-        match part.boundary_edge_curve(edge) {
+        match part.boundary_edge_support(edge) {
             Some(&Curve::Circle {
                 frame: cf,
                 radius: r,
@@ -160,7 +160,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
         .filter(|e| *e != cap_rim && !cap_sides.contains(e))
         .collect();
     let [top] = top[..] else { return None };
-    if !matches!(part.boundary_edge_curve(top), Some(Curve::Line { .. }))
+    if !matches!(part.boundary_edge_support(top), Some(Curve::Line { .. }))
         || (edge_length(part, top) - 2. * radius).abs() > tolerance
     {
         return None;

@@ -225,11 +225,10 @@ fn is_cylinder(part: &Part, node: usize) -> bool {
 
 /// A circular edge's length (`edge.length`).
 fn circle_length(part: &Part, e: usize) -> Option<f64> {
-    let Curve::Circle { radius, .. } = part.boundary_edge_curve(e)? else {
+    let Curve::Circle { .. } = part.boundary_edge_support(e)? else {
         return None;
     };
-    let (a, b) = part.boundary_edge_interval(e)?;
-    Some(radius * (b - a).abs())
+    Some(super::regions::edge_length(part, e))
 }
 
 /// The angle the floor's shared circular edges sweep on a cylinder of *radius* (`_edge_sweep`).
@@ -892,7 +891,7 @@ fn mixed_floor_section(
     let kinds: BTreeSet<&str> = loops[0]
         .edges
         .iter()
-        .map(|&(e, _)| match part.boundary_edge_curve(e) {
+        .map(|&(e, _)| match part.boundary_edge_support(e) {
             Some(&Curve::Line { .. }) => "LINE",
             Some(&Curve::Circle { .. }) => "CIRCLE",
             _ => "OTHER",
@@ -908,7 +907,7 @@ fn mixed_floor_section(
     for (index, &e) in edges.iter().enumerate() {
         let (start, end) = (corners[index], corners[(index + 1) % corners.len()]);
         let mut bulge = 0.0;
-        if let Some(&Curve::Circle { radius, .. }) = part.boundary_edge_curve(e) {
+        if let Some(&Curve::Circle { radius, .. }) = part.boundary_edge_support(e) {
             let mid = project(part.edge_midpoint(e), &frame);
             let turn =
                 (mid[0] - start[0]) * (end[1] - mid[1]) - (mid[1] - start[1]) * (end[0] - mid[0]);

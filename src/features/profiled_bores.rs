@@ -204,7 +204,7 @@ fn recognise_one(
                             PrismEdge {
                                 points,
                                 straight: matches!(
-                                    part.boundary_edge_curve(e),
+                                    part.boundary_edge_support(e),
                                     Some(Curve::Line { .. })
                                 ),
                             }
@@ -309,7 +309,7 @@ fn double_d_profile(part: &Part, wire: &[(usize, bool)], axis: usize, tol: f64) 
         .collect();
     let arcs: Vec<(usize, V3, f64)> = edges
         .iter()
-        .filter_map(|&e| match part.boundary_edge_curve(e) {
+        .filter_map(|&e| match part.boundary_edge_support(e) {
             Some(Curve::Circle { frame, radius }) => Some((e, frame.origin, *radius)),
             _ => None,
         })

@@ -74,7 +74,7 @@ pub(super) fn ring(part: &Part, edges: Vec<usize>, axis: V3) -> Option<Ring> {
         return None;
     }
     let first = *edges.first()?;
-    let Some(&Curve::Circle { frame, radius }) = part.boundary_edge_curve(first) else {
+    let Some(&Curve::Circle { frame, radius }) = part.boundary_edge_support(first) else {
         return None;
     };
     let tolerance = length_tolerance(&[radius]);
@@ -85,7 +85,7 @@ pub(super) fn ring(part: &Part, edges: Vec<usize>, axis: V3) -> Option<Ring> {
         let Some(&Curve::Circle {
             frame: other,
             radius: r,
-        }) = part.boundary_edge_curve(edge)
+        }) = part.boundary_edge_support(edge)
         else {
             return None;
         };
@@ -106,13 +106,21 @@ pub(super) fn ring(part: &Part, edges: Vec<usize>, axis: V3) -> Option<Ring> {
     let mut intervals = Vec::new();
     for &edge in &edges {
         let e = &part.edges[edge];
-        let Some(&Curve::Circle { frame: other, .. }) = part.boundary_edge_curve(edge) else {
+        let Some(&Curve::Circle { frame: other, .. }) = part.boundary_edge_support(edge) else {
             unreachable!()
         };
-        let (a, b) = part.boundary_edge_interval(edge)?;
-        let orientation =
-            geom::dot(geom::cross(frame.x, frame.y), geom::cross(other.x, other.y)).signum();
-        let span = (b - a) * orientation;
+        let normal = geom::cross(frame.x, frame.y);
+        let span = if matches!(part.boundary_edge_curve(edge), Some(Curve::Circle { .. })) {
+            let (a, b) = part.boundary_edge_interval(edge)?;
+            (b - a) * geom::dot(normal, geom::cross(other.x, other.y)).signum()
+        } else {
+            let (point, tangent) = part.declared_edge_at_length(edge, 0.5)?;
+            let angular = geom::dot(geom::cross(geom::sub(point, other.origin), tangent), normal);
+            if angular == 0. {
+                return None;
+            }
+            (part.declared_edge_length(edge)? / radius).copysign(angular)
+        };
         let p = frame.to_local(e.start);
         let start = p[1].atan2(p[0]);
         let low = (start + span.min(0.)).rem_euclid(TAU);
@@ -255,7 +263,7 @@ fn wall(
     let mut other_edges = Vec::new();
     let mut seams = 0;
     for (edge, directions) in uses {
-        match part.boundary_edge_curve(edge) {
+        match part.boundary_edge_support(edge) {
             Some(&Curve::Circle { .. }) if directions.len() == 1 => other_edges.push(edge),
             Some(&Curve::Line { dir, .. })
                 if directions.len() == 2
@@ -350,7 +358,7 @@ pub fn discover(ctx: &Context<'_>) -> Vec<Occurrence<AnnularGroove>> {
     let mut seen=BTreeSet::<usize>::new();let mut found=Vec::new();
     for seed in 0..ctx.part.faces.len() {
         if seen.contains(&seed) || !matches!(ctx.part.faces[seed].surface,Surface::Plane{..})
-            || !ctx.part.face_edges(seed).iter().any(|&e|matches!(ctx.part.boundary_edge_curve(e), Some(Curve::Circle{..}))) { continue }
+            || !ctx.part.face_edges(seed).iter().any(|&e|matches!(ctx.part.boundary_edge_support(e), Some(Curve::Circle{..}))) { continue }
         let Some(floor)=floor_region(ctx.part,seed) else { continue };
         seen.extend(floor.iter().copied());
         if let Some(o)=from_floor(ctx.part,&floor) { found.push(o); }

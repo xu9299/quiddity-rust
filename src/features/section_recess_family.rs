@@ -1616,7 +1616,8 @@ fn support_apertures(
         }
         let edge = wire.edges[0].0;
         let e = &part.edges[edge];
-        let Some(curve @ &Curve::Circle { frame, radius }) = part.boundary_edge_curve(edge) else {
+        let Some(curve @ &Curve::Circle { frame, radius }) = part.boundary_edge_support(edge)
+        else {
             continue;
         };
         let Some(disk) = disk_part(curve, e.start) else {
@@ -1662,7 +1663,7 @@ fn aperture_bore(
     let rings: Vec<usize> = part
         .face_edges(neighbour)
         .into_iter()
-        .filter(|&e| matches!(part.boundary_edge_curve(e), Some(Curve::Circle { .. })))
+        .filter(|&e| matches!(part.boundary_edge_support(e), Some(Curve::Circle { .. })))
         .collect();
     let full = 2.0 * std::f64::consts::PI * radius;
     if rings.len() != 2
@@ -1689,7 +1690,7 @@ fn aperture_bore(
     };
     let mut ends: Vec<f64> = rings
         .iter()
-        .filter_map(|&e| match part.boundary_edge_curve(e) {
+        .filter_map(|&e| match part.boundary_edge_support(e) {
             Some(&Curve::Circle { frame, .. }) => {
                 Some(geom::dot(geom::sub(frame.origin, centre), axis))
             }

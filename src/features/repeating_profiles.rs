@@ -305,7 +305,7 @@ fn sample_wire(
                     Some((p[plane_axes[0]], p[plane_axes[1]]))
                 })
                 .collect::<Option<_>>()?;
-            let kind = match part.boundary_edge_curve(e) {
+            let kind = match part.boundary_edge_support(e) {
                 Some(Curve::Line { .. }) => "LINE",
                 Some(Curve::Circle { .. }) => "CIRCLE",
                 Some(Curve::Ellipse { .. }) => "ELLIPSE",
@@ -511,7 +511,7 @@ fn common_circle_centre(
 ) -> Option<(f64, f64)> {
     let centres: Vec<(f64, f64)> = wire
         .iter()
-        .filter_map(|&(e, _)| match part.boundary_edge_curve(e) {
+        .filter_map(|&(e, _)| match part.boundary_edge_support(e) {
             Some(Curve::Circle { frame, .. }) => {
                 Some((frame.origin[plane_axes[0]], frame.origin[plane_axes[1]]))
             }

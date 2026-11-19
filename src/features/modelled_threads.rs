@@ -169,7 +169,7 @@ fn axes(part: &Part) -> Vec<(Option<usize>, ThreadAxis)> {
             _ => {}
         }
         for &(e, _) in f.loops.iter().flat_map(|l| &l.edges) {
-            if let Some(Curve::Circle { frame, .. }) = part.boundary_edge_curve(e) {
+            if let Some(Curve::Circle { frame, .. }) = part.boundary_edge_support(e) {
                 add(f.solid, frame.origin, frame.z);
             }
         }

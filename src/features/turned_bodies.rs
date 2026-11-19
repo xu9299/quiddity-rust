@@ -359,7 +359,7 @@ fn profile(part: &Part, faces: &[usize], origin: V3, d: V3) -> Option<Vec<Profil
                 let mut radii: Vec<_> = part
                     .face_edges(face)
                     .into_iter()
-                    .filter_map(|e| match part.boundary_edge_curve(e) {
+                    .filter_map(|e| match part.boundary_edge_support(e) {
                         Some(&Curve::Circle { radius, .. }) => Some(radius),
                         _ => None,
                     })

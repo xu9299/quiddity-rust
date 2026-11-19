@@ -26,7 +26,10 @@ fn conical_rims_use_the_geometry_of_the_selected_pcurves() {
         let mut radii: Vec<_> = part
             .face_edges(face)
             .into_iter()
-            .filter_map(|e| part.cone_rim_circle(face, e).map(|(r, _)| r))
+            .filter_map(|e| match part.boundary_edge_support(e)? {
+                geom::Curve::Circle { radius, .. } => Some(*radius),
+                _ => None,
+            })
             .collect();
         radii.sort_by(f64::total_cmp);
         assert_eq!(radii.len(), 2, "face #{entity}");
@@ -37,6 +40,35 @@ fn conical_rims_use_the_geometry_of_the_selected_pcurves() {
                 .all(|(r, w)| (r - w).abs() < geom::COORD_FLOOR),
             "face #{entity}: {radii:?}"
         );
+    }
+}
+
+#[test]
+fn circular_feature_support_keeps_the_selected_spline_and_its_interval() {
+    let captured = common::fixtures().join("captured");
+    for (file, entities) in [
+        ("0d84b2b05e79d24b.step.gz", [265, 328, 465, 518]),
+        ("fa0600fbcc4940d4.step.gz", [398, 452, 632, 685]),
+    ] {
+        let part = read_step_file(&captured.join(file)).unwrap();
+        for entity in entities {
+            let edge = (0..part.edges.len())
+                .find(|&e| part.edge_source(e).is_some_and(|s| s.entity == entity))
+                .unwrap();
+            let Some(geom::Curve::Nurbs(spline)) = part.boundary_edge_curve(edge) else {
+                panic!("{file} #{entity}: expected the selected rational spline");
+            };
+            let Some(geom::Curve::Circle { frame, radius }) = part.boundary_edge_support(edge)
+            else {
+                panic!("{file} #{entity}: missing circular rim");
+            };
+            assert!((radius - 5.).abs() < 1e-10);
+            let (a, b) = part.boundary_edge_interval(edge).unwrap();
+            assert!(geom::dist(spline.value(a), part.edges[edge].start) < 1e-8);
+            assert!(geom::dist(spline.value(b), part.edges[edge].end) < 1e-8);
+            let q = frame.to_local(spline.value(0.5 * (a + b)));
+            assert!((q[0].hypot(q[1]) - radius).abs() < 1e-10 && q[2].abs() < 1e-10);
+        }
     }
 }
 

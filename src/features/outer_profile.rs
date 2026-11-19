@@ -12,6 +12,7 @@
 use serde::Serialize;
 
 use super::evidence::common_valid_solid;
+use super::regions::{edge_length, edge_support_points};
 use crate::kernel::brep::Part;
 use crate::kernel::geom::{Curve, Surface, V3, cross, sub};
 use crate::kernel::py;
@@ -340,7 +341,7 @@ fn read_profile(
     if wire.iter().any(|&(e, _)| {
         part.unresolved_edges().contains(&e)
             || !matches!(
-                part.boundary_edge_curve(e),
+                part.boundary_edge_support(e),
                 Some(Curve::Line { .. } | Curve::Circle { .. })
             )
     }) {
@@ -379,22 +380,19 @@ fn read_profile(
         if py::dist(&start, &end) == 0.0 {
             return Err(invalid());
         }
-        let curve = part.boundary_edge_curve(w.0).ok_or_else(invalid)?;
-        // The finite support may end within the STEP tolerance of the vertex.
-        let (a, b) = part.boundary_edge_interval(w.0).ok_or_else(invalid)?;
-        let curve_ends = (curve.value(a), curve.value(b));
+        let [p, midpoint, q] = edge_support_points(part, w.0).ok_or_else(invalid)?;
+        let curve_ends = (p, q);
         let apart = |(p, q): (V3, V3)| py::dist(&start, &p).max(py::dist(&end, &q));
         if apart(curve_ends).min(apart((curve_ends.1, curve_ends.0))) > POSITION_TOL {
             return Err(invalid());
         }
-        let midpoint = curve.value(0.5 * (a + b));
         if [start, end, midpoint]
             .iter()
             .any(|p| py::dot(&sub(*p, origin), &normal).abs() > POSITION_TOL)
         {
             return Err(invalid());
         }
-        match part.boundary_edge_curve(w.0) {
+        match part.boundary_edge_support(w.0) {
             Some(Curve::Line { .. }) => {
                 let support = line(start, end).ok_or_else(invalid)?;
                 let source = line(curve_ends.0, curve_ends.1)
@@ -412,7 +410,7 @@ fn read_profile(
                 if sense == 0.0 {
                     return Err(invalid());
                 }
-                let length = radius * (b - a).abs();
+                let length = edge_length(part, w.0);
                 let sweep = (length / radius).copysign(sense);
                 supports.push(ProfileSupport::Arc(
                     arc(start, end, center, *radius, sweep).ok_or_else(invalid)?,

@@ -124,7 +124,7 @@ fn complete_quarter_wall(
     let mut generators: Vec<Generator> = Vec::new();
     for edge in part.face_edges(cylinder) {
         let e = &part.edges[edge];
-        match part.boundary_edge_curve(edge) {
+        match part.boundary_edge_support(edge) {
             Some(&geom::Curve::Line { dir, .. }) => {
                 let Some(unit) = py::unit(dir) else {
                     return false;
@@ -218,7 +218,7 @@ fn conical_entry(
     let mut rims = Vec::new();
     let mut generators = 0;
     for edge in part.face_edges(cone) {
-        match part.boundary_edge_curve(edge) {
+        match part.boundary_edge_support(edge) {
             Some(&geom::Curve::Circle {
                 frame: rim,
                 radius: r,

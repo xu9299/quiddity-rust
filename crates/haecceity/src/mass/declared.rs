@@ -123,6 +123,7 @@ pub(crate) struct EdgeTrim {
     midpoint: OnceLock<Option<(V3, V3)>>,
     span_lengths: OnceLock<Option<Vec<f64>>>,
     spatial_curve: OnceLock<Option<Curve>>,
+    rim: OnceLock<Option<Curve>>,
 }
 
 #[derive(Debug)]
@@ -355,6 +356,23 @@ impl EdgeTrim {
         let nodes = self.nodes()?;
         let speed = |t| [geom::norm(self.spatial_velocity(s, t))];
         let lengths = self.span_lengths(s)?;
+        let point_and_tangent = |t| {
+            (
+                self.point(s, t),
+                geom::scale(
+                    self.spatial_velocity(s, t),
+                    (self.interval.1 - self.interval.0).signum(),
+                ),
+            )
+        };
+        if fraction == 0. || fraction == 1. {
+            let t = if fraction == 0. {
+                self.interval.0
+            } else {
+                self.interval.1
+            };
+            return Some(point_and_tangent(t));
+        }
         let mut remaining = fraction * lengths.iter().sum::<f64>();
         for (i, (w, length)) in nodes.windows(2).zip(lengths.iter().copied()).enumerate() {
             if remaining > length && i + 2 < nodes.len() {
@@ -370,20 +388,7 @@ impl EdgeTrim {
                     b = m;
                 }
             }
-            let t = if fraction == 0. {
-                self.interval.0
-            } else if fraction == 1. {
-                self.interval.1
-            } else {
-                0.5 * (a + b)
-            };
-            return Some((
-                self.point(s, t),
-                geom::scale(
-                    self.spatial_velocity(s, t),
-                    (self.interval.1 - self.interval.0).signum(),
-                ),
-            ));
+            return Some(point_and_tangent(0.5 * (a + b)));
         }
         None
     }
@@ -1037,6 +1042,7 @@ fn resolve(
         midpoint: OnceLock::new(),
         span_lengths: OnceLock::new(),
         spatial_curve: OnceLock::new(),
+        rim: OnceLock::new(),
     };
     let (a, b) = interval;
     let knots = match &trim.curve.source {

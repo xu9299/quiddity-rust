@@ -150,6 +150,13 @@ translation and rotation at the original absolute tolerance.
 Feature proofs that require a straight or circular boundary query the selected
 primitive and its finite parameter interval. Length, points at a fraction of arc
 length and nearest-point queries also evaluate a general curve on its carrier.
+A cylinder or cone incident on the selected edge supplies a candidate centre
+and radius for a circular rim. For positive-weight rational quadratic Bézier
+spans, Bernstein coefficients bound radial and axial departure over every span.
+The angular derivative must keep its sign through at most one turn. This lets
+a double-D bore, a turned chamfer or a recess use a rim written as a spline.
+Points, tangents and arc length still come from the original parameterisation.
+
 A planar extrusion copies the selected spatial curve into both caps. A selected
 planar rational spline sweeps to a tensor-product surface with the same knots
 and weights and two rows of poles displaced by the sweep vector. For a planar

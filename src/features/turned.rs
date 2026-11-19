@@ -90,7 +90,10 @@ pub fn cone_rims(part: &Part, face: usize) -> Option<(Rim, Rim, f64)> {
     let mut circles: Vec<(f64, V3)> = part
         .face_edges(face)
         .into_iter()
-        .filter_map(|e| part.cone_rim_circle(face, e))
+        .filter_map(|e| match part.boundary_edge_support(e)? {
+            crate::kernel::geom::Curve::Circle { frame, radius } => Some((*radius, frame.origin)),
+            _ => None,
+        })
         .collect();
     if circles.len() < 2 {
         return None;

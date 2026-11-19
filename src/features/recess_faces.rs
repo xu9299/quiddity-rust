@@ -39,7 +39,7 @@ pub struct Face {
 /// The finite error bound also applies where a rounded STEP parameter
 /// direction makes a cylinder generator a very shallow helix.
 pub(crate) fn wall_edge_is_straight(part: &Part, edge: usize) -> bool {
-    match part.boundary_edge_curve(edge) {
+    match part.boundary_edge_support(edge) {
         Some(Curve::Line { .. }) => true,
         None => part
             .declared_cylinder_chord_error(edge)
@@ -54,7 +54,7 @@ fn is_wall(part: &Part, face: usize) -> bool {
     let edges = part.face_edges(face);
     let (mut lines, mut circles) = (0, 0);
     for &e in &edges {
-        if matches!(part.boundary_edge_curve(e), Some(Curve::Circle { .. })) {
+        if matches!(part.boundary_edge_support(e), Some(Curve::Circle { .. })) {
             circles += 1;
         } else if wall_edge_is_straight(part, e) {
             lines += 1;

@@ -527,7 +527,7 @@ fn spherical_corner(
         let Some(&crate::kernel::geom::Curve::Circle {
             frame: arc,
             radius: r,
-        }) = part.boundary_edge_curve(edge)
+        }) = part.boundary_edge_support(edge)
         else {
             return None;
         };

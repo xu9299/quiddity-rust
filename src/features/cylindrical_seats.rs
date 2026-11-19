@@ -16,7 +16,7 @@ use super::entry_treatments::material_fraction;
 use super::evidence::common_valid_solid;
 use super::graph::{face_vertices, is_planar, normal, shared_occurrences};
 use super::policy::length_tol;
-use super::regions::edge_length;
+use super::regions::{edge_length, edge_support_points};
 use super::sections::{LocalFrame, SectionVertex};
 use super::support_patches::{covered_patch, ruled_prism};
 use crate::kernel::brep::{Arc, Edge, Face, Loop, Part};
@@ -57,14 +57,6 @@ impl SeatCylinder {
             && geom::norm(geom::cross(self.axis, other.axis)) <= 1e-8
             && geom::norm(across) <= tolerance
     }
-}
-
-/// The edge's points at the start, middle and end of its parameter range (`position_at(0)`,
-/// `(0.5)`, `(1)`: by arc length, which for lines and circles is by parameter).
-fn samples(part: &Part, e: usize) -> Option<[V3; 3]> {
-    let curve = part.boundary_edge_curve(e)?;
-    let (a, b) = part.boundary_edge_interval(e)?;
-    Some([a, 0.5 * (a + b), b].map(|t| curve.value(t)))
 }
 
 /// The circle through three points, as `(centre, radius, normal)` with the walk start → middle
@@ -196,8 +188,8 @@ pub fn prove(
             }
             let normal = normal(part, node)?;
             for e in shared_occurrences(part, wall, node) {
-                let points = samples(part, e)?;
-                match part.boundary_edge_curve(e) {
+                let points = edge_support_points(part, e)?;
+                match part.boundary_edge_support(e) {
                     Some(&Curve::Circle { .. }) => {
                         let middle = geom::dot(points[1], axis);
                         let end_index = usize::from((middle - low).abs() >= (middle - high).abs());

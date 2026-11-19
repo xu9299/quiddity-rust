@@ -15,7 +15,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   drawings, mesh joins, edge distances and feature measurements use the same
   edge selection. A planar sweep preserves a selected spline in both caps and
   its side wall. Hole, rim and profile proofs use the selected curve.
-  Conical rims can recognise a circular arc encoded as a rational spline.
+  Circular hole, recess and turned-feature proofs can recognise an arc encoded
+  as a rational spline on an incident cylinder or cone.
   The area guard measures the selected boundary's length on its STEP carrier.
   Probe rays near a selected common edge can resolve a duplicate entry within
   the file's own uncertainty when the material intervals agree on both sides.

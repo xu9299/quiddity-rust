@@ -154,7 +154,7 @@ pub enum RunKind {
 }
 
 fn run_kind(part: &Part, edge: usize) -> Option<RunKind> {
-    match part.boundary_edge_curve(edge) {
+    match part.boundary_edge_support(edge) {
         Some(Curve::Line { .. }) => Some(RunKind::Line),
         Some(Curve::Circle { .. }) => Some(RunKind::Circle),
         _ => None,
@@ -164,11 +164,25 @@ fn run_kind(part: &Part, edge: usize) -> Option<RunKind> {
 internal_entry! {
 /// A circular edge's radius.
 pub fn edge_radius(part: &Part, edge: usize) -> Option<f64> {
-    match part.boundary_edge_curve(edge) {
+    match part.boundary_edge_support(edge) {
         Some(Curve::Circle { radius, .. }) => Some(*radius),
         _ => None,
     }
 }
+}
+
+/// Endpoints and midpoint on the selected finite edge for line and arc proofs.
+pub(super) fn edge_support_points(part: &Part, e: usize) -> Option<[V3; 3]> {
+    if let Some((mid, _)) = part.declared_edge_at_length(e, 0.5) {
+        return Some([
+            part.declared_edge_at_length(e, 0.)?.0,
+            mid,
+            part.declared_edge_at_length(e, 1.)?.0,
+        ]);
+    }
+    let curve = part.boundary_edge_curve(e)?;
+    let (a, b) = part.boundary_edge_interval(e)?;
+    Some([a, 0.5 * (a + b), b].map(|t| curve.value(t)))
 }
 
 internal_entry! {
