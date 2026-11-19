@@ -143,7 +143,7 @@ and weights and two rows of poles displaced by the sweep vector. For a planar
 recess wall adjacent to a cylinder, a straight UV line with a small angular
 component defines a helix. Its maximum distance from the segment joining the
 STEP vertices is bounded by the larger endpoint mismatch plus `r Δu²/8`.
-The wall classifier accepts it as straight at the kernel coordinate floor
+The wall classifier and the adjoining slot end-wall proof accept it as straight at the kernel coordinate floor
 when this bound fits. Area, length and proximity still evaluate the helix.
 
 In `cadgenbench_inputs/cgb243.step.gz`, spherical face `#55337` has radius
