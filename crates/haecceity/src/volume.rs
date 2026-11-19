@@ -787,9 +787,10 @@ fn paired_crossings(hits: &[Hit]) -> Option<Vec<(f64, f64)>> {
             ts.push(h.t);
         }
     }
-    ts.len()
-        .is_multiple_of(2)
-        .then(|| ts.chunks_exact(2).map(|c| (c[0], c[1])).collect())
+    let (pairs, remainder) = ts.as_chunks::<2>();
+    remainder
+        .is_empty()
+        .then(|| pairs.iter().map(|&[a, b]| (a, b)).collect())
 }
 
 /// The total length the two sets of intervals share. A shared stretch shorter than a nanometre
