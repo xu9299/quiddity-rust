@@ -1,0 +1,120 @@
+name: Directed official PMI writer export
+
+on:
+  push:
+    branches: [validation/centroid-pmi-export-054-20261119]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: centroid-pmi-export-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  PYTHONUTF8: "1"
+
+jobs:
+  topic:
+    name: ARM official writer export only
+    runs-on: macos-26
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: xu9299/quiddity-rust
+          ref: ec91632b4120923cd5719095fb7ff1e8ba7c2257
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      # Restore the matching completed-run cache, including its separate baseline target.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: 847421798ef70f0d6a677999f5b4cb57522819e5
+          path: upstream-baseline
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          enable-cache: false
+      - name: Record fixed source and runner identity
+        run: |
+          mkdir -p ../export-logs
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; uv --version; } | tee ../export-logs/environment.log
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = ec91632b4120923cd5719095fb7ff1e8ba7c2257
+          test "$(git rev-parse HEAD^{tree})" = a967716710fb414e51f730e2b3bd7125e9856d81
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test -z "$(git status --porcelain)"
+          test "$CI" = true
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: |
+            source -> ../target
+            upstream-baseline -> ../target-upstream-baseline
+          shared-key: boundary-centroid-main-v054-20261119-macos-26
+          cache-on-failure: true
+      - name: Run the unmodified official ignored writer exporter
+        run: |
+          cargo test -p haecceity --test pmi_write --release --locked export_written_files -- --exact --ignored --nocapture 2>&1 | tee ../export-logs/export.log
+      - name: Archive each actual writer output and its committed comparison
+        run: |
+          uv run --no-project --python 3.14 python - <<'PY'
+          import gzip, hashlib, json, os, pathlib, shutil, subprocess
+          root = pathlib.Path.cwd()
+          out = root.parent / 'export-logs'
+          folder = root / 'tests/fixtures/ap242/write-presentation'
+          destination = out / 'written'
+          destination.mkdir()
+          digest = lambda b: hashlib.sha256(b).hexdigest()
+          rows = []
+          for path in sorted(folder.glob('*.step.gz')):
+              name = path.relative_to(root).as_posix()
+              old = subprocess.check_output(['git', 'show', 'HEAD:' + name])
+              new = path.read_bytes()
+              a, b = gzip.decompress(old), gzip.decompress(new)
+              rows.append(dict(file=path.name, old_gzip_sha256=digest(old), new_gzip_sha256=digest(new),
+                  old_plain_sha256=digest(a), new_plain_sha256=digest(b), decompressed_equal=a == b))
+              shutil.copyfile(path, destination / path.name)
+          changed = subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
+          assert all(p.startswith('tests/fixtures/ap242/write-presentation/') and p.endswith('.step.gz') for p in changed)
+          record = dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+              source_tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+              corpus_commit=subprocess.check_output(['git','-C','../quiddity-corpus','rev-parse','HEAD'],text=True).strip(),
+              ci_present=os.environ.get('CI') == 'true', official_exporter_unmodified=True,
+              full_workspace=False, full_corpus=False, rust_snapshots_regenerated=False,
+              generated_count=len(rows), files=rows, changed_tracked_files=changed)
+          (out / 'inventory.json').write_text(json.dumps(record,indent=2)+'\n',encoding='utf-8')
+          assert len(rows) == 16
+          assert record['ci_present']
+          assert not subprocess.check_output(['git','diff','--name-only','--','tests/fixtures/rust-snapshot']).strip()
+          print(json.dumps(dict(generated=len(rows), changed=[r['file'] for r in rows if not r['decompressed_equal']])))
+          PY
+      - name: Recheck only the failed writer-output and conformance test
+        run: |
+          cargo test -p haecceity --test pmi_write --release --locked written_files_are_the_writers_current_output -- --exact --nocapture 2>&1 | tee ../export-logs/writer-output-check.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: centroid-pmi-official-export-054
+          path: export-logs
+          if-no-files-found: error
