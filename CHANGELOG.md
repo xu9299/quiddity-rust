@@ -6,6 +6,16 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+Pending version: 0.6.0
+
+### Breaking (Rust API)
+
+- `haecceity::hlr::Exact` adds `SurfaceCurve` for a STEP pcurve projected from
+  its carrier. Exhaustive matches on the three previous variants need another
+  arm. Use `at` and `range` for evaluation, `placed` for page layout and
+  `subrange` for clipping. The new curve owns its geometry and supports serde
+  with the `json` feature. The public `Projected::points` polyline is also available.
+
 ### Added
 
 - Owned-snapshot STEP geometry entry points release parsed input bytes before B-rep

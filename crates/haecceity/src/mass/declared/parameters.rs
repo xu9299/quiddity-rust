@@ -5,8 +5,9 @@ use super::*;
 use crate::brep::{RawProfile, SweptSource};
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2};
 
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Axis {
+#[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Axis {
     Linear { scale: f64, offset: f64 },
     Angle { radians: f64 },
 }

@@ -128,6 +128,7 @@ pub fn default_x_axis(z: V3) -> V3 {
 }
 
 /// A right-handed placement: origin plus three unit axes.
+#[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frame {
     pub origin: V3,
@@ -167,7 +168,7 @@ impl Frame {
 
 /// The analytic surface kinds the recognisers read. Anything else is carried by name so a
 /// caller can refuse it explicitly rather than mistake it for a supported surface.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Surface {
     Plane {
         frame: Frame,
@@ -708,6 +709,7 @@ impl Conic {
 }
 
 /// The curve under an edge.
+#[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Curve {
     Line {

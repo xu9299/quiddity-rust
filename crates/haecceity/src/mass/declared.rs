@@ -10,6 +10,51 @@ mod parameters;
 mod rim;
 use parameters::Axis;
 
+/// The original finite pcurve and its named carrier, owned by a drawing after
+/// the part is dropped. A swept carrier can use a nonlinear angular UV map.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
+pub(crate) struct DrawingPcurve {
+    pub(crate) pcurve: Curve,
+    #[cfg_attr(
+        feature = "json",
+        serde(with = "crate::hlr::surface_curve::carrier_wire")
+    )]
+    pub(crate) carrier: Arc<Surface>,
+    axes: [Axis; 2],
+    spans: [Option<f64>; 2],
+    pub(crate) breaks: Vec<f64>,
+}
+
+impl PartialEq for DrawingPcurve {
+    fn eq(&self, other: &Self) -> bool {
+        // Drawing and cache equality compare spline operands independently
+        // of any inverse seeds the owning part has already evaluated.
+        let same = match (&self.pcurve, &other.pcurve) {
+            (Curve::Nurbs(a), Curve::Nurbs(b)) => {
+                a.degree() == b.degree()
+                    && a.control_points() == b.control_points()
+                    && a.weights() == b.weights()
+                    && a.knots() == b.knots()
+            }
+            (a, b) => a == b,
+        };
+        same && self.carrier == other.carrier
+            && self.axes == other.axes
+            && self.spans == other.spans
+            && self.breaks == other.breaks
+    }
+}
+
+impl DrawingPcurve {
+    pub(crate) fn uv(&self, t: f64) -> (f64, f64) {
+        let q = self.pcurve.value(t);
+        let raw = (self.axes[0].at(q[0]).0, self.axes[1].at(q[1]).0);
+        let [u, v] = self.spans.map(|span| span.unwrap_or(f64::INFINITY));
+        wrap_closed(&self.carrier, (u, v), raw)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ParamCurve {
     source: Curve,
@@ -305,6 +350,72 @@ impl EdgeTrim {
         )
     }
 
+    /// A visibility or section cut lies on one known sample chord. Refine its
+    /// finite parameter on that span; coincident turns elsewhere on a closed
+    /// edge cannot take the endpoint away from the run being drawn.
+    pub(crate) fn drawing_parameter(
+        &self,
+        s: &Surface,
+        samples: &TrimSamples,
+        mark: f64,
+        point: V3,
+    ) -> Option<f64> {
+        let i = mark as usize;
+        let &first = samples.ts.get(i)?;
+        if mark.fract() == 0. {
+            return Some(first);
+        }
+        let &last = samples.ts.get(i + 1)?;
+        let mid = self.closest_on_span(s, point, first, last);
+        [first, mid, last].into_iter().min_by(|&x, &y| {
+            geom::dist(point, self.point(s, x)).total_cmp(&geom::dist(point, self.point(s, y)))
+        })
+    }
+
+    fn closest_on_span(&self, s: &Surface, p: V3, mut a: f64, mut b: f64) -> f64 {
+        for _ in 0..56 {
+            let l = (2. * a + b) / 3.;
+            let r = (a + 2. * b) / 3.;
+            if geom::dist(p, self.point(s, l)) <= geom::dist(p, self.point(s, r)) {
+                b = r;
+            } else {
+                a = l;
+            }
+        }
+        0.5 * (a + b)
+    }
+
+    pub(crate) fn drawing_pcurve(
+        &self,
+        s: &Surface,
+        carriers: &mut std::collections::HashMap<*const Surface, Arc<Surface>>,
+    ) -> DrawingPcurve {
+        let (surface, spans) = self
+            .curve
+            .transfer
+            .as_ref()
+            .map_or((s, self.spans), |tr| (&*tr.carrier, tr.carrier_spans));
+        let carrier = carriers
+            .entry(std::ptr::from_ref(surface))
+            .or_insert_with(|| {
+                Arc::new(match surface {
+                    // Keep the evaluated geometry across all stretches on this carrier.
+                    Surface::Freeform { kind, surface } => Surface::Freeform {
+                        kind,
+                        surface: Box::new(surface.geometry_clone()),
+                    },
+                    other => other.clone(),
+                })
+            });
+        DrawingPcurve {
+            pcurve: self.curve.source.clone(),
+            carrier: Arc::clone(carrier),
+            axes: self.curve.axes,
+            breaks: self.nodes().unwrap_or_default(),
+            spans: [spans.0, spans.1].map(|s| s.is_finite().then_some(s)),
+        }
+    }
+
     pub(crate) fn point(&self, s: &Surface, t: f64) -> V3 {
         if let Some(tr) = &self.curve.transfer {
             return self.curve.lifted(t, tr).map_or([f64::NAN; 3], |(_, p)| p);
@@ -456,17 +567,7 @@ impl EdgeTrim {
             if geom::dist(q, foot) > geom::dist(q, best.1) + crate::sampling::CHORD_TOLERANCE {
                 continue;
             }
-            let (mut a, mut b) = (w[0], w[1]);
-            for _ in 0..56 {
-                let l = (2. * a + b) / 3.;
-                let r = (a + 2. * b) / 3.;
-                if geom::dist(q, self.point(s, l)) <= geom::dist(q, self.point(s, r)) {
-                    b = r;
-                } else {
-                    a = l;
-                }
-            }
-            let t = 0.5 * (a + b);
+            let t = self.closest_on_span(s, q, w[0], w[1]);
             let p = self.point(s, t);
             if geom::dist(q, p) < geom::dist(q, best.1) {
                 best = (t, p);

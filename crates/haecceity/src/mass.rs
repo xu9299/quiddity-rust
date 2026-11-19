@@ -18,7 +18,7 @@
 
 mod declared;
 mod preferred;
-pub(super) use declared::{DeclaredBoundary, TrimCrossings};
+pub(super) use declared::{DeclaredBoundary, DrawingPcurve, TrimCrossings};
 
 use std::sync::OnceLock;
 

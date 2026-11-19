@@ -14,7 +14,11 @@
 //! the faces; a ray then runs only to the plane, where it is stopped by the cut face if it
 //! arrives inside the material.
 
+pub(crate) mod surface_curve;
+pub use surface_curve::ProjectedSurfaceCurve;
+
 use std::collections::HashMap;
+use std::sync::Arc as Shared;
 
 use super::brep::{Arc, Part};
 use super::classify::{Classifier, ON_TOLERANCE, State};
@@ -35,8 +39,8 @@ pub struct Projected {
     pub class: Class,
     pub visible: bool,
     pub points: Vec<[f64; 2]>,
-    /// The stretch exactly, when it is a stretch of an edge whose curve projects to a curve of
-    /// its own kind (silhouettes and section outlines are traced, and have only their points).
+    /// The exact projection of a resolved finite edge stretch. Silhouettes and
+    /// section outlines traced on a face carry their drawing points.
     pub exact: Option<Exact>,
 }
 
@@ -64,12 +68,15 @@ pub enum Exact {
         t0: f64,
         t1: f64,
     },
+    /// A general pcurve on its STEP carrier, seen in the drawing plane.
+    SurfaceCurve(ProjectedSurfaceCurve),
 }
 
 impl Exact {
     /// The point at parameter *t* (for a line, the fraction along it).
     pub fn at(&self, t: f64) -> [f64; 2] {
         match self {
+            Exact::SurfaceCurve(c) => c.at(t),
             Exact::Line(a, b) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
             Exact::Conic {
                 centre,
@@ -105,10 +112,75 @@ impl Exact {
         }
     }
 
+    /// Scale in the drawing plane about `centre`, then place that centre at `at`.
+    /// A page layout can place each projected stretch through the same API.
+    pub fn placed(&self, scale: f64, centre: [f64; 2], at: [f64; 2]) -> Self {
+        let map = |p: [f64; 2]| std::array::from_fn(|i| at[i] + scale * (p[i] - centre[i]));
+        let mut placed = self.clone();
+        match &mut placed {
+            Self::Line(a, b) => {
+                *a = map(*a);
+                *b = map(*b);
+            }
+            Self::Conic {
+                centre: origin,
+                radii,
+                x_axis,
+                y_axis,
+                ..
+            } => {
+                *origin = map(*origin);
+                *radii = radii.map(|r| r * scale.abs());
+                if scale < 0. {
+                    *x_axis = x_axis.map(|x| -x);
+                    *y_axis = y_axis.map(|y| -y);
+                }
+            }
+            Self::Nurbs { poles, .. } => {
+                for p in poles {
+                    *p = map(*p);
+                }
+            }
+            Self::SurfaceCurve(c) => *c = c.placed(scale, centre, at),
+        }
+        placed
+    }
+
+    /// Restrict the curve to fractions `first` and `last` of its oriented
+    /// parameter range. Reversed intervals are valid. Values outside [0, 1]
+    /// have no corresponding interval in the original stretch.
+    pub fn subrange(&self, first: f64, last: f64) -> Option<Self> {
+        if ![first, last].iter().all(|t| (0. ..=1.).contains(t)) {
+            return None;
+        }
+        let (a, b) = self.range();
+        let at = |f: f64| {
+            if f == 0. {
+                a
+            } else if f == 1. {
+                b
+            } else {
+                a + (b - a) * f
+            }
+        };
+        let ends = (at(first), at(last));
+        let mut trimmed = self.clone();
+        match &mut trimmed {
+            Self::Line(p, q) => {
+                *p = self.at(first);
+                *q = self.at(last);
+            }
+            Self::Conic { t0, t1, .. } | Self::Nurbs { t0, t1, .. } => (*t0, *t1) = ends,
+            Self::SurfaceCurve(c) => c.set_range(ends),
+        }
+        Some(trimmed)
+    }
+
     /// The parameter range drawn, first to last.
     pub fn range(&self) -> (f64, f64) {
         match self {
             Exact::Line(..) => (0.0, 1.0),
+            Exact::SurfaceCurve(c) => c.range(),
             Exact::Conic { t0, t1, .. } | Exact::Nurbs { t0, t1, .. } => (*t0, *t1),
         }
     }
@@ -522,8 +594,11 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
         );
     }
     let classifier = plane.map(|_| Classifier::for_faces(part, faces.clone()));
-    if let Some(plane) = plane {
-        curves = curves
+    // Section clipping can replace both endpoints of an edge. Keep the
+    // original sample positions so later visibility splits retain the finite
+    // pcurve interval, including both ends of a closed or reversed edge.
+    let mut curves: Vec<_> = if let Some(plane) = plane {
+        let mut clipped: Vec<_> = curves
             .into_iter()
             .flat_map(|(class, c, on)| {
                 let point = |p| match on {
@@ -532,17 +607,23 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
                 };
                 kept(&c, plane, 1e-9 * scale, point)
                     .into_iter()
-                    .map(move |k| (class, k, on))
+                    .map(move |(points, places)| (class, points, on, Some(places)))
             })
             .collect();
-        curves.extend(
+        clipped.extend(
             cut(part, plane, &faces)?
                 .into_iter()
-                .map(|c| (Class::Sharp, c, On::Section)),
+                .map(|c| (Class::Sharp, c, On::Section, None)),
         );
-    }
+        clipped
+    } else {
+        curves
+            .into_iter()
+            .map(|(class, c, on)| (class, c, on, None))
+            .collect()
+    };
     // Curves seen end-on draw nothing.
-    curves.retain(|(_, c, _)| {
+    curves.retain(|(_, c, _, _)| {
         c.windows(2)
             .map(|w| {
                 let (a, b) = (view.map(w[0]), view.map(w[1]));
@@ -553,7 +634,7 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
     });
     let flat: Vec<Vec<[f64; 2]>> = curves
         .iter()
-        .map(|(_, c, _)| c.iter().map(|p| view.map(*p)).collect())
+        .map(|(_, c, _, _)| c.iter().map(|p| view.map(*p)).collect())
         .collect();
     let cuts = crossings(&flat, scale / 64.0, 1e-9 * scale);
     let reach = 2.0 * scale + 1.0;
@@ -611,7 +692,7 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
             .unwrap_or(p)
     };
     let judged = parallel(&order, |i| {
-        let (class, points, on) = &curves[i];
+        let (class, points, on, _) = &curves[i];
         // An edge standing off its faces (within the file's tolerance) can start its ray just
         // inside them: the ray starts clear of that stand-off, so the edge does not hide itself.
         let start = 1e-6 * scale
@@ -698,7 +779,9 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
         pieces(points, &cuts[i], (view, 1e-9 * scale), &judge)
     });
     let mut out = Vec::new();
-    for ((class, _, on), runs) in curves.iter().zip(judged) {
+    let mut drawing_pcurves = HashMap::new();
+    let mut drawing_carriers = HashMap::new();
+    for ((class, _, on, clipped), runs) in curves.iter().zip(judged) {
         // A stretch whose visibility is not known is drawn neither way: the drawing is refused,
         // naming the faces its ray could not be intersected with, and its edge.
         let runs = runs.map_err(|at| Unresolved {
@@ -717,17 +800,41 @@ fn draw(part: &Part, view: &View, plane: Option<&Plane>) -> Result<Vec<Projected
                 _ => Vec::new(),
             },
         })?;
-        for (visible, run) in runs {
+        for run in runs {
             let exact = match on {
-                On::Edge(e) => part
-                    .boundary_edge_curve(*e)
-                    .and_then(|c| exact(c, view, &run)),
+                On::Edge(e) => match part.boundary_edge_curve(*e) {
+                    Some(curve) => exact(curve, view, &run.points),
+                    None => part.spatial_trim(*e).and_then(|(s, trim)| {
+                        let samples = trim.samples(s, &part.edges[*e])?;
+                        let source_at = |mark: f64| {
+                            clipped
+                                .as_ref()
+                                .map_or(mark, |places| interpolate(places, mark))
+                        };
+                        let t = |mark, point| {
+                            trim.drawing_parameter(s, samples, source_at(mark), point)
+                        };
+                        let t0 = t(run.start, *run.points.first()?)?;
+                        let t1 = t(run.end, *run.points.last()?)?;
+                        if t0 == t1 {
+                            return None;
+                        }
+                        let geometry = drawing_pcurves.entry(*e).or_insert_with(|| {
+                            Shared::new(trim.drawing_pcurve(s, &mut drawing_carriers))
+                        });
+                        Some(Exact::SurfaceCurve(ProjectedSurfaceCurve::new(
+                            Shared::clone(geometry),
+                            view,
+                            (t0, t1),
+                        )))
+                    }),
+                },
                 _ => None,
             };
             out.push(Projected {
                 class: *class,
-                visible,
-                points: run.iter().map(|p| view.map(*p)).collect(),
+                visible: run.visible,
+                points: run.points.iter().map(|p| view.map(*p)).collect(),
                 exact,
             });
         }
@@ -865,32 +972,38 @@ fn parallel<R: Send>(items: &[usize], f: impl Fn(usize) -> R + Sync) -> Vec<R> {
 
 /// The stretches of polyline *c* on the plane's kept side (or within *tol* of it), each
 /// crossing placed on the chord and moved onto *curve* when there is one.
-fn kept(c: &[V3], plane: &Plane, tol: f64, point: impl Fn(V3) -> V3) -> Vec<Vec<V3>> {
+fn kept(c: &[V3], plane: &Plane, tol: f64, point: impl Fn(V3) -> V3) -> Vec<(Vec<V3>, Vec<f64>)> {
     let d: Vec<f64> = c.iter().map(|p| plane.distance(*p)).collect();
     let crossing = |i: usize| {
         let t = (d[i] / (d[i] - d[i + 1])).clamp(0.0, 1.0);
         let p = geom::add(c[i], geom::scale(geom::sub(c[i + 1], c[i]), t));
-        point(p)
+        (point(p), i as f64 + t)
     };
     let mut out = Vec::new();
-    let mut run: Vec<V3> = Vec::new();
+    let mut run = Vec::new();
     for i in 0..c.len() {
-        let inside = d[i] >= -tol;
-        if inside {
+        if d[i] >= -tol {
             if run.is_empty() && i > 0 {
                 run.push(crossing(i - 1));
             }
-            run.push(c[i]);
+            run.push((c[i], i as f64));
         } else if !run.is_empty() {
             run.push(crossing(i - 1));
-            out.push(std::mem::take(&mut run));
+            out.push(std::mem::take(&mut run).into_iter().unzip());
         }
     }
     if run.len() > 1 {
-        out.push(run);
+        out.push(run.into_iter().unzip());
     }
-    out.retain(|r| r.len() > 1);
     out
+}
+
+fn interpolate(values: &[f64], mark: f64) -> f64 {
+    let i = mark as usize;
+    match values.get(i + 1) {
+        Some(&next) => values[i] + (next - values[i]) * mark.fract(),
+        None => values[i],
+    }
 }
 
 /// The edges drawn, of the *drawn* faces: every edge between two that is not a seam or a join within one
@@ -1436,6 +1549,14 @@ fn segment_crossing(p: [f64; 2], q: [f64; 2], r: [f64; 2], s: [f64; 2]) -> Optio
     ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some((t, u))
 }
 
+#[derive(Debug)]
+struct VisibleRun {
+    visible: bool,
+    points: Vec<V3>,
+    start: f64,
+    end: f64,
+}
+
 /// A curve split at its cuts into runs, each visible or hidden as its middle is (*hidden*
 /// answers, or gives where it could not, which is returned), with neighbouring runs of one
 /// visibility joined. A breakpoint seen within *tol* of the one before (in *view*) is passed
@@ -1445,7 +1566,7 @@ fn pieces(
     cuts: &[(usize, f64)],
     (view, tol): (&View, f64),
     hidden: &impl Fn(V3) -> Result<bool, V3>,
-) -> Result<Vec<(bool, Vec<V3>)>, V3> {
+) -> Result<Vec<VisibleRun>, V3> {
     let lerp = |s: usize, t: f64| {
         geom::add(
             points[s],
@@ -1467,38 +1588,50 @@ fn pieces(
         let (a, b) = (view.map(p), view.map(q));
         (a[0] - b[0]).hypot(a[1] - b[1]) > tol
     };
-    let mut at: Vec<V3> = Vec::with_capacity(marks.len());
-    for p in marks.iter().map(place) {
-        if at.last().is_none_or(|q| apart(*q, p)) {
-            at.push(p);
+    let mut at: Vec<(V3, f64)> = Vec::with_capacity(marks.len());
+    for mark in marks {
+        let p = place(&mark);
+        if at.last().is_none_or(|&(q, _)| apart(q, p)) {
+            at.push((p, mark.0 as f64 + mark.1));
         }
     }
     // The curve ends at its end, not at a breakpoint just short of it.
     let end = points[points.len() - 1];
-    while at.len() > 1 && !apart(at[at.len() - 1], end) {
+    while at.len() > 1 && !apart(at[at.len() - 1].0, end) {
         at.pop();
     }
-    at.push(end);
-    if at.len() == 2 && !apart(at[0], end) {
+    at.push((end, (points.len() - 1) as f64));
+    if at.len() == 2 && !apart(at[0].0, end) {
         return Ok(Vec::new());
     }
-    let mut out: Vec<(bool, Vec<V3>)> = Vec::new();
-    let mut run: Vec<V3> = vec![at[0]];
-    let mut run_visible: Option<bool> = None;
+    let mut out = Vec::new();
+    let (mut start, mut run) = (at[0].1, vec![at[0].0]);
+    let mut run_visible = None;
     for w in at.windows(2) {
-        let (a, b) = (w[0], w[1]);
+        let ((a, mark), (b, _)) = (w[0], w[1]);
         let visible = !hidden(geom::scale(geom::add(a, b), 0.5))?;
         if let Some(v) = run_visible
             && v != visible
         {
-            out.push((v, std::mem::take(&mut run)));
+            out.push(VisibleRun {
+                visible: v,
+                points: std::mem::take(&mut run),
+                start,
+                end: mark,
+            });
+            start = mark;
             run.push(a);
         }
         run_visible = Some(visible);
         run.push(b);
     }
-    if let Some(v) = run_visible {
-        out.push((v, run));
+    if let Some(visible) = run_visible {
+        out.push(VisibleRun {
+            visible,
+            points: run,
+            start,
+            end: (points.len() - 1) as f64,
+        });
     }
     Ok(out)
 }
@@ -1585,16 +1718,18 @@ mod tests {
         let hair = |p: V3| Ok(p[0] > 10.0 - 1e-10);
         let runs = pieces(&points, &cuts, (&view, 1e-9), &hair).unwrap();
         assert_eq!(runs.len(), 1);
-        let (visible, run) = &runs[0];
-        assert!(*visible);
-        assert_eq!(run.first(), Some(&points[0]));
-        assert_eq!(run.last(), Some(&points[2]));
+        assert!(runs[0].visible);
+        assert_eq!(runs[0].points.first(), Some(&points[0]));
+        assert_eq!(runs[0].points.last(), Some(&points[2]));
         // A cut that far in makes a stretch of its own, which ends at the curve's end.
         let cuts = [(1, 1.0 - 1e-6)];
         let tail = |p: V3| Ok(p[0] > 10.0 - 1e-5);
         let runs = pieces(&points, &cuts, (&view, 1e-9), &tail).unwrap();
-        assert_eq!(runs.iter().map(|r| r.0).collect::<Vec<_>>(), [true, false]);
-        assert_eq!(runs[1].1.last(), Some(&points[2]));
+        assert_eq!(
+            runs.iter().map(|r| r.visible).collect::<Vec<_>>(),
+            [true, false]
+        );
+        assert_eq!(runs[1].points.last(), Some(&points[2]));
         // A stretch not known is returned, with where it was judged.
         let unknown = pieces(&points, &cuts, (&view, 1e-9), &|p: V3| Err(p));
         assert_eq!(unknown.unwrap_err(), [2.5, 0.0, 0.0]);

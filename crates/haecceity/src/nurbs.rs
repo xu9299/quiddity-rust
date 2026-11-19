@@ -142,15 +142,34 @@ fn basis_and_derivative(knots: &[f64], degree: usize, span: usize, t: f64) -> (B
 }
 
 /// A rational B-spline curve in world coordinates.
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct NurbsCurve {
     degree: usize,
     control_points: Vec<V3>,
     weights: Vec<f64>,
     knots: Vec<f64>,
+    #[cfg_attr(feature = "json", serde(skip))]
     closed: bool,
     /// Samples over the domain seeding inversion, built on first use.
+    #[cfg_attr(feature = "json", serde(skip))]
     table: std::sync::OnceLock<Vec<(f64, V3)>>,
+}
+
+#[cfg(feature = "json")]
+impl<'de> serde::Deserialize<'de> for NurbsCurve {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Data {
+            degree: usize,
+            control_points: Vec<V3>,
+            weights: Vec<f64>,
+            knots: Vec<f64>,
+        }
+        let a = Data::deserialize(d)?;
+        Self::new(a.degree, a.control_points, a.weights, a.knots)
+            .ok_or_else(|| serde::de::Error::custom("invalid NURBS curve"))
+    }
 }
 
 /// Whether the arrays describe a well-formed B-spline: `knots = n + degree + 1`, positive
@@ -425,6 +444,7 @@ impl NurbsCurve {
 }
 
 /// A rational B-spline surface, control points indexed `[u][v]`.
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Clone)]
 pub struct NurbsSurface {
     pub degree_u: usize,
@@ -435,11 +455,48 @@ pub struct NurbsSurface {
     pub knots_v: Vec<f64>,
     /// A sampled grid over the domain: seeds for inversion and ray intersection, built on
     /// first use so that reading a file pays nothing for surfaces no query touches.
+    #[cfg_attr(feature = "json", serde(skip))]
     grid: std::sync::OnceLock<Grid>,
 }
 
 /// The surface's own data, without the grid: a cache built on first use, which would make the
 /// output depend on which queries have been asked.
+impl PartialEq for NurbsSurface {
+    fn eq(&self, other: &Self) -> bool {
+        self.degree_u == other.degree_u
+            && self.degree_v == other.degree_v
+            && self.control_points == other.control_points
+            && self.weights == other.weights
+            && self.knots_u == other.knots_u
+            && self.knots_v == other.knots_v
+    }
+}
+
+#[cfg(feature = "json")]
+impl<'de> serde::Deserialize<'de> for NurbsSurface {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Data {
+            degree_u: usize,
+            degree_v: usize,
+            control_points: Vec<Vec<V3>>,
+            weights: Vec<Vec<f64>>,
+            knots_u: Vec<f64>,
+            knots_v: Vec<f64>,
+        }
+        let s = Data::deserialize(d)?;
+        Self::new(
+            s.degree_u,
+            s.degree_v,
+            s.control_points,
+            s.weights,
+            s.knots_u,
+            s.knots_v,
+        )
+        .ok_or_else(|| serde::de::Error::custom("invalid NURBS surface"))
+    }
+}
+
 impl std::fmt::Debug for NurbsSurface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NurbsSurface")
@@ -570,6 +627,20 @@ fn grid_params(knots: &[f64], degree: usize, per_span: usize) -> Vec<f64> {
 }
 
 impl NurbsSurface {
+    /// Clone the defining net for an owned drawing, leaving the inverse grid
+    /// with the part that needed it.
+    pub(crate) fn geometry_clone(&self) -> Self {
+        Self {
+            degree_u: self.degree_u,
+            degree_v: self.degree_v,
+            control_points: self.control_points.clone(),
+            weights: self.weights.clone(),
+            knots_u: self.knots_u.clone(),
+            knots_v: self.knots_v.clone(),
+            grid: std::sync::OnceLock::new(),
+        }
+    }
+
     pub(crate) fn transform_points(&mut self, point: impl Fn(V3) -> V3) {
         for p in self.control_points.iter_mut().flatten() {
             *p = point(*p);

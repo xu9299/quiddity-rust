@@ -304,3 +304,12 @@ The existing quadrature and kink-budget tests retain exhaustive mode.
 Independent face-area/moment references, placements, existing recognition snapshots,
 inventory floors and tolerances remain unchanged. Repeated-moment speedups measure
 cache reuse; they are not claims about cold integrations or whole-part recognition.
+
+
+The drawing keeps the original edge's sample positions through section clipping
+and visibility splits. For a general selected pcurve a split point is inverted
+only on its known finite parameter span. The exact curve is the orthographic
+projection of the selected pcurve evaluated on its declared carrier. Three
+quintic pcurves on cylinder #797 in `mfcadpp/1000.step` lift slightly outside
+the planes of their alternate ellipses. The HLR test evaluates their projected
+midpoints independently from the six STEP Bézier controls on each edge.
