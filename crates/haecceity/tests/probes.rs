@@ -205,6 +205,31 @@ fn the_face_domain_and_its_winding_correction_share_the_same_chords() {
     assert_eq!(measure(&probe, &[solid])["volume"], 0.0);
 }
 
+/// The thin cylindrical-passage probe has two incoming hits on its shared
+/// cap edge, 3.7e-8 mm apart. Its STEP uncertainty is 1e-7 mm. A nudge along
+/// that edge cannot establish parity; across it both sides resolve the same
+/// interval. An independent solid Boolean finds no shared volume.
+#[test]
+fn the_two_sides_of_a_declared_probe_edge_agree_on_its_empty_intersection() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let file = "mfcadpp/10155.step";
+    let part = read_step_file(&dir.join(file)).unwrap();
+    let probe = probes()
+        .into_iter()
+        .filter(|p| p["file"] == file)
+        .nth(5)
+        .unwrap();
+    assert_eq!(probe["caller"], "_cylindrical_passages");
+    assert_eq!(probe["volume"], 0.0);
+    assert_eq!(
+        measure(&probe, &[Classifier::for_solid(&part, 0)])["volume"],
+        0.0
+    );
+}
+
 /// Measure a Rust probe for the independent references and Rust snapshot.
 fn measure(p: &Value, solids: &[Classifier<'_>]) -> Value {
     let probe_part: Part;

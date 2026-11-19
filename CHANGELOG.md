@@ -15,6 +15,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   drawings, mesh joins, edge distances and feature measurements use the same
   edge selection. A planar sweep preserves a selected spline in both caps and
   its side wall. Hole, rim and profile proofs test the selected curve's type.
+  Probe rays near a selected common edge can resolve a duplicate entry within
+  the file's own uncertainty when the material intervals agree on both sides.
   STEP export preserves retained master and outer-bound declarations.
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's

@@ -17,7 +17,7 @@ use std::f64::consts::{PI, TAU};
 use super::brep::Part;
 use super::classify::{Classifier, State};
 use super::geom::{self, Bounds, COORD_FLOOR, Curve, Frame, Surface, V3};
-use super::rays::{RayCaster, ray_meets_box};
+use super::rays::{Hit, RayCaster, ray_meets_box};
 
 /// A probe region: an axis-aligned box, a solid (its part's first solid), or a planar region
 /// swept along a coordinate axis (`Solid.extrude(face, ...)`).
@@ -729,17 +729,67 @@ fn intervals(rays: &RayCaster<'_>, origin: V3, dir: V3, reach: f64) -> Option<Ve
     for nudge in [0.0, 1e-9, 2e-9, 3e-9, 1e-7, 3e-7, COORD_FLOOR] {
         let o = geom::add(origin, geom::scale(side, nudge));
         let hits = rays.trimmed_hits(o, dir, reach)?;
-        let mut ts: Vec<f64> = Vec::new();
-        for h in hits {
-            if ts.last().is_none_or(|&last| h.t - last > 1e-9) {
-                ts.push(h.t);
-            }
-        }
-        if ts.len().is_multiple_of(2) {
-            return Some(ts.chunks(2).map(|c| (c[0], c[1])).collect());
+        if let Some(intervals) = paired_crossings(&hits) {
+            return Some(intervals);
         }
     }
-    None
+
+    // A transverse nudge can run along a selected shared edge. Only retry
+    // across it when two neighbouring faces claim the same directed crossing
+    // within the precision of that STEP file. Both sides must then resolve the
+    // same material intervals within the kernel's existing coordinate floor.
+    let part = rays.part;
+    let tolerance = part.file_uncertainty()?.min(COORD_FLOOR);
+    if tolerance <= 0.0 || !part.has_master_pcurves() {
+        return None;
+    }
+    let hits = rays.trimmed_hits(origin, dir, reach)?;
+    let same_entry_or_exit = |a: &Hit, b: &Hit| {
+        if a.face == b.face || b.t - a.t > tolerance {
+            return false;
+        }
+        let p = geom::add(origin, geom::scale(dir, a.t));
+        let q = geom::add(origin, geom::scale(dir, b.t));
+        let (Some(n), Some(m)) = (
+            part.normal_at_point(a.face, p),
+            part.normal_at_point(b.face, q),
+        ) else {
+            return false;
+        };
+        geom::dot(n, dir) * geom::dot(m, dir) > 0.0
+            && part.face_edges(a.face).into_iter().any(|e| {
+                part.edge_faces()[e].len() == 2
+                    && part.edge_faces()[e].contains(&b.face)
+                    && part.spatial_trim(e).is_some()
+                    && geom::dist(part.nearest_boundary_point(e, p).0, p) <= tolerance
+                    && geom::dist(part.nearest_boundary_point(e, q).0, q) <= tolerance
+            })
+    };
+    if !hits.windows(2).any(|w| same_entry_or_exit(&w[0], &w[1])) {
+        return None;
+    }
+    let across = geom::scale(geom::cross(dir, side), tolerance);
+    let positive = paired_crossings(&rays.trimmed_hits(geom::add(origin, across), dir, reach)?)?;
+    let negative = paired_crossings(&rays.trimmed_hits(geom::sub(origin, across), dir, reach)?)?;
+    let agree = positive.len() == negative.len()
+        && positive
+            .iter()
+            .zip(&negative)
+            .all(|(a, b)| (a.0 - b.0).abs() <= COORD_FLOOR && (a.1 - b.1).abs() <= COORD_FLOOR);
+    agree.then_some(positive)
+}
+
+/// Pair the distinct crossings of a line that starts outside a solid.
+fn paired_crossings(hits: &[Hit]) -> Option<Vec<(f64, f64)>> {
+    let mut ts: Vec<f64> = Vec::new();
+    for h in hits {
+        if ts.last().is_none_or(|&last| h.t - last > 1e-9) {
+            ts.push(h.t);
+        }
+    }
+    ts.len()
+        .is_multiple_of(2)
+        .then(|| ts.chunks_exact(2).map(|c| (c[0], c[1])).collect())
 }
 
 /// The total length the two sets of intervals share. A shared stretch shorter than a nanometre
