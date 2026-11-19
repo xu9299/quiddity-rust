@@ -1,8 +1,8 @@
-name: Checked Green primitives and analytic planar centroids
+name: Latest-main checked Green primitives and analytic planar centroids
 
 on:
   push:
-    branches: [validation/boundary-split-054-20261118]
+    branches: [validation/boundary-centroid-main-054-20261119]
   workflow_dispatch:
 
 permissions:
@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        include: [{"topic": "boundary-centroid-054", "head": "980566d7eaf75038b4204a88f417234b574dda82", "tree": "3b019fa23da2376c2361fb854c541730b89ac09f"}]
+        include: [{"topic": "boundary-centroid-main-054", "head": "ec91632b4120923cd5719095fb7ff1e8ba7c2257", "tree": "a967716710fb414e51f730e2b3bd7125e9856d81"}]
     defaults:
       run:
         shell: bash
@@ -43,6 +43,13 @@ jobs:
           repository: xu9299/quiddity-rust
           ref: ${{ matrix.head }}
           path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: 847421798ef70f0d6a677999f5b4cb57522819e5
+          path: upstream-baseline
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -63,13 +70,25 @@ jobs:
           test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
           test "$(git rev-parse HEAD)" = '${{ matrix.head }}'
           test "$(git rev-parse HEAD^{tree})" = '${{ matrix.tree }}'
-          git diff --stat f7ed5825b260ecc64221ea5cc00bd7fe9e852bc6 HEAD | tee ../validation-logs/scope.log
-          git diff --exit-code f7ed5825b260ecc64221ea5cc00bd7fe9e852bc6 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
+          git diff --stat 847421798ef70f0d6a677999f5b4cb57522819e5 HEAD | tee ../validation-logs/scope.log
+          git diff --exit-code 847421798ef70f0d6a677999f5b4cb57522819e5 HEAD -- Cargo.toml Cargo.lock crates/haecceity/Cargo.toml tests/fixtures
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
-          workspaces: source -> ../target
-          shared-key: boundary-split-v054-20261118-macos-26
+          workspaces: |
+            source -> ../target
+            upstream-baseline -> ../target-upstream-baseline
+          shared-key: boundary-centroid-main-v054-20261119-macos-26
           cache-on-failure: true
+      - name: Official strict reproduction of unmodified upstream main
+        id: baseline_strict
+        working-directory: upstream-baseline
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-upstream-baseline
+        run: |
+          test "$(git rev-parse HEAD)" = 847421798ef70f0d6a677999f5b4cb57522819e5
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; rustc -vV; } | tee ../validation-logs/upstream-baseline-identity.log
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../validation-logs/upstream-baseline-strict.log
+          test -z "$(git status --porcelain)"
       - name: Formatting and complete workspace lint
         run: |
           cargo fmt --all --check 2>&1 | tee ../validation-logs/fmt.log
@@ -86,18 +105,18 @@ jobs:
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit --file Cargo.lock 2>&1 | tee ../validation-logs/audit.log
       - name: Complete workspace and corpus with unchanged expectations
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.baseline_strict.outcome == 'success' }}
         env:
           QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/validation-logs/verified
           RUST_BACKTRACE: full
         run: cargo test --workspace --release --locked --no-fail-fast 2>&1 | tee ../validation-logs/workspace.log
       - name: Produced snapshot coverage against committed expectations
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.baseline_strict.outcome == 'success' }}
         run: |
           cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../validation-logs/verified 2>&1 | tee ../validation-logs/coverage.log
           test -z "$(git status --porcelain)"
       - name: Strict byte comparison of the same complete workspace outputs
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.baseline_strict.outcome == 'success' }}
         run: |
           uv run --no-project --python 3.14 python - <<'PY' 2>&1 | tee ../validation-logs/strict.log
           import hashlib, json, pathlib, subprocess
