@@ -96,6 +96,10 @@ uncertainty plus the coordinate floor. Interior checks sample the union of the
 two representations' knot spans in physical coordinates. A sampled departure
 over one thousandth of the boundary's reference diagonal, or a departure times
 perimeter greater than one thousandth of area, rejects the declared region.
+The perimeter is the physical length of the master on its STEP carrier. For a
+foreign pcurve the integrand uses the carrier's partial derivatives directly.
+Transferring the trim to the receiving surface is necessary for the area
+integral. The length check uses the same adaptive error budget on its carrier.
 These are sampled representation checks. Independent curve parameters can
 advance at different rates on the same spatial arc. The spatial curve remains
 available if a declaration cannot be evaluated or the integral fails its error
@@ -118,6 +122,15 @@ measurements use this geometry. A general surface curve is evaluated on its
 carrier; a chord only locates the interval for a closest-point search. Mesh
 coedges share the STEP vertex at their regular endpoints. The mass integral
 still uses the actual trim and its checked closing segment.
+
+Turned chamfers and countersinks use a cone's finite rims. A linear pcurve
+with a small generator component on a cylinder or cone stays within half
+its generator excursion of its middle parallel. For a planar rational
+quadratic, the cone supplies a candidate circle at the edge's axial station.
+On each quadratic Bézier span the degree-four Bernstein coefficients bound
+the squared radial residual, and the control points bound the axial residual.
+A resolved arc that stays within coordinate precision can supply a circular
+rim for recognition. Its spline is still used for measurement.
 
 On a plane, position is affine in both parameters and the normal is constant.
 Consequently every area, flux and first- or second-moment density is at most

@@ -7,6 +7,40 @@ use haecceity::{
 };
 
 #[test]
+fn conical_rims_use_the_geometry_of_the_selected_pcurves() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("cadgenbench_inputs/cgb243.step.gz")).unwrap();
+    // A nearly level generator coordinate on a cone, a planar rational
+    // quadratic, and a nearly level generator coordinate on a cylinder.
+    for (entity, expected) in [
+        (5444, [3.5, 4.]),
+        (56072, [32., 32.5]),
+        (57220, [13.5, 14.]),
+    ] {
+        let face = (0..part.faces.len())
+            .find(|&f| part.face_source(f).is_some_and(|s| s.entity == entity))
+            .unwrap();
+        let mut radii: Vec<_> = part
+            .face_edges(face)
+            .into_iter()
+            .filter_map(|e| part.cone_rim_circle(face, e).map(|(r, _)| r))
+            .collect();
+        radii.sort_by(f64::total_cmp);
+        assert_eq!(radii.len(), 2, "face #{entity}");
+        assert!(
+            radii
+                .iter()
+                .zip(expected)
+                .all(|(r, w)| (r - w).abs() < geom::COORD_FLOOR),
+            "face #{entity}: {radii:?}"
+        );
+    }
+}
+
+#[test]
 fn trim_moments_survive_placement() {
     let Some(dir) = common::corpus_dir() else {
         assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());

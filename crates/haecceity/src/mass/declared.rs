@@ -5,6 +5,7 @@ use crate::brep::RawCurve2d;
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 mod parameters;
+mod rim;
 use parameters::Axis;
 
 #[derive(Debug)]
@@ -297,15 +298,15 @@ impl EdgeTrim {
             .transfer
             .as_ref()
             .map_or(self.spans, |tr| tr.carrier_spans);
-        let uv = self.curve.carrier_uv(t);
-        let (u, v) = wrap_closed(carrier, spans, (uv[0], uv[1]));
         let raw = self.curve.source.value(t);
+        let (u, du) = self.curve.axes[0].at(raw[0]);
+        let (v, dv) = self.curve.axes[1].at(raw[1]);
+        let Some((u, v)) = on_carrier(carrier, spans, [u, v, 0.]) else {
+            return [f64::NAN; 3];
+        };
         let d = self.curve.source.derivative(t);
         let (su, sv) = carrier.partials(u, v);
-        geom::add(
-            geom::scale(su, self.curve.axes[0].at(raw[0]).1 * d[0]),
-            geom::scale(sv, self.curve.axes[1].at(raw[1]).1 * d[1]),
-        )
+        geom::add(geom::scale(su, du * d[0]), geom::scale(sv, dv * d[1]))
     }
 
     fn span_lengths(&self, s: &Surface) -> Option<&[f64]> {
@@ -656,10 +657,9 @@ impl DeclaredBoundary {
             };
             let speed = |t| {
                 [if let Some(c) = trim {
-                    let (u, v) = c.surface_uv(&f.surface, t);
-                    let d = c.curve.derivative(t);
-                    let (su, sv) = f.surface.partials(u, v);
-                    geom::norm(geom::add(geom::scale(su, d[0]), geom::scale(sv, d[1])))
+                    // The strip uses the physical length of the selected master.
+                    // A pcurve on an adjacent surface has its tangent there.
+                    geom::norm(c.spatial_velocity(&f.surface, t))
                 } else {
                     geom::norm(ed.curve.derivative(t))
                 }]
