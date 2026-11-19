@@ -36,7 +36,9 @@ in [docs/alpha1.md](docs/alpha1.md).
   `File`'s cursor is neither used nor moved; on Windows `seek_read` moves it, which does no
   harm because every read is positional. The signature is unchanged. For #293.
 
-- Compute planar face centroids from analytic boundary tangents, avoiding finite-difference amplification of translation round-off.
+- Compute planar face centroids from analytic boundary tangents, avoiding finite-difference
+  amplification of translation round-off. Derived PMI presentation coordinates can consequently
+  change at their published decimal boundary.
 
 - Validate resolved internal-knot panels against a trial split when selecting a cheaper Green primitive; retain mandatory endpoint turns and the established axis on optional validation failure, without changing canonical mass or master-trim authority.
 
