@@ -149,16 +149,18 @@ fn a_jump_along_a_collapsed_side_leaves_the_area_unchanged() {
     // The original projection control and the independently integrated master
     // each keep the same absolute area band and the same motion bound.
     for (source, expected) in [(declared, 18.22922442), (spatial.as_str(), 18.22923018)] {
-        let area = |placement: &haecceity::step::Placement| {
+        let areas = |placement: &haecceity::step::Placement| {
             let part = haecceity::step::read_step_placed(source.as_bytes(), placement).unwrap();
-            part.face_mass(726).unwrap()[0]
+            [715, 726].map(|face| part.face_mass(face).unwrap()[0])
         };
-        let (unmoved, moved) = (area(&haecceity::step::IDENTITY), area(&moved));
-        assert!((unmoved - expected).abs() < 1e-7, "{unmoved}");
-        assert!(
-            (moved - unmoved).abs() < 1e-9 * unmoved,
-            "{unmoved} moved {moved}"
-        );
+        let original = areas(&haecceity::step::IDENTITY);
+        for (unmoved, moved) in original.into_iter().zip(areas(&moved)) {
+            assert!((unmoved - expected).abs() < 1e-7, "{unmoved}");
+            assert!(
+                (moved - unmoved).abs() < 1e-9 * unmoved,
+                "{unmoved} moved {moved}"
+            );
+        }
     }
 }
 
@@ -519,11 +521,15 @@ fn volume_probes_refuse_rather_than_read_unanswered_rays_as_air() {
     use haecceity::volume::{Probe, common_volume};
     // Box(30, 30, 20) - Cylinder(5, 20), with the bore's surface made one the rays cannot
     // intersect.
-    let mut part = fixture("rejected_bored_box.step");
-    let bore = (0..part.faces.len())
-        .find(|&f| part.faces[f].surface.kind() == SurfaceType::Cylinder)
+    let source = fixture("rejected_bored_box.step");
+    let mut faces = source.faces;
+    let bore = faces
+        .iter_mut()
+        .find(|f| f.surface.kind() == SurfaceType::Cylinder)
         .unwrap();
-    part.faces[bore].surface = Surface::Other { kind: "test" };
+    bore.surface = Surface::Other { kind: "test" };
+    // The file's original ray and trim caches describe a working bore.
+    let part = haecceity::Part::new(faces, source.edges, source.solids);
     let solid = Classifier::new(&part);
     let probe = |min: [f64; 3], max: [f64; 3]| Probe::Box(Bounds { min, max });
     // Lines clear of the bore still answer: a 4 × 4 × 10 box in the material.
@@ -536,10 +542,12 @@ fn volume_probes_refuse_rather_than_read_unanswered_rays_as_air() {
     );
     // With every surface unresolvable, a box clear of every face is placed by its centre, which
     // the classifier leaves `Unknown`: no answer, not empty.
-    let mut blind = fixture("rejected_bored_box.step");
-    for face in &mut blind.faces {
+    let source = fixture("rejected_bored_box.step");
+    let mut faces = source.faces;
+    for face in &mut faces {
         face.surface = Surface::Other { kind: "test" };
     }
+    let blind = haecceity::Part::new(faces, source.edges, source.solids);
     let solid = Classifier::new(&blind);
     assert_eq!(solid.classify([10.0, 10.0, 0.0]), State::Unknown);
     assert_eq!(

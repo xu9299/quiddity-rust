@@ -21,6 +21,26 @@ struct Transfer {
     face: Arc<Surface>,
     carrier_spans: (f64, f64),
     face_spans: (f64, f64),
+    face_collapsed: (Option<f64>, Option<f64>),
+}
+
+impl Transfer {
+    fn face_uv(&self, point: V3) -> Option<(f64, f64)> {
+        let uv = foot(&self.face, self.face_spans, point, None)?;
+        if self.face_collapsed.0 == Some(uv.0) || self.face_collapsed.1 == Some(uv.1) {
+            // The inverse can land on a side whose tangent vanishes even for
+            // an interior point. Compare the physical distances before using
+            // that singular parameter for the transferred point or tangent.
+            let residual = geom::dist(self.face.value(uv.0, uv.1), point);
+            if residual > geom::COORD_FLOOR
+                && let Some(q) = crate::uv::beside_collapsed(&self.face, point, self.face_collapsed)
+                && geom::dist(self.face.value(q.0, q.1), point) < residual
+            {
+                return Some(q);
+            }
+        }
+        Some(uv)
+    }
 }
 
 /// The bounded evaluator clamps its inputs. A trim outside a carrier's native
@@ -68,7 +88,7 @@ impl ParamCurve {
     pub(crate) fn value(&self, t: f64) -> V3 {
         if let Some(tr) = &self.transfer {
             self.lifted(t, tr)
-                .and_then(|(_, p)| foot(&tr.face, tr.face_spans, p, None))
+                .and_then(|(_, p)| tr.face_uv(p))
                 .map_or([f64::NAN; 3], |(u, v)| [u, v, 0.])
         } else {
             self.carrier_uv(t)
@@ -90,7 +110,7 @@ impl ParamCurve {
         };
         let (su, sv) = tr.carrier.partials(u, v);
         let tangent = geom::add(geom::scale(su, velocity[0]), geom::scale(sv, velocity[1]));
-        let Some((u, v)) = foot(&tr.face, tr.face_spans, xyz, None) else {
+        let Some((u, v)) = tr.face_uv(xyz) else {
             return [f64::NAN; 3];
         };
         let (du, dv) = uv_velocity(&tr.face, tr.face_spans, u, v, xyz, tangent);
@@ -880,6 +900,7 @@ impl Part {
                 .get_or_init(|| Arc::new(self.faces[f].surface.clone()))
                 .clone()
         };
+        let collapsed = std::cell::OnceCell::new();
         for &(e, _) in self.faces[face].loops.iter().flat_map(|lp| &lp.edges) {
             if result.edges.contains_key(&e) {
                 continue;
@@ -895,6 +916,7 @@ impl Part {
             curve.transfer = Some(Box::new(Transfer {
                 carrier_spans: closed_spans(&carrier),
                 face_spans: closed_spans(surface),
+                face_collapsed: *collapsed.get_or_init(|| collapsed_sides(surface)),
                 carrier,
                 face: shared(face),
             }));
