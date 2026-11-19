@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
-  SOURCE: 5785ece611a13495aaefd259a2fdf8c42e5aea1a
-  TREE: 43278ae83d35819c5146c6b7549931984af6ab26
+  SOURCE: 0a035ad0a46af7edf0a2ded54d968628c4c021a5
+  TREE: ad9365880edb9923fd723b1aeb060e6b8551d500
 jobs:
   verify:
     strategy:
@@ -27,7 +27,7 @@ jobs:
           - runner: macos-15
             task: survey
           - runner: macos-15
-            task: workspace
+            task: strict
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     defaults:
@@ -107,18 +107,10 @@ jobs:
           cargo clippy --workspace --all-targets --release --locked -- -D warnings
           cargo check -p haecceity --release --locked --no-default-features
           cargo check -p quiddity --release --locked --no-default-features --features presentation
-      - name: Run all workspace tests against pinned references
-        timeout-minutes: 310
-        if: matrix.task == 'workspace'
-        env:
-          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/evidence/verified
-        run: cargo test --workspace --release --locked --no-fail-fast 2>&1 | tee ../evidence/workspace.log
-      - name: Check complete coverage and provenance
-        if: "!cancelled() && matrix.task == 'workspace'"
-        run: cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../evidence/verified 2>&1 | tee ../evidence/coverage.log
-      - name: Check strict ARM snapshot reproduction
-        if: "!cancelled() && matrix.task == 'workspace'"
-        run: cargo run -p snapshot-tool --release --locked -- --check --verify-dir ../evidence/verified 2>&1 | tee ../evidence/strict.log
+      - name: Reproduce the committed snapshots with the official strict command
+        timeout-minutes: 315
+        if: matrix.task == 'strict'
+        run: cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
       - name: Compare all committed captured effective-surface parts
         if: "!cancelled() && matrix.task == 'survey'"
         run: |
@@ -142,4 +134,95 @@ jobs:
           name: declared-${{ matrix.task }}-evidence
           path: evidence/
           if-no-files-found: error
+          retention-days: 30
+
+  build-tests:
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/source/target
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - run: |
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.99.1 --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source
+          shared-key: declared-nextest-macos
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - run: cargo nextest archive --workspace --release --locked --archive-file ../tests.tar.zst
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-test-binaries
+          path: tests.tar.zst
+          retention-days: 3
+      - run: cargo test --doc --workspace --release --locked
+
+  workspace-shard:
+    needs: build-tests
+    runs-on: macos-15
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: declared-test-binaries
+      - name: Test the assigned workspace cases
+        run: |
+          mkdir -p ../evidence
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          if ! command -v uv >/dev/null; then brew install uv; fi
+          echo "$(git rev-parse HEAD) $(git -C ../corpus rev-parse HEAD)" > ../evidence/source.txt
+          archive=(--archive-file ../tests.tar.zst --extract-to "$PWD" --extract-overwrite --workspace-remap "$PWD")
+          cargo-nextest nextest list "${archive[@]}" --profile ci -E 'not test(rust_snapshot)' --message-format json > ../evidence/tests.json
+          uv run --no-project --python 3.13 .github/shards.py ../evidence/tests.json .config/test-times.json macOS ${{ matrix.shard }} 4 > ../evidence/shard.filter
+          cargo-nextest nextest run --profile ci "${archive[@]}" -E "$(cat ../evidence/shard.filter)" 2>&1 | tee ../evidence/workspace.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: declared-workspace-${{ matrix.shard }}
+          path: evidence/
+          if-no-files-found: warn
           retention-days: 30
