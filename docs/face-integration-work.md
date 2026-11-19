@@ -148,6 +148,13 @@ regular, nonperiodic parameter chart. A ray through this gap must see the
 central hole, the material and the exterior in their geometric order.
 Both incident faces then classify each floor rim as concave.
 
+On `cgb245` edge #28519, a knot sample lies 4.4 × 10⁻¹¹ mm from its
+STEP end vertex. Assigning both a mesh identity gives a plane and a
+cylinder four uses of the same triangle edge. Their shared edge plan
+coalesces consecutive samples at an endpoint only when the samples agree
+with both the actual pcurve endpoint and the STEP vertex within a millionth
+of the chordal budget, capped at the coordinate floor.
+
 Before accepting a declared domain, the loop builder tests candidate crossings
 between its finite coedges in the receiving surface's parameters. It reuses the
 samples for that domain to locate candidates, follows the appropriate periodic
