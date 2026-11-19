@@ -142,6 +142,25 @@ fn unpaired_edges(faces: &[usize], meshes: &[Result<FaceMesh, MeshRefusal>]) -> 
         .count()
 }
 
+#[test]
+fn a_selected_knot_near_a_step_vertex_has_one_shared_mesh_endpoint() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("cadgenbench_inputs/cgb245.step")).unwrap();
+    // The last interior sample of STEP edge #28519 lies 4.4e-11 mm from
+    // its end vertex. Both the plane and cylinder use that vertex.
+    let e = (0..part.edges.len())
+        .find(|&e| part.edge_source(e).is_some_and(|s| s.entity == 28519))
+        .unwrap();
+    let points = part.boundary_edge_samples(e);
+    assert!(points.len() > 2);
+    assert!(geom::dist(points[points.len() - 2], part.edges[e].end) < 5e-11);
+    let meshes = part.mesh(deflection(&part), ANGULAR);
+    assert_eq!(unpaired_edges(&part.solids[0].faces, &meshes), 0);
+}
+
 fn mean(points: &[V3]) -> V3 {
     let sum = points.iter().fold([0.0; 3], |s, p| geom::add(s, *p));
     geom::scale(sum, 1.0 / points.len() as f64)

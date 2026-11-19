@@ -591,6 +591,25 @@ impl<'a> PartMesher<'a> {
                 }
             }
         }
+        if let Some([start, end]) = curve_ends {
+            // A finite pcurve can finish just beyond a knot. Welding an extra
+            // sample next to the same STEP vertex gives the two incident faces
+            // two shared mesh keys for one endpoint. Keep both topology vertices
+            // and only collapse a consecutive, unresolved run at either end.
+            let resolution = (1e-6 * boundary).min(geom::COORD_FLOOR);
+            let distinct = |p, vertex, curve_end| {
+                geom::dist(p, vertex) > resolution || geom::dist(p, curve_end) > resolution
+            };
+            let first = at.iter().find(|(_, p)| distinct(**p, geom.start, start));
+            let last = at.iter().rev().find(|(_, p)| distinct(**p, geom.end, end));
+            if let (Some((&first, _)), Some((&last, _))) = (first, last)
+                && first <= last
+            {
+                at.retain(|&key, _| {
+                    key == (0, 0) || key == (n - 1, 0) || (first..=last).contains(&key)
+                });
+            }
+        }
         let mut plan = Plan {
             points: Vec::with_capacity(at.len()),
             at_sample: vec![None; n],

@@ -26,6 +26,7 @@ in [docs/alpha1.md](docs/alpha1.md).
   adjacent surfaces. When both representations enclose a measurable area, the
   selected one determines the result. A missing or unusable trim retains the
   existing whole-face projection. STEP export preserves the selections.
+  Shared meshes coalesce unresolved endpoint samples at the STEP vertex.
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's
   outward-shell proof and the ray casters keep their face boxes and membership for the
