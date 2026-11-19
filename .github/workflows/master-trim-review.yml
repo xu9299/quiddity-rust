@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0
-  SOURCE: 4890344a1bead0e1a9ff0b673e6dffd86da85eb8
-  TREE: d7bb9f5b2b959aa6410224cb1dc8059fa993b54a
+  SOURCE: 54331a096277312f9ee89e68bbf4b6e97c2eca3e
+  TREE: 7e6f0648e0a6603c9cb32a58326e283231142c3f
 jobs:
   verify:
     strategy:

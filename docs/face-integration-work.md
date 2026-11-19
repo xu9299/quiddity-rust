@@ -133,6 +133,16 @@ Directly integrating the spline Jacobian from v = 0 to the upper curve gives
 the spatial edges gives 18.22923018 mm². Both definitions are checked under
 the same rigid motion and at the original error bounds.
 
+On planar floor #2005 in `mfcadpp_holdout/419.step`, two concentric cylinders
+bound material between radii 1.350424756018 and 2.071143801424 mm. The two
+ends of the inner boundary share one STEP vertex, but evaluating its selected
+pcurve at the two finite parameters leaves a gap of 4.62 × 10⁻¹³ mm.
+Every pair of consecutive coedges already supplies a segment between their
+endpoints. The last and first coedges need the same closing segment on a
+regular, nonperiodic parameter chart. A ray through this gap must see the
+central hole, the material and the exterior in their geometric order.
+Both incident faces then classify each floor rim as concave.
+
 The bowed edge in `master-trim-square.step` has height
 `y = 2 h x (1 − x)` for `0 ≤ x ≤ 1`. Its 3D approximation is straight.
 The two areas are 1 and `1 − h/3` mm². For `h = 0.0004` the file selects
