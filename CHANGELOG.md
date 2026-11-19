@@ -27,7 +27,8 @@ in [docs/alpha1.md](docs/alpha1.md).
   disagreement with the alternate curve alone no longer rejects a valid master. Trimmed
   drawings, mesh joins, edge distances and feature measurements use the same
   edge selection. A planar sweep preserves the finite interval of a selected spline in both caps and
-  its side wall. Hole, rim and profile proofs use the selected curve.
+  its side wall. Hole, rim and profile proofs use the selected curve. Sheet-metal overlap checks
+  measure certified spline rims at equal intervals along the selected arc.
   Circular hole, recess and turned-feature proofs can recognise an arc encoded
   as a rational spline on an incident cylinder or cone.
   The area guard measures the selected boundary's length on its STEP carrier.

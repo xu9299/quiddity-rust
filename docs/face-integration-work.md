@@ -123,6 +123,13 @@ the cylinder itself, fixes that coordinate at 24.5 mm. Selecting that pcurve ins
 even when the alternate spatial spline still bows. Selecting the 3D curve
 itself gives the projected bound of 24.51868961048 mm.
 
+In the sheet-metal hanger, the planar spline selected by surface curve #6011
+lies within 1.34 × 10⁻¹² mm of its radius-5 mm circular support over all three
+rational quadratic spans. Flattening that rim with the general display chords
+changed one overlap by 5.86 × 10⁻⁵ mm². The independent blank check evaluates
+the selected spline at equal physical arc lengths. Its error band includes the
+circular sagitta, the certified curve-to-circle error and STEP vertex pinning.
+
 On cgb242 face #84456, the lower boundary lifts from a line on plane #31961.
 The upper boundary lifts pcurve #44970 on cylinder #32222 onto the receiving
 spline. Its remaining side is at u = 0, and u = 1 collapses to a point.
