@@ -1,0 +1,86 @@
+name: Compare captured effective-surface STEP fixtures
+on:
+  push:
+    branches: [validation/master-trim-captured-20261119]
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
+  SOURCE: 8818c56edf67a1b2ea1d9b9c744c6a5471014e9a
+  TREE: ade1295655b5766c6c9d2fa4b8dea2ee7568a2a8
+jobs:
+  compare:
+    runs-on: macos-15
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: harness
+          sparse-checkout: .github/master-trim-survey
+          persist-credentials: false
+      - name: Verify input geometry is identical at both revisions
+        run: |
+          mkdir -p ../evidence
+          test -z "$(git diff --name-only "$BASE" "$SOURCE" -- tests/fixtures/captured/effective_surfaces/parts)"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD HEAD^{tree}; sw_vers; rustc -vV; } > ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-macos-15
+      - name: Build identical survey drivers against both source revisions
+        run: |
+          for rev in "$BASE" "$SOURCE"; do
+            git checkout --quiet --detach "$rev"
+            cp ../harness/.github/master-trim-survey/survey.rs examples/master_trim_survey.rs
+            touch crates/haecceity/src/mass.rs src/lib.rs
+            cargo build --release --locked --example master_trim_survey
+            cp "$CARGO_TARGET_DIR/release/examples/master_trim_survey" "$RUNNER_TEMP/survey-$rev"
+            rm examples/master_trim_survey.rs
+            test -z "$(git status --porcelain)"
+          done
+          shasum -a 256 "$RUNNER_TEMP/survey-$BASE" "$RUNNER_TEMP/survey-$SOURCE" > ../evidence/drivers.sha256
+      - name: Compare every committed captured effective-surface part
+        run: |
+          if ! command -v uv >/dev/null; then brew install uv; fi
+          uv run --no-project --python 3.13 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, subprocess
+          base = Path("tests/fixtures/captured/effective_surfaces/parts")
+          files = subprocess.check_output(["git","ls-files","-z","--",str(base)]).decode().rstrip("\0").split("\0")
+          rows = []
+          for entry in sorted(files):
+              name = Path(entry).relative_to(base).as_posix()
+              raw = subprocess.check_output(["git","show","HEAD:"+entry])
+              rows.append({"file":name,"sha256":hashlib.sha256(raw).hexdigest()})
+          assert len(rows) == 260
+          Path("../evidence/manifest.json").write_text(json.dumps({"files":rows},indent=2))
+          PY
+          uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
+            --manifest ../evidence/manifest.json --corpus tests/fixtures/captured/effective_surfaces/parts \
+            --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
+            --control crates/haecceity/tests/fixtures/master-trim-square.step --out ../evidence | tee ../evidence/survey.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: master-trim-captured-survey
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
