@@ -1196,8 +1196,7 @@ mod tests {
             let span = bounds.diagonal() + 1.0;
             for solid in 0..part.solids.len() {
                 let shared = crate::classify::Classifier::for_solid(&part, solid);
-                let independent =
-                    Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone());
+                let independent = crate::read_step_file(&dir.join(name)).unwrap();
                 let fresh = crate::classify::Classifier::for_solid(&independent, solid);
                 for point in [bounds.centre(), bounds.min, bounds.max, [0.0; 3]] {
                     assert_eq!(shared.classify(point), fresh.classify(point), "{name}");
@@ -1255,7 +1254,8 @@ mod tests {
         part.record_inverted_shell_repair(0, true);
         assert!(part.ray_face_boxes.get().is_none());
         assert!(part.ray_edges.get().is_none());
-        let independent = Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone());
+        let mut independent = crate::read_step_file(&path).unwrap();
+        independent.record_inverted_shell_repair(0, true);
         let repaired = RayCaster::for_solid(&part, 0);
         let fresh = RayCaster::for_solid(&independent, 0);
         assert_eq!(repaired.face_boxes, fresh.face_boxes);
@@ -1266,7 +1266,9 @@ mod tests {
         part.record_mixed_normal_repair(0, &[flipped]);
         assert!(part.ray_face_boxes.get().is_none());
         assert!(part.ray_edges.get().is_none());
-        let independent = Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone());
+        let mut independent = crate::read_step_file(&path).unwrap();
+        independent.record_inverted_shell_repair(0, true);
+        independent.record_mixed_normal_repair(0, &[flipped]);
         let repaired = RayCaster::for_solid(&part, 0);
         let fresh = RayCaster::for_solid(&independent, 0);
         assert_eq!(repaired.face_boxes, fresh.face_boxes);
@@ -1402,12 +1404,13 @@ mod tests {
         // to the box's size: the runs give the answer the whole polyline does.
         let (part, centre, ..) = bore_rim();
         let rays = RayCaster::for_solid(&part, 0);
-        for (e, edge) in part.edges.iter().enumerate() {
-            let probes = edge.samples.iter().flat_map(|&p| {
+        for e in 0..part.edges.len() {
+            let samples = part.boundary_edge_samples(e);
+            let probes = samples.iter().flat_map(|&p| {
                 [0.0, 1e-7, 0.3, 2.0].map(|k| geom::add(p, geom::scale(geom::sub(p, centre), k)))
             });
             for q in probes.chain([centre, [20.0, -3.0, 4.0]]) {
-                let d = polyline_distance(q, &edge.samples);
+                let d = polyline_distance(q, samples);
                 for reach in [1e-12, 1e-7, 0.01, 0.5, 3.0, 50.0, d, d * (1.0 - 1e-15)] {
                     assert_eq!(
                         rays.polyline_within(e, q, reach),
