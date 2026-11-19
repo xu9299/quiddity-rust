@@ -23,7 +23,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 - Honour the per-edge STEP master representation and explicit outer face bound
   when measuring and querying trimmed faces. Area, moments, containment,
   bounds and edge witnesses can now follow a selected pcurve even when the
-  independently approximated 3D edge also encloses a measurable area. Trimmed
+  independently approximated 3D edge encloses a different measurable area. A
+  disagreement with the alternate curve alone no longer rejects a valid master. Trimmed
   drawings, mesh joins, edge distances and feature measurements use the same
   edge selection. A planar sweep preserves the finite interval of a selected spline in both caps and
   its side wall. Hole, rim and profile proofs use the selected curve.

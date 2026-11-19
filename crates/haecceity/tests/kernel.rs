@@ -824,12 +824,13 @@ fn a_cylinder_rim_uses_the_height_of_the_selected_carrier() {
             .unwrap()
             .3
     };
-    // With the original bowed 3D spline, the flat alternate exceeds the
-    // existing strip guard. The projected spline reaches 24.51868961048 mm.
+    // S1 runs on the neighbouring spline; S2 is a parallel of the cylinder.
+    // The alternate spatial spline and circle do not change either pcurve.
+    assert!((height(selected) - 24.518993418091).abs() < 1e-8);
     let flat = "SURFACE_CURVE('',#12693,(#12704,#12711),.PCURVE_S2.)";
-    assert!((height(flat) - 24.51868961048).abs() < 1e-9);
-    // The neighbouring rim's exact 3D circle lies on that same parallel.
-    // With these consistent representations the selected pcurve sets v = 24.5.
+    assert!((height(flat) - 24.5).abs() < 1e-9);
+    let spatial = "SURFACE_CURVE('',#12693,(#12704,#12711),.CURVE_3D.)";
+    assert!((height(spatial) - 24.51868961048).abs() < 1e-9);
     let consistent = "SURFACE_CURVE('',#12452,(#12704,#12711),.PCURVE_S2.)";
     assert!((height(consistent) - 24.5).abs() < 1e-9);
 }
