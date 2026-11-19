@@ -55,11 +55,11 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
     let mut rails = Vec::new();
     for edge in edges {
         let e = &part.edges[edge];
-        match e.curve {
-            Curve::Circle {
+        match part.boundary_edge_support(edge) {
+            Some(&Curve::Circle {
                 frame: cf,
                 radius: r,
-            } if !e.is_closed()
+            }) if !e.is_closed()
                 && geom::dot(cf.z, frame.z).abs() > 1. - 1e-9
                 && (r - radius).abs() <= length_tolerance(&[radius])
                 && (edge_length(part, edge) - PI * radius).abs()
@@ -69,7 +69,9 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
             {
                 rims.push((edge, cf.origin));
             }
-            Curve::Line { dir, .. } if geom::dot(geom::unit(dir)?, frame.z).abs() > 1. - 1e-9 => {
+            Some(&Curve::Line { dir, .. })
+                if geom::dot(geom::unit(dir)?, frame.z).abs() > 1. - 1e-9 =>
+            {
                 rails.push(edge)
             }
             _ => return None,
@@ -124,7 +126,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
     }
     for &(rim, center) in &rims {
         if geom::dist(
-            geom::sub(center, part.edges[rim].midpoint()),
+            geom::sub(center, part.edge_midpoint(rim)),
             geom::scale(opening, radius),
         ) > tolerance
         {
@@ -136,8 +138,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
     for (side, wall) in sides.into_iter().zip(&walls) {
         context.push(exterior(part, side, wall.lip, opening)?);
         for &edge in &wall.ends {
-            let e = &part.edges[edge];
-            let station = geom::dot(geom::sub(e.midpoint(), mouth_center), axis);
+            let station = geom::dot(geom::sub(part.edge_midpoint(edge), mouth_center), axis);
             if station.abs() <= tolerance {
                 context.push(exterior(part, side, edge, geom::scale(axis, -1.))?);
             } else if (station - length).abs() <= tolerance
@@ -159,7 +160,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
         .filter(|e| *e != cap_rim && !cap_sides.contains(e))
         .collect();
     let [top] = top[..] else { return None };
-    if !matches!(part.edges[top].curve, Curve::Line { .. })
+    if !matches!(part.boundary_edge_support(top), Some(Curve::Line { .. }))
         || (edge_length(part, top) - 2. * radius).abs() > tolerance
     {
         return None;

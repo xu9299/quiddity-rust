@@ -236,7 +236,7 @@ fn floor_section(part: &Part, wire: &[usize], axis: usize) -> Option<Vec<V2>> {
     if wire.len() < 3
         || wire
             .iter()
-            .any(|&e| !matches!(part.edges[e].curve, Curve::Line { .. }))
+            .any(|&e| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
     {
         return None;
     }

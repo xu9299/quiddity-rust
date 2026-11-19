@@ -118,6 +118,12 @@ impl SweptSource {
 /// A pcurve's 2D curve as the file states it (parameter values unscaled).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RawCurve2d {
+    Conic {
+        origin: [f64; 2],
+        reference: Option<[f64; 2]>,
+        major: f64,
+        minor: Option<f64>,
+    },
     Line {
         point: [f64; 2],
         direction: [f64; 2],
@@ -130,6 +136,95 @@ pub(crate) enum RawCurve2d {
         knots: Vec<f64>,
         weights: Option<Vec<f64>>,
     },
+}
+
+impl RawCurve2d {
+    /// Change units independently on the two parameter axes. Unequal scaling
+    /// of a rotated conic is represented by its exact rational quadrants.
+    pub(crate) fn scaled(&self, su: f64, sv: f64) -> Option<Self> {
+        let scale = |[u, v]: [f64; 2]| [u * su, v * sv];
+        if !su.is_finite() || !sv.is_finite() || su <= 0. || sv <= 0. {
+            return None;
+        }
+        Some(match self {
+            Self::Line {
+                point,
+                direction,
+                magnitude,
+            } => {
+                let norm = direction[0].hypot(direction[1]);
+                if !norm.is_finite() || norm == 0. || !magnitude.is_finite() || *magnitude <= 0. {
+                    return None;
+                }
+                let d = scale([direction[0] / norm, direction[1] / norm]);
+                let factor = d[0].hypot(d[1]);
+                Self::Line {
+                    point: scale(*point),
+                    direction: [d[0] / factor, d[1] / factor],
+                    magnitude: magnitude * factor,
+                }
+            }
+            Self::BSpline {
+                degree,
+                points,
+                multiplicities,
+                knots,
+                weights,
+            } => Self::BSpline {
+                degree: *degree,
+                points: points.iter().copied().map(scale).collect(),
+                multiplicities: multiplicities.clone(),
+                knots: knots.clone(),
+                weights: weights.clone(),
+            },
+            Self::Conic {
+                origin,
+                reference,
+                major,
+                minor,
+            } => {
+                let [x, y] = reference.unwrap_or([1., 0.]);
+                let n = x.hypot(y);
+                let b = minor.unwrap_or(*major);
+                if !n.is_finite()
+                    || n == 0.
+                    || !major.is_finite()
+                    || *major <= 0.
+                    || !b.is_finite()
+                    || b <= 0.
+                {
+                    return None;
+                }
+                let controls = [
+                    (1., 0.),
+                    (1., 1.),
+                    (0., 1.),
+                    (-1., 1.),
+                    (-1., 0.),
+                    (-1., -1.),
+                    (0., -1.),
+                    (1., -1.),
+                    (1., 0.),
+                ];
+                let points = controls
+                    .map(|(a, c)| {
+                        scale([
+                            origin[0] + (a * *major * x - c * b * y) / n,
+                            origin[1] + (a * *major * y + c * b * x) / n,
+                        ])
+                    })
+                    .to_vec();
+                let w = std::f64::consts::FRAC_1_SQRT_2;
+                Self::BSpline {
+                    degree: 2,
+                    points,
+                    multiplicities: vec![3, 2, 2, 2, 3],
+                    knots: vec![0., 1., 2., 3., 4.],
+                    weights: Some(vec![1., w, 1., w, 1., w, 1., w, 1.]),
+                }
+            }
+        })
+    }
 }
 
 /// A swept surface's profile curve as the file states it.
@@ -223,7 +318,10 @@ type Native<T> = (Option<std::sync::Arc<T>>, std::sync::Arc<GeometryPlacement>);
 /// Per-face values derived from the geometry, computed on first use.
 #[derive(Debug, Default)]
 pub(super) struct FaceCache {
+    pub(super) carrier: OnceLock<std::sync::Arc<Surface>>,
+    pub(super) declared: OnceLock<Option<Box<crate::mass::DeclaredBoundary>>>,
     pub(super) uv_loops: OnceLock<Option<Vec<UvLoop>>>,
+    pub(super) mesh_uv_loops: OnceLock<Option<Vec<UvLoop>>>,
     pub(super) domain: OnceLock<Option<FaceDomain>>,
     pub(super) bounds: OnceLock<Bounds>,
     pub(super) mass: OnceLock<super::mass::FaceMass>,
@@ -353,6 +451,12 @@ pub struct Part {
     file_pcurves: std::collections::BTreeMap<usize, Vec<(usize, RawCurve2d)>>,
     // Slots in file_pcurves explicitly selected as the master representation by STEP.
     primary_pcurves: std::collections::BTreeMap<usize, Vec<usize>>,
+    primary_owners: OnceLock<std::collections::BTreeMap<usize, (usize, usize)>>,
+    // A selected pcurve may name a carrier which is not any face of the shell.
+    // Its surface is in the edge's definition frame, before instance placement.
+    pub(super) detached_pcurves: std::collections::BTreeMap<usize, (Surface, RawCurve2d)>,
+    // The unique FACE_OUTER_BOUND on each face that declares one.
+    pub(super) outer_bounds: std::collections::BTreeMap<usize, usize>,
     // The file's length and plane angle units in millimetres and radians.
     file_units: Option<(f64, f64)>,
     declared_length_unit: Option<crate::pmi::LengthUnit>,
@@ -391,6 +495,9 @@ impl Part {
             swept: Default::default(),
             file_pcurves: Default::default(),
             primary_pcurves: Default::default(),
+            primary_owners: OnceLock::new(),
+            detached_pcurves: Default::default(),
+            outer_bounds: Default::default(),
             file_units: None,
             declared_length_unit: None,
             file_uncertainty: None,
@@ -595,6 +702,8 @@ impl Part {
         part.swept = self.swept.clone();
         part.file_pcurves = self.file_pcurves.clone();
         part.primary_pcurves = self.primary_pcurves.clone();
+        part.detached_pcurves = self.detached_pcurves.clone();
+        part.outer_bounds = self.outer_bounds.clone();
         part.file_units = self.file_units;
         part.declared_length_unit = self.declared_length_unit.clone();
         part.file_uncertainty = self.file_uncertainty;
@@ -701,6 +810,26 @@ impl Part {
         self.primary_pcurves
             .get(&face)
             .is_some_and(|slots| slots.contains(&slot))
+    }
+
+    pub(crate) fn has_master_pcurves(&self) -> bool {
+        !self.primary_pcurves.is_empty() || !self.detached_pcurves.is_empty()
+    }
+
+    pub(super) fn primary_owner(&self, edge: usize) -> Option<(usize, &RawCurve2d)> {
+        let owners = self.primary_owners.get_or_init(|| {
+            let mut owners = std::collections::BTreeMap::new();
+            for (&face, slots) in &self.primary_pcurves {
+                for &slot in slots {
+                    if let Some((edge, _)) = self.file_pcurves(face).get(slot) {
+                        owners.entry(*edge).or_insert((face, slot));
+                    }
+                }
+            }
+            owners
+        });
+        let &(face, slot) = owners.get(&edge)?;
+        Some((face, &self.file_pcurves(face)[slot].1))
     }
 
     pub(crate) fn primary_pcurves(
@@ -877,6 +1006,19 @@ impl Part {
             && b.unresolved_faces.is_empty()
             && a.unresolved_edges.is_empty()
             && b.unresolved_edges.is_empty()
+            && a.outer_bounds == b.outer_bounds
+            && a.detached_pcurves.len() == b.detached_pcurves.len()
+            && a.detached_pcurves.iter().all(|(e, (s, c))| {
+                b.detached_pcurves
+                    .get(e)
+                    .is_some_and(|(t, d)| c == d && same_surface(s, t))
+            })
+            && a.primary_pcurves == b.primary_pcurves
+            && (a.primary_pcurves.is_empty()
+                || (a.file_units == b.file_units
+                    && a.primary_pcurves
+                        .keys()
+                        .all(|&f| a.primary_pcurves(f).eq(b.primary_pcurves(f)))))
             && a.solids
                 .iter()
                 .zip(&b.solids)
@@ -987,12 +1129,20 @@ impl Part {
     /// surfaces) that lie on the face. Their extent along each direction is the face's.
     fn face_extreme_points(&self, face: usize, dirs: &[V3]) -> Vec<V3> {
         let f = &self.faces[face];
+        let boundary = self.measured_boundary(face);
         let mut out = Vec::new();
         for lp in &f.loops {
             if let Some(p) = lp.vertex {
                 out.push(p);
             }
             for &(e, _) in &lp.edges {
+                if let Some(points) = boundary
+                    .and_then(|b| b.edges.get(&e))
+                    .and_then(|c| c.world_extrema(&f.surface, dirs))
+                {
+                    out.extend(points);
+                    continue;
+                }
                 let edge = &self.edges[e];
                 out.extend(&edge.samples);
                 // Conics' extremes in closed form: their samples are taken in the part's
@@ -1186,17 +1336,27 @@ impl Part {
             return Arc::Unknown;
         };
         let ed = &self.edges[edge];
-        let (t0, t1) = edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
-        let middle = 0.5 * (t0 + t1);
-        let h = 1e-6 * (t1 - t0).abs().max(1e-12);
-        let tangent = geom::sub(ed.curve.value(middle + h), ed.curve.value(middle - h));
-        // The interval already runs start → end; the loop may use the edge the other way.
-        let walk = if (t1 >= t0) == forward {
+        let (point, tangent) = self.declared_edge_at_length(edge, 0.5).unwrap_or_else(|| {
+            let (t0, t1) =
+                edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
+            let middle = 0.5 * (t0 + t1);
+            let h = 1e-6 * (t1 - t0).abs().max(1e-12);
+            let tangent = geom::sub(ed.curve.value(middle + h), ed.curve.value(middle - h));
+            (
+                ed.curve.value(middle),
+                if t1 >= t0 {
+                    tangent
+                } else {
+                    geom::scale(tangent, -1.)
+                },
+            )
+        });
+        let walk = if forward {
             tangent
         } else {
-            geom::scale(tangent, -1.0)
+            geom::scale(tangent, -1.)
         };
-        let (Some(direction), point) = (geom::unit(walk), ed.curve.value(middle)) else {
+        let Some(direction) = geom::unit(walk) else {
             return Arc::Unknown;
         };
         let normal = |face: usize| {

@@ -16,7 +16,9 @@
 //! surface's boundary or crosses a knot line. Each loop's direction is read from the geometry
 //! (which side of it the face lies on), not from the file's orientation flags.
 
+mod declared;
 mod preferred;
+pub(super) use declared::DeclaredBoundary;
 
 use std::sync::OnceLock;
 
@@ -650,14 +652,21 @@ fn valid_mass(m: [f64; 5]) -> Option<[f64; 5]> {
 #[derive(Debug)]
 pub(super) struct FaceMass {
     terms: Option<[f64; 5]>,
-    preferred: bool,
+    method: BoundaryMethod,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundaryMethod {
+    Projected,
+    CertifiedPatch,
+    Declared,
 }
 
 impl FaceMass {
     fn legacy(terms: Option<[f64; 5]>) -> Self {
         Self {
             terms,
-            preferred: false,
+            method: BoundaryMethod::Projected,
         }
     }
 }
@@ -725,13 +734,43 @@ impl Part {
     }
 
     fn preferred_face_mass(&self, face: usize) -> Option<FaceMass> {
+        let boundary = self.declared_boundary(face)?;
+        if let Some(terms) = self
+            .integrate_preferred_face(face, mass_density, Components::Prefix(5), true)
+            .and_then(valid_mass)
+        {
+            return Some(FaceMass {
+                terms: Some(terms),
+                method: BoundaryMethod::CertifiedPatch,
+            });
+        }
         let terms = self
-            .integrate_preferred_face(face, mass_density, Components::Prefix(5))
+            .integrate_boundary(
+                face,
+                Some(boundary),
+                mass_density,
+                IntegralRule {
+                    components: Components::Prefix(5),
+                    observe_mass: None,
+                },
+                &mut None,
+            )
             .and_then(valid_mass)?;
+        if !boundary.within_strip(self, face, terms[0])? {
+            return None;
+        }
         Some(FaceMass {
             terms: Some(terms),
-            preferred: true,
+            method: BoundaryMethod::Declared,
         })
+    }
+
+    /// Geometry queries and integrals see the same accepted trim even if a query
+    /// asks for containment or a centroid on a cold part.
+    pub(super) fn measured_boundary(&self, face: usize) -> Option<&DeclaredBoundary> {
+        let boundary = self.declared_boundary(face)?;
+        self.face_terms(face)?;
+        (self.cache[face].mass.get()?.method != BoundaryMethod::Projected).then_some(boundary)
     }
 
     fn projected_face_mass(&self, face: usize) -> FaceMass {
@@ -790,21 +829,30 @@ impl Part {
             observed.unwrap_or_else(|| self.projected_face_mass(face))
         });
         choice.terms?;
-        if choice.preferred {
-            return self.integrate_preferred_face(
+        if choice.method == BoundaryMethod::CertifiedPatch
+            && let Some(sum) = self.integrate_preferred_face(
                 face,
                 |p, su, sv| {
                     let y = f(p, su, sv);
                     std::array::from_fn(|k| y[k])
                 },
                 Components::Prefix(M),
-            );
+                false,
+            )
+        {
+            return Some(sum);
         }
         if attempted {
             return shared.map(|y| std::array::from_fn(|k| y[k]));
         }
-        self.integrate_face_legacy(
+        let boundary = if choice.method != BoundaryMethod::Projected {
+            Some(self.declared_boundary(face)?)
+        } else {
+            None
+        };
+        self.integrate_boundary(
             face,
+            boundary,
             |p, su, sv| {
                 let y = f(p, su, sv);
                 std::array::from_fn(|k| y[k])
@@ -824,12 +872,23 @@ impl Part {
         rule: IntegralRule,
         observed: &mut Option<FaceMass>,
     ) -> Option<[f64; N]> {
+        self.integrate_boundary(face, None, f, rule, observed)
+    }
+
+    fn integrate_boundary<const N: usize>(
+        &self,
+        face: usize,
+        boundary: Option<&DeclaredBoundary>,
+        f: impl Fn(V3, V3, V3) -> [f64; N],
+        rule: IntegralRule,
+        observed: &mut Option<FaceMass>,
+    ) -> Option<[f64; N]> {
         let fc = &self.faces[face];
         let surface = &fc.surface;
         let (pu, pv) = surface.periodic();
-        let uv = self.uv_loops(face)?;
-        let domain = self.domain(face)?;
-        let (_, shifts) = self.loop_placement(face)?;
+        let uv = self.loops_on(face, boundary)?;
+        let domain = self.domain_on(face, boundary)?;
+        let (_, shifts) = self.place_loops(face, boundary)?;
         // A loop runs round u when its boundary does (on a closed B-spline surface, which the
         // reader does not mark periodic, when it ends most of the parameter range from where
         // it began).
@@ -889,13 +948,34 @@ impl Part {
         // (The swept area, read only where the loops do not run round u, is measured from the
         // same reference.)
         let u_ref = if along_v { 0.0 } else { reference };
+        let inner_budget = std::cell::Cell::<Option<f64>>::new(None);
         let term = |u: f64, v: f64, du: f64, dv: f64| {
-            let (weight, y) = if along_v {
-                let cuts = surface_cuts(surface, spans.1, true, reference, v)?;
-                (-du, integrate(&cuts, |s| f(u, s)))
+            let (weight, span, end) = if along_v {
+                (-du, spans.1, v)
             } else {
-                let cuts = surface_cuts(surface, spans.0, false, reference, u)?;
-                (dv, integrate(&cuts, |s| f(s, v)))
+                (dv, spans.0, u)
+            };
+            let primitive = |s| if along_v { f(u, s) } else { f(s, v) };
+            if boundary.is_some() && matches!(surface, Surface::Plane { .. }) {
+                // The position is affine and the normal constant on a plane.
+                // Every area, flux or moment density used here has degree at
+                // most two along a parameter line. Two Gauss nodes integrate
+                // it exactly, including when a short edge has high UV speed.
+                let half = 0.5 * (end - reference);
+                let middle = reference + half;
+                let delta = half / 3.0_f64.sqrt();
+                let from = primitive(middle - delta);
+                let to = primitive(middle + delta);
+                return Some(std::array::from_fn(|k| (weight * half) * (from[k] + to[k])));
+            }
+            let cuts = surface_cuts(surface, span, along_v, reference, end)?;
+            let y = if let Some(budget) = inner_budget.get() {
+                if weight == 0. {
+                    return Some([0.; N]);
+                }
+                preferred::integrate_inner(&cuts, budget / weight.abs(), primitive, rule)?.0
+            } else {
+                integrate(&cuts, primitive)
             };
             Some(y.map(|y| weight * y))
         };
@@ -906,7 +986,14 @@ impl Part {
         // unresolved at the scale of the whole face's terms.
         let mut passes = Vec::with_capacity(loops.len());
         for &i in &loops {
-            passes.push(self.boundary_integral(face, i, shifts[i], &term, (None, rule), u_ref)?);
+            passes.push(self.boundary_integral(
+                (face, boundary),
+                i,
+                shifts[i],
+                &term,
+                (None, rule),
+                u_ref,
+            )?);
         }
         // Canonical mass validity uses its own errors, floor, refinement and loop sense,
         // irrespective of which additional components this caller needs.
@@ -916,7 +1003,7 @@ impl Part {
             for (&i, (panel, estimate)) in loops.iter().zip(&passes) {
                 let (sum, swept) = if estimate.0 > mass_floor {
                     let (refined, _) = self.boundary_integral(
-                        face,
+                        (face, boundary),
                         i,
                         shifts[i],
                         &term,
@@ -938,7 +1025,8 @@ impl Part {
                     (panel.0, panel.3)
                 };
                 let winding = along_v || uv[i].winds_v;
-                let direction = self.loop_direction(face, i, (!winding).then_some(swept))?;
+                let direction =
+                    self.direction_on(face, boundary, i, (!winding).then_some(swept))?;
                 for k in 0..5 {
                     mass[k] += direction * sum[indices[k]];
                 }
@@ -947,12 +1035,31 @@ impl Part {
             *observed = Some(FaceMass::legacy(mass));
             mass?;
         }
-        let floor = 1e-11 * passes.iter().map(|p| p.0.2).sum::<f64>();
+        let mut floor = 1e-11 * passes.iter().map(|p| p.0.2).sum::<f64>();
+        if let Some(boundary) = boundary {
+            // The positive outer weights on an edge sum to its parameter span.
+            // Allow one unit-interval closing segment per edge. Half the face
+            // error budget covers all inner integrals together.
+            let mut span = 0.;
+            for &(e, _) in fc.loops.iter().flat_map(|lp| &lp.edges) {
+                let ed = &self.edges[e];
+                let (a, b) = boundary.edges.get(&e).map_or_else(
+                    || edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed()),
+                    |c| c.interval,
+                );
+                span += 1. + (b - a).abs();
+            }
+            if !(span.is_finite() && span > 0. && floor.is_finite() && floor > 0.) {
+                return None;
+            }
+            floor *= 0.5;
+            inner_budget.set(Some(floor / span));
+        }
         let mut total = [0.0; N];
         for (&i, ((mut sum, excess, _, mut swept), _)) in loops.iter().zip(passes) {
-            if excess > floor {
+            if boundary.is_some() || excess > floor {
                 let (refined, _) = self.boundary_integral(
-                    face,
+                    (face, boundary),
                     i,
                     shifts[i],
                     &term,
@@ -975,7 +1082,7 @@ impl Part {
             }
             // A loop that winds round either parameter has no signed area to read.
             let winding = along_v || uv[i].winds_v;
-            let direction = self.loop_direction(face, i, (!winding).then_some(swept))?;
+            let direction = self.direction_on(face, boundary, i, (!winding).then_some(swept))?;
             for k in 0..N {
                 total[k] += direction * sum[k];
             }
@@ -991,7 +1098,7 @@ impl Part {
     /// undetermined there), neither counts the jump.
     fn boundary_integral<const N: usize>(
         &self,
-        face: usize,
+        (face, boundary): (usize, Option<&DeclaredBoundary>),
         i: usize,
         shift: (f64, f64),
         term: &dyn Fn(f64, f64, f64, f64) -> Option<[f64; N]>,
@@ -1003,7 +1110,7 @@ impl Part {
         let fc = &self.faces[face];
         let surface = &fc.surface;
         let (pu, pv) = surface.periodic();
-        let lp = &self.uv_loops(face)?[i];
+        let lp = &self.loops_on(face, boundary)?[i];
         let spans = closed_spans(surface);
         let collapsed = collapsed_sides(surface);
         let has_pole = collapsed.0.is_some() || collapsed.1.is_some();
@@ -1065,13 +1172,33 @@ impl Part {
                 last = placed(p);
             }
             let ed = &self.edges[e];
-            let (mut t0, mut t1) =
-                edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
+            let trim = boundary.and_then(|b| b.edges.get(&e));
+            let (mut t0, mut t1) = trim.map_or_else(
+                || edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed()),
+                |c| c.interval,
+            );
             if !forward {
                 std::mem::swap(&mut t0, &mut t1);
             }
             // One node: its parameters, unwrapped against the walk's, and their velocity.
             let node = |walk: &mut Walk, t: f64| -> Option<((f64, f64), (f64, f64))> {
+                if let Some(trim) = trim {
+                    let p = trim.checked_uv(surface, t)?;
+                    let v = trim.curve.derivative(t);
+                    if !(p[0].is_finite()
+                        && p[1].is_finite()
+                        && v[0].is_finite()
+                        && v[1].is_finite())
+                    {
+                        return None;
+                    }
+                    let q = unwrap((p[0], p[1]), walk.last);
+                    let velocity = (v[0], v[1]);
+                    walk.last = q;
+                    walk.first.get_or_insert((t, q, velocity));
+                    walk.latest = Some((t, q, velocity));
+                    return Some((q, velocity));
+                }
                 let point = ed.curve.value(t);
                 // On a collapsed B-spline side, where the other parameter is undetermined,
                 // Newton cannot leave the seed; it starts a little inside instead.
@@ -1201,12 +1328,19 @@ impl Part {
                 }
                 _ => (false, false, 0, 0),
             };
+            let edge_uv = |t, near| {
+                if let Some(trim) = trim {
+                    let p = trim.curve.value(t);
+                    Some(unwrap((p[0], p[1]), near))
+                } else {
+                    foot(surface, spans, ed.curve.value(t), wrap(near)).map(|q| unwrap(q, near))
+                }
+            };
             let corner = |(ta, pa): (f64, (f64, f64)), tb: f64| {
                 let (mut lo, mut hi) = (ta, tb);
                 for _ in 0..60 {
                     let mid = 0.5 * (lo + hi);
-                    let point = ed.curve.value(mid);
-                    match foot(surface, spans, point, wrap(pa)).map(|q| unwrap(q, pa)) {
+                    match edge_uv(mid, pa) {
                         Some(q) if held(q) == held(pa) => lo = mid,
                         _ => hi = mid,
                     }
@@ -1253,8 +1387,7 @@ impl Part {
                     [(first, a), (last, b)]
                         .into_iter()
                         .find_map(|((tn, pn), te)| {
-                            let q = foot(surface, spans, ed.curve.value(te), wrap(pn))
-                                .map(|q| unwrap(q, pn))?;
+                            let q = edge_uv(te, pn)?;
                             let t = (held(q) != held(pn)).then(|| corner((tn, pn), te))?;
                             ((t - te).abs() > 1e-9 * (b - a).abs()).then_some((t, true))
                         })
@@ -1276,17 +1409,22 @@ impl Part {
                 latest: None,
                 swept: 0.0,
             };
-            let mut cuts = curve_cuts(surface, &ed.curve, t0, t1)?;
+            let mut cuts = if let Some(trim) = trim {
+                let mut nodes = trim.nodes()?;
+                if !forward {
+                    nodes.reverse();
+                }
+                nodes
+            } else {
+                curve_cuts(surface, &ed.curve, t0, t1)?
+            };
             // A foot point that turns a corner between a cut and the node beside it (the rule's
             // nodes stop short of a panel's ends) leaves the turn inside that panel, unseen by
             // its error estimate (2.3e-4 of cgb203 face 3, whose edge leaves the surface's side
             // v = 1 within 1e-4 of its end): the edge is cut there too.
             if matches!(surface, Surface::Freeform { .. }) && cuts.len() >= 2 {
                 let x = 0.5 * (1.0 + kronrod_nodes()[0].0);
-                let at = |t: f64, near: (f64, f64)| {
-                    foot(surface, spans, ed.curve.value(t), wrap(near))
-                        .map(|q| (t, unwrap(q, near)))
-                };
+                let at = |t: f64, near: (f64, f64)| edge_uv(t, near).map(|q| (t, q));
                 let mut more = Vec::new();
                 let mut near = last;
                 for k in 0..cuts.len() {
@@ -1339,7 +1477,7 @@ impl Part {
             let end = |t: f64, from_t: f64, p: (f64, f64), vel: (f64, f64)| {
                 let guess = (p.0 + (t - from_t) * vel.0, p.1 + (t - from_t) * vel.1);
                 let step = (guess.0 - p.0).hypot(guess.1 - p.1);
-                let exact = foot(surface, spans, ed.curve.value(t), wrap(p)).map(|q| unwrap(q, p));
+                let exact = edge_uv(t, p);
                 match exact {
                     Some(q) if (q.0 - guess.0).hypot(q.1 - guess.1) <= 10.0 * step + 1e-9 => q,
                     _ => guess,
@@ -1365,6 +1503,20 @@ impl Part {
             let (gu, gv) = (to.0 - from.0, to.1 - from.1);
             if gu.hypot(gv) < 1e-12 {
                 continue;
+            }
+            if boundary.is_some() {
+                let length = integrate(&[0., 1.], |t| {
+                    let (u, v) = wrap((from.0 + gu * t, from.1 + gv * t));
+                    let (su, sv) = surface.partials(u, v);
+                    [geom::norm(geom::add(
+                        geom::scale(su, gu),
+                        geom::scale(sv, gv),
+                    ))]
+                })[0];
+                let precision = self.file_uncertainty().unwrap_or(0.) + geom::COORD_FLOOR;
+                if !length.is_finite() || length > precision {
+                    return None;
+                }
             }
             let mut gap_mass: Estimate = (0.0, 0.0);
             let mut eval = |(): (), a: f64, b: f64, _: bool| {
@@ -1401,8 +1553,18 @@ impl Part {
     /// loop running round a periodic direction (`None`) encloses nothing, so step either side
     /// of its longest edge used once by the face.
     pub(crate) fn loop_direction(&self, face: usize, i: usize, swept: Option<f64>) -> Option<f64> {
+        self.direction_on(face, self.measured_boundary(face), i, swept)
+    }
+
+    fn direction_on(
+        &self,
+        face: usize,
+        boundary: Option<&DeclaredBoundary>,
+        i: usize,
+        swept: Option<f64>,
+    ) -> Option<f64> {
         if let Some(swept) = swept {
-            let (outer, _) = self.loop_placement(face)?;
+            let (outer, _) = self.place_loops(face, boundary)?;
             let anticlockwise = if swept > 0.0 { 1.0 } else { -1.0 };
             return Some(if i == outer {
                 anticlockwise
@@ -1413,7 +1575,7 @@ impl Part {
         let fc = &self.faces[face];
         let surface = &fc.surface;
         let spans = closed_spans(surface);
-        let domain = self.domain(face)?;
+        let domain = self.domain_on(face, boundary)?;
         let uses = |e: usize| {
             fc.loops
                 .iter()
@@ -1428,8 +1590,15 @@ impl Part {
             .filter(|&(e, _)| uses(e) == 1)
             .collect();
         let length = |e: usize| {
-            let s = &self.edges[e].samples;
-            s.windows(2).map(|w| geom::dist(w[0], w[1])).sum::<f64>()
+            let edge = &self.edges[e];
+            let points = boundary
+                .and_then(|b| b.edges.get(&e))
+                .and_then(|trim| trim.samples(surface, edge))
+                .map_or(&edge.samples, |samples| &samples.points);
+            points
+                .windows(2)
+                .map(|w| geom::dist(w[0], w[1]))
+                .sum::<f64>()
         };
         edges.sort_by(|a, b| length(b.0).total_cmp(&length(a.0)));
         let (du_range, dv_range) = (domain.u_range(), domain.v_range());
@@ -1438,21 +1607,25 @@ impl Part {
             .max(1e-9);
         for (e, forward) in edges {
             let ed = &self.edges[e];
-            let (t0, t1) =
-                edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
-            let t = 0.5 * (t0 + t1);
-            let Some((u, v)) = surface.parameters(ed.curve.value(t), None) else {
-                continue;
-            };
-            let (mut du, mut dv) = uv_velocity(
-                surface,
-                spans,
-                u,
-                v,
-                ed.curve.value(t),
-                ed.curve.derivative(t),
-            );
-            if (t1 >= t0) != forward {
+            let (u, v, mut du, mut dv, rising) =
+                if let Some(trim) = boundary.and_then(|b| b.edges.get(&e)) {
+                    let (a, b) = trim.interval;
+                    let t = 0.5 * (a + b);
+                    let q = trim.curve.value(t);
+                    let d = trim.curve.derivative(t);
+                    (q[0], q[1], d[0], d[1], b >= a)
+                } else {
+                    let (a, b) =
+                        edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
+                    let t = 0.5 * (a + b);
+                    let p = ed.curve.value(t);
+                    let Some((u, v)) = surface.parameters(p, None) else {
+                        continue;
+                    };
+                    let (du, dv) = uv_velocity(surface, spans, u, v, p, ed.curve.derivative(t));
+                    (u, v, du, dv, b >= a)
+                };
+            if rising != forward {
                 (du, dv) = (-du, -dv);
             }
             let norm = du.hypot(dv);
@@ -1558,7 +1731,9 @@ impl Part {
         // quadrature's error test, including faces with a constant area density.
         // A boundary vertex moves rigidly with the face. Existing edge samples give a cheap
         // length scale without asking for extrema (which require surface inversion and can
-        // cost more than the integral itself on B-splines).
+        // cost more than the integral itself on B-splines). This conditions the
+        // error estimate before a cold mass query. The boundary integral below
+        // independently chooses the file's selected geometric representation.
         let origin = fc.loops.iter().find_map(|lp| {
             lp.vertex
                 .or_else(|| lp.edges.first().map(|&(e, _)| self.edges[e].start))

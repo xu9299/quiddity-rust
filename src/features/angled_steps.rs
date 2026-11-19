@@ -45,7 +45,7 @@ fn effective_linear_sides(part: &Part, face: usize) -> Option<usize> {
     let mut directions = Vec::new();
     for &(e, forward) in &lp.edges {
         let edge = &part.edges[e];
-        let Curve::Line { .. } = edge.curve else {
+        let Some(&Curve::Line { .. }) = part.boundary_edge_curve(e) else {
             return None;
         };
         let d = py::unit(geom::sub(edge.end, edge.start))?;

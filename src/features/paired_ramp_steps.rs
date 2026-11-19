@@ -205,7 +205,7 @@ fn candidate(
     let shared = part.shared_edges(left, right);
     let [edge] = shared[..] else { return None };
     let ed = &part.edges[edge];
-    let Curve::Line { .. } = ed.curve else {
+    let Some(&Curve::Line { .. }) = part.boundary_edge_curve(edge) else {
         return None;
     };
     let tangent = py::unit(crate::kernel::geom::sub(ed.end, ed.start))?;
@@ -270,7 +270,9 @@ fn candidate(
     }
     let edge_bounds = {
         let mut b = crate::kernel::geom::Bounds::empty();
-        ed.samples.iter().for_each(|p| b.add(*p));
+        part.boundary_edge_samples(edge)
+            .iter()
+            .for_each(|p| b.add(*p));
         [0, 1, 2].map(|i| (b.min[i], b.max[i]))
     };
     let run_tolerance = policy::length_tol(

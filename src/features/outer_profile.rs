@@ -12,10 +12,10 @@
 use serde::Serialize;
 
 use super::evidence::common_valid_solid;
+use super::regions::{edge_length, edge_support_points};
 use crate::kernel::brep::Part;
 use crate::kernel::geom::{Curve, Surface, V3, cross, sub};
 use crate::kernel::py;
-use crate::kernel::sampling::edge_interval;
 
 /// Original analytic support coincidence, in model length units (normally mm), consistent with
 /// ADR0008's 1e-6 source endpoint bound. No public rounding is used.
@@ -341,8 +341,8 @@ fn read_profile(
     if wire.iter().any(|&(e, _)| {
         part.unresolved_edges().contains(&e)
             || !matches!(
-                part.edges[e].curve,
-                Curve::Line { .. } | Curve::Circle { .. }
+                part.boundary_edge_support(e),
+                Some(Curve::Line { .. } | Curve::Circle { .. })
             )
     }) {
         return Err(refused(UnsupportedCurve));
@@ -380,31 +380,20 @@ fn read_profile(
         if py::dist(&start, &end) == 0.0 {
             return Err(invalid());
         }
-        let edge = &part.edges[w.0];
-        // The trimmed curve's own ends (`position_at(0)`, `position_at(1)`): OpenCascade can
-        // accept a vertex displaced from them within a larger imported tolerance, and using that
-        // vertex would invent a different finite support though the wire stays connected.
-        let (a, b) = edge_interval(
-            &edge.curve,
-            edge.start,
-            edge.end,
-            edge.same_sense,
-            edge.is_closed(),
-        );
-        let curve_ends = (edge.curve.value(a), edge.curve.value(b));
+        let [p, midpoint, q] = edge_support_points(part, w.0).ok_or_else(invalid)?;
+        let curve_ends = (p, q);
         let apart = |(p, q): (V3, V3)| py::dist(&start, &p).max(py::dist(&end, &q));
         if apart(curve_ends).min(apart((curve_ends.1, curve_ends.0))) > POSITION_TOL {
             return Err(invalid());
         }
-        let midpoint = edge.curve.value(0.5 * (a + b));
         if [start, end, midpoint]
             .iter()
             .any(|p| py::dot(&sub(*p, origin), &normal).abs() > POSITION_TOL)
         {
             return Err(invalid());
         }
-        match &edge.curve {
-            Curve::Line { .. } => {
+        match part.boundary_edge_support(w.0) {
+            Some(Curve::Line { .. }) => {
                 let support = line(start, end).ok_or_else(invalid)?;
                 let source = line(curve_ends.0, curve_ends.1)
                     .ok_or_else(invalid)?
@@ -415,13 +404,13 @@ fn read_profile(
                 }
                 supports.push(ProfileSupport::Line(support));
             }
-            Curve::Circle { frame, radius } => {
+            Some(Curve::Circle { frame, radius }) => {
                 let center = frame.origin;
                 let sense = py::dot(&cross(sub(start, center), sub(midpoint, center)), &normal);
                 if sense == 0.0 {
                     return Err(invalid());
                 }
-                let length = radius * (b - a).abs();
+                let length = edge_length(part, w.0);
                 let sweep = (length / radius).copysign(sense);
                 supports.push(ProfileSupport::Arc(
                     arc(start, end, center, *radius, sweep).ok_or_else(invalid)?,

@@ -210,6 +210,97 @@ impl NurbsCurve {
         )
     }
 
+    /// Restrict a sweep's generator to its finite edge before constructing the
+    /// side surface. Each nonempty knot span is restricted by homogeneous
+    /// de Boor evaluation of its Bézier control points (the spline blossom).
+    /// A closed generator can cross the last knot once in either direction.
+    pub(crate) fn finite_segment(&self, a: f64, b: f64) -> Option<Self> {
+        let (start, end) = (a.min(b), a.max(b));
+        let (lo, hi) = self.domain();
+        if start == lo && end == hi {
+            return Some(self.clone());
+        }
+        if !a.is_finite() || !b.is_finite() || start >= end {
+            return None;
+        }
+        let period = hi - lo;
+        let shift = if start >= lo && end <= hi {
+            0.
+        } else {
+            if !self.is_closed() || end - start > period * (1. + 8. * f64::EPSILON) {
+                return None;
+            }
+            ((start - lo) / period).floor() * period
+        };
+        let degree = self.degree;
+        let mut points = Vec::new();
+        let mut weights = Vec::new();
+        let mut knots = Vec::new();
+        for offset in [shift, shift + period] {
+            if lo + offset >= end {
+                break;
+            }
+            for span in degree..self.control_points.len() {
+                let left = start.max(self.knots[span] + offset);
+                let right = end.min(self.knots[span + 1] + offset);
+                if left >= right {
+                    continue;
+                }
+                let join = !points.is_empty() && degree > 0;
+                let first = self.span_control(span, left - offset, right - offset, 0);
+                // Adjacent rational Bézier spans may use different weight
+                // scales, particularly at the seam of a closed spline.
+                let continuous = join
+                    && (self.knots[span] > lo && self.knots[span - degree] < self.knots[span]
+                        || points.last() == Some(&first.0));
+                let skip = usize::from(continuous);
+                let scale = if continuous {
+                    *weights.last()? / first.1
+                } else {
+                    1.
+                };
+                knots.extend(std::iter::repeat_n(left, degree + 1 - skip));
+                if !continuous {
+                    points.push(first.0);
+                    weights.push(first.1);
+                }
+                for j in 1..=degree {
+                    let (point, weight) = self.span_control(span, left - offset, right - offset, j);
+                    points.push(point);
+                    weights.push(weight * scale);
+                }
+            }
+            if end <= hi + offset {
+                break;
+            }
+        }
+        knots.extend(std::iter::repeat_n(end, degree + 1));
+        Self::new(degree, points, weights, knots)
+    }
+
+    /// The blossom at degree - j copies of left and j copies of right.
+    fn span_control(&self, span: usize, left: f64, right: f64, j: usize) -> (V3, f64) {
+        let p = self.degree;
+        let mut work = [[0.; 4]; MAX_DEGREE + 1];
+        for (k, h) in work[..=p].iter_mut().enumerate() {
+            let idx = span - p + k;
+            let [x, y, z] = self.control_points[idx];
+            let w = self.weights[idx];
+            *h = [x * w, y * w, z * w, w];
+        }
+        for level in 1..=p {
+            let t = if level <= p - j { left } else { right };
+            for k in (level..=p).rev() {
+                let i = span - p + k;
+                let alpha = (t - self.knots[i]) / (self.knots[i + p + 1 - level] - self.knots[i]);
+                work[k] =
+                    std::array::from_fn(|n| (1. - alpha) * work[k - 1][n] + alpha * work[k][n]);
+            }
+        }
+        let [x, y, z, w] = work[p];
+        ([x / w, y / w, z / w], w)
+    }
+
     pub fn degree(&self) -> usize {
         self.degree
     }
@@ -1379,6 +1470,36 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn restricting_a_rational_spline_preserves_points_and_tangents_across_its_knots() {
+        let original = NurbsCurve::new(
+            3,
+            vec![
+                [0.; 3],
+                [1., 2., 0.],
+                [2., 0., 1.],
+                [2., 3., 1.],
+                [1., 4., 3.],
+                [0., 1., 2.],
+                [0.; 3],
+            ],
+            vec![1., 0.7, 1.4, 0.91, 1.2, 2., 1.5],
+            vec![0., 0., 0., 0., 0.25, 0.5, 0.5, 1., 1., 1., 1.],
+        )
+        .unwrap();
+        for (a, b) in [(0.17, 0.86), (0.86, 0.17), (0.3, 1.17), (-0.21, 0.18)] {
+            let piece = original.finite_segment(a, b).unwrap();
+            let (lo, hi) = (a.min(b), a.max(b));
+            assert_eq!(piece.domain(), (lo, hi));
+            for i in 0..=64 {
+                let u = lo + (hi - lo) * (i as f64 / 64.);
+                let t = u.rem_euclid(1.);
+                assert!(geom::dist(piece.value(u), original.value(t)) < 1e-13);
+                assert!(geom::dist(piece.derivative(u), original.derivative(t)) < 1e-12);
+            }
+        }
     }
 
     #[test]

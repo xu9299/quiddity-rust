@@ -1345,7 +1345,7 @@ fn prove_corner_section(
             || points.len() != 4
             || edges
                 .iter()
-                .any(|&e| !matches!(part.edges[e].curve, Curve::Line { .. }))
+                .any(|&e| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
         {
             return None;
         }
@@ -1547,7 +1547,7 @@ fn supports(
 fn disk_distance(part: &Part, edges: &[usize], centre: V3, radius: f64) -> f64 {
     let mut nearest = f64::INFINITY;
     for &e in edges {
-        for pair in part.edges[e].samples.windows(2) {
+        for pair in part.boundary_edge_samples(e).windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let ab = geom::sub(b, a);
             let length = geom::dot(ab, ab);
@@ -1616,10 +1616,11 @@ fn support_apertures(
         }
         let edge = wire.edges[0].0;
         let e = &part.edges[edge];
-        let Curve::Circle { frame, radius } = e.curve else {
+        let Some(curve @ &Curve::Circle { frame, radius }) = part.boundary_edge_support(edge)
+        else {
             continue;
         };
-        let Some(disk) = disk_part(&e.curve, e.start) else {
+        let Some(disk) = disk_part(curve, e.start) else {
             continue;
         };
         if disk_distance(part, &outer_edges, frame.origin, radius) <= 1e-6
@@ -1662,7 +1663,7 @@ fn aperture_bore(
     let rings: Vec<usize> = part
         .face_edges(neighbour)
         .into_iter()
-        .filter(|&e| matches!(part.edges[e].curve, Curve::Circle { .. }))
+        .filter(|&e| matches!(part.boundary_edge_support(e), Some(Curve::Circle { .. })))
         .collect();
     let full = 2.0 * std::f64::consts::PI * radius;
     if rings.len() != 2
@@ -1689,8 +1690,10 @@ fn aperture_bore(
     };
     let mut ends: Vec<f64> = rings
         .iter()
-        .filter_map(|&e| match part.edges[e].curve {
-            Curve::Circle { frame, .. } => Some(geom::dot(geom::sub(frame.origin, centre), axis)),
+        .filter_map(|&e| match part.boundary_edge_support(e) {
+            Some(&Curve::Circle { frame, .. }) => {
+                Some(geom::dot(geom::sub(frame.origin, centre), axis))
+            }
             _ => None,
         })
         .collect();

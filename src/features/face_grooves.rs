@@ -242,7 +242,7 @@ fn wall(part: &Part, floor: &BTreeSet<usize>, start: &Ring, outer: bool) -> Opti
         // Stay between the floor and mouth levels. A toroidal corner may have a radial
         // extremum between its ends, especially where a wall leans under the rim.
         for edge in part.face_edges(face) {
-            for &p in &part.edges[edge].samples {
+            for &p in part.boundary_edge_samples(edge) {
                 let d = geom::sub(p, incoming.center);
                 let z = geom::dot(d, axis);
                 let r = geom::norm(geom::cross(d, axis));

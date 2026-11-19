@@ -124,7 +124,11 @@ impl Element {
         }
     }
 }
-fn edge_midpoint(e: &crate::brep::Edge) -> V3 {
+fn edge_midpoint(part: &Part, index: usize) -> V3 {
+    if part.spatial_trim(index).is_some() {
+        return part.edge_midpoint(index);
+    }
+    let e = &part.edges[index];
     // For splines/ellipses Edge::midpoint uses sampled arc length. Project its chord
     // interpolation back onto the actual curve before using it as an extension foot.
     e.curve.value(e.curve.parameter(e.midpoint()))
@@ -162,8 +166,8 @@ fn elements(
                     .get(e.0)
                     .copied()
                     .flatten()
-                    .and_then(|i| part.edges.get(i))
-                    .map(|e| Element::Point(edge_midpoint(e))),
+                    .filter(|&i| i < part.edges.len())
+                    .map(|i| Element::Point(edge_midpoint(part, i))),
                 Anchor::Geometry(g) => {
                     let g = p.geometry.get(g.0)?;
                     crate::pmi::write::geometry_point(&g.item).map(|q| {
@@ -362,25 +366,25 @@ fn witnesses(
                         .flat_map(|lp| lp.edges.iter())
                         .flat_map(|&(e, _)| {
                             let edge = &part.edges[e];
-                            [edge.start, edge.midpoint(), edge.end]
+                            [edge.start, part.edge_midpoint(e), edge.end]
                         })
                         .take(32)
                         .map(Element::Point)
                         .collect::<Vec<_>>()
                 }
                 Anchor::Edge(e) => {
-                    let Some(e) = edges
+                    let Some(i) = edges
                         .get(e.0)
                         .copied()
                         .flatten()
-                        .and_then(|i| part.edges.get(i))
+                        .filter(|&i| i < part.edges.len())
                     else {
                         return Vec::new();
                     };
                     vec![
-                        Element::Point(e.start),
-                        Element::Point(edge_midpoint(e)),
-                        Element::Point(e.end),
+                        Element::Point(part.edges[i].start),
+                        Element::Point(edge_midpoint(part, i)),
+                        Element::Point(part.edges[i].end),
                     ]
                 }
                 Anchor::Geometry(_) => elements(part, edges, p, feature, depth + 1),

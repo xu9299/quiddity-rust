@@ -6,7 +6,7 @@ use super::*;
 /// Refine the largest remaining error first, retaining the same depth limit.
 /// The sum of all remaining estimates must fit the caller's absolute budget.
 /// An interval at MAX_DEPTH keeps contributing its error; exhaustion refuses.
-fn integrate_inner<const N: usize>(
+pub(super) fn integrate_inner<const N: usize>(
     cuts: &[f64],
     budget: f64,
     f: impl Fn(f64) -> [f64; N],
@@ -71,15 +71,16 @@ fn integrate_inner<const N: usize>(
         }
     }
 }
-fn raw_param_curve(pc: &crate::brep::RawCurve2d) -> Option<Curve> {
+pub(super) fn raw_param_curve(pc: &crate::brep::RawCurve2d) -> Option<Curve> {
     match pc {
+        crate::brep::RawCurve2d::Conic { .. } => raw_param_curve(&pc.scaled(1., 1.)?),
         crate::brep::RawCurve2d::Line {
             point,
             direction,
             magnitude,
         } => Some(Curve::Line {
             origin: [point[0], point[1], 0.],
-            dir: [direction[0] * magnitude, direction[1] * magnitude, 0.],
+            dir: geom::scale(geom::unit([direction[0], direction[1], 0.])?, *magnitude),
         }),
         crate::brep::RawCurve2d::BSpline {
             degree,
@@ -253,9 +254,9 @@ impl Part {
         let inside = |p: V3| {
             p.iter().all(|x| x.is_finite()) && p[0] >= u0 && p[0] <= u1 && p[1] >= v0 && p[1] <= v1
         };
-        // Use the same face bounding-box diagonal as centroid evidence (mm),
-        // with no unit-size floor; inertia evidence uses its trace separately.
-        let length = self.face_bounds(face).diagonal();
+        // Bound the scale using the spatial edge samples, independently of the
+        // trimmed bounds that this choice will supply. There is no unit-size floor.
+        let length = self.trim_reference_length(face);
         if !length.is_finite() || length <= 0. {
             return None;
         }
@@ -321,13 +322,15 @@ impl Part {
     /// Integrate the explicit STEP trim. The outer
     /// criterion is unchanged. Half its fixed floor budgets all inner primitives;
     /// their measured errors also enter each outer panel's error estimate.
-    /// The first density component must be area; its certified result also
-    /// normalizes the representation-disagreement guard for thin faces.
+    /// On the initial mass query the first component is physical area. It
+    /// normalizes the strip check once. A later query may integrate a signed
+    /// projection, whose area changes sign with the viewing direction.
     pub(super) fn integrate_preferred_face<const N: usize>(
         &self,
         face: usize,
         density: impl Fn(V3, V3, V3) -> [f64; N],
         components: Components,
+        check_strip: bool,
     ) -> Option<[f64; N]> {
         let trim = self.integration_pcurves(face)?;
         let curves = &trim.curves;
@@ -524,7 +527,7 @@ impl Part {
             return None;
         }
         let total = total.map(|y| y * swept.signum());
-        if trim.maximum_deviation > 0. {
+        if check_strip && trim.maximum_deviation > 0. {
             let length = master_boundary_length(&fc.surface, &local, &paths)?;
             let strip_ratio = trim.maximum_deviation * length / total[0];
             if total[0] <= 0. || !strip_ratio.is_finite() || strip_ratio > 0.001 {
@@ -718,7 +721,10 @@ mod tests {
                 assert_eq!(moments.area, part.face_mass(0).unwrap()[0]);
                 assert!((moments.area - area).abs() < 1e-12);
                 assert!(geom::dist(moments.centroid, [0.5, y, 0.]) < 1e-12);
-                assert_eq!(part.cache[0].mass.get().unwrap().preferred, preferred);
+                assert_eq!(
+                    part.cache[0].mass.get().unwrap().method != BoundaryMethod::Projected,
+                    preferred
+                );
             }
         }
     }
@@ -764,7 +770,7 @@ mod tests {
         assert!(p.integration_pcurves(0).is_some(), "eligible primary trim");
         let mass = p.face_mass(0).expect("preferred trim has area");
         assert!(
-            p.cache[0].mass.get().unwrap().preferred,
+            p.cache[0].mass.get().unwrap().method != BoundaryMethod::Projected,
             "the eligible master supplies the area"
         );
         assert!((mass[0] - area).abs() < 1e-9 * area, "{mass:?} {area}");
@@ -800,7 +806,10 @@ mod tests {
             (1., 1.),
             Some(0.002),
         );
-        assert!(p.face_mass(0).is_none());
+        // The fourth edge uses its spatial curve. Its normal offset projects to
+        // the same polynomial boundary, so the mixed loop has the analytic area.
+        let mixed = p.face_mass(0).unwrap()[0];
+        assert!((mixed - area).abs() < 1e-8 * area, "{mixed} {area}");
         let p = narrow_parabola();
         let raw = std::collections::BTreeMap::from([(0, p.file_pcurves(0).to_vec())]);
         let p = p.with_file_pcurves(
@@ -919,7 +928,7 @@ mod tests {
                 assert_eq!(moments.area, expected.area);
                 assert_eq!(moments.centroid, expected.centroid);
                 assert_eq!(moments.second_moments, expected.second_moments);
-                assert!(p.cache[0].mass.get().unwrap().preferred);
+                assert!(p.cache[0].mass.get().unwrap().method != BoundaryMethod::Projected);
             });
         }
     }

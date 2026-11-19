@@ -176,7 +176,7 @@ fn certain_box(part: &Part, f: usize) -> Option<crate::geom::Bounds> {
                 let edge = &part.edges[e];
                 b.add(edge.start);
                 b.add(edge.end);
-                match &edge.curve {
+                match part.boundary_edge_curve(e)? {
                     Curve::Line { .. } => {}
                     Curve::Circle { frame, radius } => b.merge(&around(frame.origin, *radius)),
                     Curve::Ellipse { frame, major, .. } => b.merge(&around(frame.origin, *major)),

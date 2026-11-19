@@ -8,10 +8,21 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
-- Face area and moments use an explicitly selected STEP master trim on supported
-  B-spline and Bézier faces when it passes the existing integration checks. A
-  separately approximated 3D edge can enclose a different area. Projection
-  supplies the boundary when the master trim is unavailable or cannot integrate.
+- Honour the per-edge STEP master representation and explicit outer face bound
+  when measuring and querying trimmed faces. Area, moments, containment,
+  bounds and edge witnesses can now follow a selected pcurve even when the
+  independently approximated 3D edge also encloses a measurable area. Trimmed
+  drawings, mesh joins, edge distances and feature measurements use the same
+  edge selection. A planar sweep preserves the finite interval of a selected spline in both caps and
+  its side wall. Hole, rim and profile proofs use the selected curve.
+  Circular hole, recess and turned-feature proofs can recognise an arc encoded
+  as a rational spline on an incident cylinder or cone.
+  The area guard measures the selected boundary's length on its STEP carrier.
+  Probe rays near a selected common edge can resolve a duplicate entry within
+  the file's own uncertainty when the material intervals agree on both sides.
+  Periodic face domains share the STEP vertex at regular coedge ends so a ray
+  through the seam uses the same trimmed region as neighbouring rays.
+  STEP export preserves retained master and outer-bound declarations.
 
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's
   outward-shell proof and the ray casters keep their face boxes and membership for the

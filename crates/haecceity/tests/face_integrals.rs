@@ -235,7 +235,7 @@ fn bspline_held_side_has_independently_integrated_second_moments() {
     }
 }
 
-/// These tensors differ from GProp's pcurve integrals while their areas and centroids agree.
+/// The spatial controls use the 3D boundary on which their reference was measured.
 /// OCCT evaluation over the 3D boundary, with 16 and 32 Lobatto panels per span, independently
 /// confirms every entry to 1.2e-12 of the tensor trace (the ledger records each error). This
 /// regression runs in CI without adding a Python capture or requiring an OCCT installation.
@@ -263,27 +263,59 @@ fn second_moments_match_independently_verified_boundaries() {
             let m = part
                 .face_moments(face)
                 .expect("independently verified integral");
-            let pin = &row["rust"];
-            let area = pin["area"].as_f64().unwrap();
-            assert!((m.area - area).abs() < 1e-7 * area, "{file} face {face}");
-            let trace: f64 = (0..3)
-                .map(|i| pin["second_moments"][i][i].as_f64().unwrap())
-                .sum();
-            for (i, &c) in m.centroid.iter().enumerate() {
-                let want = pin["centroid"][i].as_f64().unwrap();
-                assert!(
-                    (c - want).abs() < 1e-7 * want.abs().max(1.0),
-                    "{file} face {face}: centroid {m:?}"
-                );
-            }
-            for (i, values) in m.second_moments.iter().enumerate() {
-                for (j, &value) in values.iter().enumerate() {
-                    let want = pin["second_moments"][i][j].as_f64().unwrap();
+            let check = |m: haecceity::mass::FaceMoments, pin: &serde_json::Value| {
+                let area = pin["area"].as_f64().unwrap();
+                assert!((m.area - area).abs() < 1e-7 * area, "{file} face {face}");
+                let trace: f64 = (0..3)
+                    .map(|i| pin["second_moments"][i][i].as_f64().unwrap())
+                    .sum();
+                for (i, &c) in m.centroid.iter().enumerate() {
+                    let want = pin["centroid"][i].as_f64().unwrap();
                     assert!(
-                        (value - want).abs() < 1e-7 * trace,
-                        "{file} face {face}: second moments {m:?}"
+                        (c - want).abs() < 1e-7 * want.abs().max(1.0),
+                        "{file} face {face}: centroid {m:?}"
                     );
                 }
+                for (i, values) in m.second_moments.iter().enumerate() {
+                    for (j, &value) in values.iter().enumerate() {
+                        let want = pin["second_moments"][i][j].as_f64().unwrap();
+                        assert!(
+                            (value - want).abs() < 1e-7 * trace,
+                            "{file} face {face}: second moments {m:?}"
+                        );
+                    }
+                }
+            };
+            if let Some(entities) = row["spatial_control_edges"].as_array() {
+                check(m, &row["step_master"]);
+                // This reference used the 3D edges. Select only those edges on
+                // a second copy, retaining their coordinates, curves and faces.
+                let path = dir.join(file);
+                let bytes =
+                    haecceity::step::decode_step_file_bytes(&path, std::fs::read(&path).unwrap())
+                        .unwrap();
+                let text = std::str::from_utf8(&bytes).unwrap();
+                let mut changed = 0;
+                let control: String = text
+                    .split_inclusive(';')
+                    .map(|record| {
+                        let id = record.trim_start().split_once('=').and_then(|(lhs, _)| {
+                            lhs.trim_end().strip_prefix('#')?.parse::<u64>().ok()
+                        });
+                        if id.is_some_and(|id| entities.iter().any(|e| e.as_u64() == Some(id))) {
+                            assert_eq!(record.matches(".PCURVE_S1.").count(), 1);
+                            changed += 1;
+                            record.replace(".PCURVE_S1.", ".CURVE_3D.")
+                        } else {
+                            record.to_owned()
+                        }
+                    })
+                    .collect();
+                assert_eq!(changed, entities.len());
+                let part = haecceity::read_step(control.as_bytes()).unwrap();
+                check(part.face_moments(face).unwrap(), &row["rust"]);
+            } else {
+                check(m, &row["rust"]);
             }
         }
     });

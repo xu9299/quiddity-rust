@@ -10,7 +10,6 @@ use super::policy;
 use crate::kernel::brep::{Arc, Part};
 use crate::kernel::classify::Classifier;
 use crate::kernel::geom::{self, Bounds, COORD_FLOOR, Curve, SMOOTH_ARC_GAP, V3};
-use crate::kernel::sampling::edge_interval;
 use crate::kernel::volume::{Prism, PrismEdge, Probe, common_volume};
 
 use super::planes::axis_aligned_axis;
@@ -139,7 +138,7 @@ impl WireEdge {
 
     /// The edge's samples in the wire's direction.
     pub fn points(&self, part: &Part) -> Vec<V3> {
-        let mut points = part.edges[self.edge].samples.clone();
+        let mut points = part.boundary_edge_samples(self.edge).to_vec();
         if !self.forward {
             points.reverse();
         }
@@ -155,9 +154,9 @@ pub enum RunKind {
 }
 
 fn run_kind(part: &Part, edge: usize) -> Option<RunKind> {
-    match part.edges[edge].curve {
-        Curve::Line { .. } => Some(RunKind::Line),
-        Curve::Circle { .. } => Some(RunKind::Circle),
+    match part.boundary_edge_support(edge) {
+        Some(Curve::Line { .. }) => Some(RunKind::Line),
+        Some(Curve::Circle { .. }) => Some(RunKind::Circle),
         _ => None,
     }
 }
@@ -165,24 +164,38 @@ fn run_kind(part: &Part, edge: usize) -> Option<RunKind> {
 internal_entry! {
 /// A circular edge's radius.
 pub fn edge_radius(part: &Part, edge: usize) -> Option<f64> {
-    match part.edges[edge].curve {
-        Curve::Circle { radius, .. } => Some(radius),
+    match part.boundary_edge_support(edge) {
+        Some(Curve::Circle { radius, .. }) => Some(*radius),
         _ => None,
     }
 }
 }
 
+/// Endpoints and midpoint on the selected finite edge for line and arc proofs.
+pub(super) fn edge_support_points(part: &Part, e: usize) -> Option<[V3; 3]> {
+    if let Some((mid, _)) = part.declared_edge_at_length(e, 0.5) {
+        return Some([
+            part.declared_edge_at_length(e, 0.)?.0,
+            mid,
+            part.declared_edge_at_length(e, 1.)?.0,
+        ]);
+    }
+    let curve = part.boundary_edge_curve(e)?;
+    let (a, b) = part.boundary_edge_interval(e)?;
+    Some([a, 0.5 * (a + b), b].map(|t| curve.value(t)))
+}
+
 internal_entry! {
 /// An edge's length: exact for lines and circular arcs, along its samples otherwise.
 pub fn edge_length(part: &Part, edge: usize) -> f64 {
+    if let Some(length) = part.declared_edge_length(edge) {
+        return length;
+    }
     let e = &part.edges[edge];
-    match &e.curve {
-        Curve::Line { .. } => geom::dist(e.start, e.end),
-        Curve::Circle { radius, .. } => {
-            let (a, b) = edge_interval(&e.curve, e.start, e.end, e.same_sense, e.is_closed());
-            radius * (b - a).abs()
-        }
-        _ => e.samples.windows(2).map(|w| geom::dist(w[0], w[1])).sum(),
+    match (part.boundary_edge_curve(edge), part.boundary_edge_interval(edge)) {
+        (Some(Curve::Line { .. }), _) => geom::dist(e.start, e.end),
+        (Some(Curve::Circle { radius, .. }), Some((a,b))) => radius * (b-a).abs(),
+        _ => part.boundary_edge_samples(edge).windows(2).map(|w| geom::dist(w[0],w[1])).sum(),
     }
 }
 }

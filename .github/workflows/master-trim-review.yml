@@ -1,10 +1,9 @@
-name: Complete the ARM workspace and documentation gates
+name: STEP declared boundary survey and ARM regression
 on:
   push:
     branches: [validation/step-declared-boundaries-20261119]
 permissions:
   contents: read
-  actions: read
 concurrency:
   group: declared-boundary-${{ github.sha }}
   cancel-in-progress: false
@@ -17,10 +16,135 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
-  SOURCE: 3ada823749973d10bf8b69fe644ba6188116fd2b
-  TREE: f1ea1724e52fb47e44e05766f86b0a79df1d4b64
+  SOURCE: 7432dd788b346b70503803ea35b7657f00d36458
+  TREE: e1cb3d8280e1d9e2d50220e730becd397d803a66
 jobs:
-  arm-doc:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            task: survey
+          - runner: xcode-27
+            task: strict
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: matrix.task == 'survey'
+        with:
+          path: harness
+          sparse-checkout: .github/master-trim-survey
+          persist-credentials: false
+      - name: Identify source, corpus, OS and compiler
+        run: |
+          mkdir -p ../evidence/verified
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; if [ "$(uname -s)" = Darwin ]; then sw_vers; else cat /etc/os-release; fi; rustc -vV; cargo -V; } | tee ../evidence/environment.log
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          if [ "${{ matrix.task }}" = strict ]; then test "$(uname -m)" = arm64; fi
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-${{ matrix.runner }}
+      - name: Build identical survey drivers against both source revisions
+        if: matrix.task == 'survey'
+        run: |
+          for rev in "$BASE" "$SOURCE"; do
+            git checkout --quiet --detach "$rev"
+            cp ../harness/.github/master-trim-survey/survey.rs examples/master_trim_survey.rs
+            touch crates/haecceity/src/mass.rs src/lib.rs
+            cargo build --release --locked --example master_trim_survey
+            cp "$CARGO_TARGET_DIR/release/examples/master_trim_survey" "$RUNNER_TEMP/survey-$rev"
+            rm examples/master_trim_survey.rs
+            test -z "$(git status --porcelain)"
+          done
+          shasum -a 256 "$RUNNER_TEMP/survey-$BASE" "$RUNNER_TEMP/survey-$SOURCE" > ../evidence/drivers.sha256
+      - name: Compare face areas, fingerprints and recognition on all pinned inputs
+        if: matrix.task == 'survey'
+        run: |
+          if ! command -v uv >/dev/null; then if [ "$(uname -s)" = Darwin ]; then brew install uv; else pipx install uv; export PATH="$HOME/.local/bin:$PATH"; fi; fi
+          uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
+            --manifest tests/fixtures/corpus.json --corpus ../corpus \
+            --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
+            --control crates/haecceity/tests/fixtures/master-trim-square.step --out ../evidence | tee ../evidence/survey.log
+      - name: Upload corpus survey
+        if: "!cancelled() && matrix.task == 'survey'"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-corpus-survey
+          path: |
+            evidence/summary.json
+            evidence/per-file.json
+            evidence/survey.log
+            evidence/drivers.sha256
+            evidence/environment.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Format, lint and feature-off builds
+        if: "!cancelled() && matrix.task == 'survey'"
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings
+          cargo check -p haecceity --release --locked --no-default-features
+          cargo check -p quiddity --release --locked --no-default-features --features presentation
+      - name: Reproduce the committed snapshots with the official strict command
+        timeout-minutes: 315
+        if: matrix.task == 'strict'
+        run: cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+      - name: Compare all committed captured effective-surface parts
+        if: "!cancelled() && matrix.task == 'survey'"
+        run: |
+          mkdir -p ../evidence/captured
+          uv run --no-project --python 3.13 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, subprocess
+          root = Path("tests/fixtures/captured/effective_surfaces/parts")
+          files = subprocess.check_output(["git","ls-files","-z","--",str(root)]).decode().rstrip("\0").split("\0")
+          rows = [{"file":Path(f).relative_to(root).as_posix(),"sha256":hashlib.sha256(Path(f).read_bytes()).hexdigest()} for f in sorted(files)]
+          assert len(rows) == 260
+          Path("../evidence/captured/manifest.json").write_text(json.dumps({"files":rows}))
+          PY
+          uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
+            --manifest ../evidence/captured/manifest.json --corpus tests/fixtures/captured/effective_surfaces/parts \
+            --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
+            --control crates/haecceity/tests/fixtures/master-trim-square.step --out ../evidence/captured | tee ../evidence/captured/survey.log
+      - name: Identify each changed public volume outside the ordinary probe comparator
+        if: "!cancelled() && matrix.task == 'survey'"
+        run: |
+          cp ../harness/.github/master-trim-survey/probe_diff.rs examples/master_trim_probe_diff.rs
+          gzip -dc tests/fixtures/probes.json.gz > "$RUNNER_TEMP/input-probes.json"
+          gzip -dc tests/fixtures/rust-snapshot/probes.json.gz > "$RUNNER_TEMP/expected-probes.json"
+          cargo run --release --locked --example master_trim_probe_diff -- "$RUNNER_TEMP/input-probes.json" "$RUNNER_TEMP/expected-probes.json" "$QUIDDITY_CORPUS" ../evidence/probe-differences.json
+          rm examples/master_trim_probe_diff.rs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: declared-${{ matrix.task }}-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  build-tests:
     runs-on: xcode-27
     timeout-minutes: 90
     defaults:
@@ -50,6 +174,15 @@ jobs:
         with:
           workspaces: source
           shared-key: declared-nextest-macos
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - run: cargo nextest archive --workspace --release --locked --archive-file ../tests.tar.zst
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: declared-test-binaries
+          path: tests.tar.zst
+          retention-days: 3
       - name: Select a Python installation with a linkable macOS library
         run: |
           if ! command -v uv >/dev/null; then brew install uv; fi
@@ -72,6 +205,7 @@ jobs:
           retention-days: 30
 
   workspace-shard:
+    needs: build-tests
     runs-on: xcode-27
     timeout-minutes: 355
     strategy:
@@ -102,8 +236,6 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: declared-test-binaries
-          run-id: 44568390641
-          github-token: ${{ github.token }}
       - name: Test the assigned workspace cases
         run: |
           mkdir -p ../evidence

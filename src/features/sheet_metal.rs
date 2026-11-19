@@ -341,6 +341,9 @@ fn edge_point(part: &Part, face: usize, edge: usize, fraction: f64) -> V3 {
     } else {
         1.0 - fraction
     };
+    if let Some((p, _)) = part.declared_edge_at_length(edge, fraction) {
+        return p;
+    }
     match e.curve {
         Curve::Line { .. } => geom::add(e.start, geom::scale(geom::sub(e.end, e.start), fraction)),
         Curve::Circle { .. } => {
@@ -373,7 +376,7 @@ fn edge_point(part: &Part, face: usize, edge: usize, fraction: f64) -> V3 {
 /// `edge.distance_to(point)`: the least distance from *p* to the edge, along its samples (which
 /// follow the curve within 0.2 µm).
 fn edge_distance(part: &Part, edge: usize, p: V3) -> f64 {
-    let s = &part.edges[edge].samples;
+    let s = part.boundary_edge_samples(edge);
     if s.len() == 1 {
         return geom::dist(s[0], p);
     }
@@ -1023,40 +1026,34 @@ fn checking_boundary(
             let mut ring = Vec::new();
             for &(e, forward) in &lp.edges {
                 let edge = &part.edges[e];
-                let (mut points, deviation, segment_area) = match edge.curve {
-                    Curve::Line { .. } => (vec![edge.start, edge.end], 0., None),
-                    Curve::Circle { radius, .. } => {
-                        let (a, b) = edge_interval(
-                            &edge.curve,
-                            edge.start,
-                            edge.end,
-                            edge.same_sense,
-                            edge.is_closed(),
-                        );
-                        let step = (8. * deflection / radius).sqrt().min(PI / 2.);
-                        let n = (((b - a).abs() / step).ceil() as usize).max(1);
-                        let angle = (b - a).abs() / n as f64;
-                        let mut points: Vec<_> = (0..=n)
-                            .map(|i| edge.curve.value(a + (b - a) * i as f64 / n as f64))
-                            .collect();
-                        points[0] = edge.start;
-                        points[n] = edge.end;
-                        (
-                            points,
-                            radius * (1. - (angle / 2.).cos()),
-                            Some(0.5 * radius.powi(2) * (angle - angle.sin())),
-                        )
-                    }
-                    _ => {
-                        let mut points = Vec::new();
-                        thin(&edge.samples, deflection, &mut points);
-                        (
-                            points,
-                            deflection + crate::kernel::sampling::CHORD_TOLERANCE,
-                            None,
-                        )
-                    }
-                };
+                let (mut points, deviation, segment_area) =
+                    match (part.boundary_edge_curve(e), part.boundary_edge_interval(e)) {
+                        (Some(Curve::Line { .. }), _) => (vec![edge.start, edge.end], 0., None),
+                        (Some(curve @ Curve::Circle { radius, .. }), Some((a, b))) => {
+                            let step = (8. * deflection / radius).sqrt().min(PI / 2.);
+                            let n = (((b - a).abs() / step).ceil() as usize).max(1);
+                            let angle = (b - a).abs() / n as f64;
+                            let mut points: Vec<_> = (0..=n)
+                                .map(|i| curve.value(a + (b - a) * i as f64 / n as f64))
+                                .collect();
+                            points[0] = edge.start;
+                            points[n] = edge.end;
+                            (
+                                points,
+                                radius * (1. - (angle / 2.).cos()),
+                                Some(0.5 * radius.powi(2) * (angle - angle.sin())),
+                            )
+                        }
+                        _ => {
+                            let mut points = Vec::new();
+                            thin(part.boundary_edge_samples(e), deflection, &mut points);
+                            (
+                                points,
+                                deflection + crate::kernel::sampling::CHORD_TOLERANCE,
+                                None,
+                            )
+                        }
+                    };
                 if !forward {
                     points.reverse();
                 }
@@ -1348,7 +1345,7 @@ fn triangulate_plane(
         let mut ring = Vec::new();
         for &(e, forward) in &lp.edges {
             let mut points = Vec::new();
-            thin(&part.edges[e].samples, deflection, &mut points);
+            thin(part.boundary_edge_samples(e), deflection, &mut points);
             if !forward {
                 points.reverse();
             }

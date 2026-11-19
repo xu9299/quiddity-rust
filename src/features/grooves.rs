@@ -87,8 +87,8 @@ fn cone_joins(part: &Part) -> Vec<ConeJoin> {
         let rims: Vec<(V3, f64)> = part
             .face_edges(face)
             .into_iter()
-            .filter_map(|e| match part.edges[e].curve {
-                Curve::Circle { frame, radius } => Some((frame.origin, radius)),
+            .filter_map(|e| match part.boundary_edge_support(e) {
+                Some(&Curve::Circle { frame, radius }) => Some((frame.origin, radius)),
                 _ => None,
             })
             .collect();

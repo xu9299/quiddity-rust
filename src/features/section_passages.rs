@@ -96,7 +96,7 @@ fn dot(a: V3, b: V3) -> f64 {
 
 /// A straight edge's direction in canonical sense (`_canonical_run`); `None` for any other edge.
 fn canonical_run(part: &Part, edge: usize) -> Option<V3> {
-    let Curve::Line { dir, .. } = part.edges[edge].curve else {
+    let Some(&Curve::Line { dir, .. }) = part.boundary_edge_curve(edge) else {
         return None;
     };
     let tangent = crate::kernel::geom::unit(dir)?;
@@ -274,7 +274,7 @@ pub(crate) fn line_section(
 ) -> Option<(PlanarSection, V3)> {
     if wire
         .iter()
-        .any(|&(e, _)| !matches!(part.edges[e].curve, Curve::Line { .. }))
+        .any(|&(e, _)| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
     {
         return None;
     }

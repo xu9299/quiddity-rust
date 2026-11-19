@@ -196,7 +196,7 @@
     "face": 404,
     "check": "second_moments",
     "verdict": "rust-correct",
-    "reason": "Live OpenCascade GProp (eps 1e-9 and 1e-11, converged) differs in central second moments by 1.27641e-06 of the tensor trace, although area and centroid are within 1e-6. Independent integration with OpenCascade's surface evaluator over the 3D edge boundary (tools/check_face_integrals.py --independent, kernel_evidence's Lobatto path, no pcurves) at 16 and 32 panels per curve span changes the tensor by 1.39005e-15 of its trace and agrees with Rust to 2.82277e-13; its area and centroid also agree. The difference is the distribution of area bounded by OpenCascade's approximate pcurves, including after projection, rather than a defect in the 3D boundary integral.",
+    "reason": "Live OpenCascade GProp (eps 1e-9 and 1e-11, converged) differs in central second moments by 1.27641e-06 of the tensor trace, although area and centroid are within 1e-6. Independent integration with OpenCascade's surface evaluator over the 3D edge boundary (tools/check_face_integrals.py --independent, kernel_evidence's Lobatto path, no pcurves) at 16 and 32 panels per curve span changes the tensor by 1.39005e-15 of its trace and agrees with Rust to 2.82277e-13; its area and centroid also agree. The difference is the distribution of area bounded by OpenCascade's approximate pcurves, including after projection, rather than a defect in the 3D boundary integral. The STEP input selects PCURVE_S1 on its three boundary edges. Independent Gauss integration of those three parameter curves, evaluated on the sphere and the two rational spline carriers, gives the step_master tensor. The spatial control selects the same three 3D curves used by the original independent reference.",
     "rust": {
       "area": 3.541992339311742,
       "centroid": [
@@ -221,7 +221,37 @@
           0.8975923764776376
         ]
       ]
-    }
+    },
+    "step_master": {
+      "area": 3.541993373915626,
+      "centroid": [
+        23.131600150236483,
+        -28.969522993765345,
+        25.856787131432107
+      ],
+      "second_moments": [
+        [
+          0.7427073387166123,
+          0.10926395068869788,
+          -0.5210941172333863
+        ],
+        [
+          0.10926395068869788,
+          0.6759039883148574,
+          0.4645291133012286
+        ],
+        [
+          -0.5210941172333872,
+          0.4645291133012286,
+          0.897593109517997
+        ]
+      ]
+    },
+    "spatial_control_edges": [
+      55342,
+      55191,
+      55246
+    ]
   },
   {
     "file": "cadgenbench_inputs/cgb243.step.gz",
