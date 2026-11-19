@@ -83,6 +83,29 @@ fn streamed_records_and_selected_paths_match_the_raw_graph_across_blocks() {
     assert!(matches!(packed.attribute_at(u64::MAX, None, &[2, 0, 1]),
         Some(Attribute::Real(value)) if value.to_bits() == (-0.0_f64).to_bits()));
     assert!(packed.record(0).is_none());
+    let targets = std::collections::HashSet::from([7, u64::MAX]);
+    assert_eq!(
+        packed.possible_referrers(&targets).collect::<Vec<_>>(),
+        [7, u64::MAX]
+    );
+}
+
+#[test]
+fn packed_referrers_follow_typed_lists_and_ignore_scalar_payloads() {
+    let bytes = format!(
+        "{STREAM_HEADER}#90=A(SELECT_TYPE((#1,(#8))));\n\
+         #2=(FIRST_PART(#1) LAST_PART(SELECT_TYPE(#8)));\n\
+         #3=A('#8',8,8.,.EIGHT.,\"08\",$,*,SELECT_TYPE((#1)));\n\
+         #8=(ALPHA() BETA(#8));\n#1=A();\n{STREAM_END}"
+    );
+    let packed = PackedGraph::parse(bytes.as_bytes()).unwrap();
+    for (target, expected) in [(8, vec![2, 8, 90]), (1, vec![2, 3, 90]), (77, vec![])] {
+        let targets = std::collections::HashSet::from([target]);
+        assert_eq!(
+            packed.possible_referrers(&targets).collect::<Vec<_>>(),
+            expected
+        );
+    }
 }
 
 #[test]

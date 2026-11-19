@@ -6760,6 +6760,21 @@ fn knurl_of(
 mod tests {
     use super::*;
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn document_only_accessors_reject_a_graph_source() {
+        let graph = std::collections::BTreeMap::new();
+        let reader = || {
+            UnitReader::new(UnitSource::Graph {
+                graph: &graph,
+                header: &[],
+                bytes: &[],
+            })
+        };
+        assert!(std::panic::catch_unwind(|| reader().get(1, "si_unit", "name")).is_err());
+        assert!(std::panic::catch_unwind(|| reader().real_text(1, &Attribute::Real(1.))).is_err());
+    }
+
     #[test]
     fn context_length_units_use_exact_factors_and_reject_conflicts() {
         for (name, factor, expected) in [

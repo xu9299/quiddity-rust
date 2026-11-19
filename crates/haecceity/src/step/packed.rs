@@ -3,7 +3,7 @@
 //! and attribute ordering survive a round trip. Names share a symbol table.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 
 use step_io::Error;
@@ -81,17 +81,41 @@ impl PackedGraph {
     }
 
     fn reader(&self, id: u64) -> Option<RecordReader<'_>> {
-        Some(RecordReader {
+        Some(self.reader_at(*self.records.get(&id)?))
+    }
+
+    fn reader_at(&self, position: usize) -> RecordReader<'_> {
+        RecordReader {
             data: &self.data,
-            position: *self.records.get(&id)?,
+            position,
             symbols: &self.symbols,
-        })
+        }
     }
 }
 
 impl RecordGraph for PackedGraph {
     fn ids(&self) -> Box<dyn Iterator<Item = u64> + '_> {
         Box::new(self.records.keys().copied())
+    }
+
+    fn possible_referrers<'a>(
+        &'a self,
+        targets: &'a HashSet<u64>,
+    ) -> Box<dyn Iterator<Item = u64> + 'a> {
+        Box::new(self.records.iter().filter_map(move |(&id, &offset)| {
+            let mut reader = self.reader_at(offset);
+            reader.span();
+            let parts = if reader.byte() == 0 {
+                1
+            } else {
+                reader.length()
+            };
+            let found = (0..parts).any(|_| {
+                reader.unsigned(); // Simple entity name or complex component name.
+                reader.attributes_reference(&|target| targets.contains(&target))
+            });
+            found.then_some(id)
+        }))
     }
 
     fn record(&self, id: u64) -> Option<Cow<'_, RawEntity>> {
@@ -356,30 +380,40 @@ impl<'a> RecordReader<'a> {
     }
 
     fn skip_attributes(&mut self) {
-        for _ in 0..self.length() {
-            self.skip_attribute();
-        }
+        self.attributes_reference(&|_| false);
     }
 
+    fn skip_attribute(&mut self) {
+        self.attribute_references(&|_| false);
+    }
+
+    fn attributes_reference(&mut self, matches: &impl Fn(u64) -> bool) -> bool {
+        (0..self.length()).any(|_| self.attribute_references(matches))
+    }
+
+    /// Stop at the first matching reference, or consume the complete value.
+    /// Lists and typed values can both contain references at any nesting level.
     #[allow(
         clippy::unreachable,
         reason = "RecordWriter::attribute emits only tags 0 through 9"
     )]
-    fn skip_attribute(&mut self) {
+    fn attribute_references(&mut self, matches: &impl Fn(u64) -> bool) -> bool {
         match self.byte() {
             0 | 1 => self.position += 8,
             2 | 4 => self.position += self.length(),
-            3 | 5 => {
+            3 => {
                 self.unsigned();
             }
+            5 => return matches(self.unsigned()),
             6 | 7 => {}
-            8 => self.skip_attributes(),
+            8 => return self.attributes_reference(matches),
             9 => {
                 self.unsigned();
-                self.skip_attribute();
+                return self.attribute_references(matches);
             }
             _ => unreachable!("private attribute tag"),
         }
+        false
     }
 
     #[allow(

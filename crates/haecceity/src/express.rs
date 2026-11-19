@@ -521,7 +521,7 @@ pub(crate) fn complex_reference_drops(graph: &impl crate::step::RecordGraph) -> 
     let mut checker = Checker::new(TARGET, &lookup);
     let mut slots = HashMap::new();
     let mut drops = Vec::new();
-    for id in graph.ids() {
+    for id in graph.possible_referrers(&complex) {
         let record = graph.indexed_record(id);
         let mut inspect = |name: &str, slots: &[Slot], values: &[Param]| {
             for (slot, value) in slots.iter().zip(values) {

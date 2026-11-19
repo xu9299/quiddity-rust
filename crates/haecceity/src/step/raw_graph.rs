@@ -4,10 +4,19 @@
 //! the current traversal item; no cache retains a second owned graph.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use step_io::parser::{Attribute, Graph, RawEntity};
 
 pub(crate) trait RecordGraph {
     fn ids(&self) -> Box<dyn Iterator<Item = u64> + '_>;
+    /// Return potential referrers in the same order as `ids`. Ordinary graphs
+    /// already own their attributes, so the caller can inspect them directly.
+    fn possible_referrers<'a>(
+        &'a self,
+        _targets: &'a HashSet<u64>,
+    ) -> Box<dyn Iterator<Item = u64> + 'a> {
+        self.ids()
+    }
     fn record(&self, id: u64) -> Option<Cow<'_, RawEntity>>;
     #[allow(
         clippy::expect_used,

@@ -30,6 +30,10 @@ bounds, dropped-shape reachability and assembly/product chains are checked. The
 storage change does not replace these checks with scene order or geometric
 heuristics. Complex-reference slot caches own their small set of type names so
 they cannot borrow a decoded record after that record has been released.
+When the file contains complex instances, the packed reader scans attribute tags
+for references to their original IDs before decoding a record. The scan follows
+typed values, lists and every component of a complex owner. The schema check
+visits matching records in file-ID order with the original attribute tree.
 
 The existing borrowed-byte and file API signatures remain available. Owned-byte
 entry points finish parsing and provenance checks, then release that snapshot

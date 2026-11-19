@@ -13,6 +13,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- STEP import skips decoding packed records that cannot refer to a complex instance
+  when checking for incompatible references.
 - Geometry provenance and declared-unit metadata use lossless packed STEP records,
   decoding selected attributes or the current record without retaining a second
   owned graph. Face and edge identity, reference validation, refusals and assemblies
