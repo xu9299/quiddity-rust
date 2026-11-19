@@ -700,15 +700,17 @@ impl<'a> RayCaster<'a> {
         }
         if let Some(uv) = uv {
             for &(e, c, reach) in &near {
-                if misplaces(
-                    surface,
-                    q,
-                    uv,
-                    part.boundary_edge_samples(e),
-                    &self.edge_runs[e],
-                    c,
-                    reach,
-                ) {
+                // The domain was constructed from this face's accepted trim. Its
+                // chords can differ from the physical edge's mesh, particularly
+                // when only one neighbour accepted the declared boundary.
+                let shared = part.boundary_edge_samples(e);
+                let samples = part
+                    .measured_boundary(i)
+                    .and_then(|b| b.edges.get(&e))
+                    .and_then(|trim| trim.samples(surface, &part.edges[e]))
+                    .map_or(part.edges[e].samples.as_slice(), |s| s.points.as_slice());
+                let runs = std::ptr::eq(samples, shared).then_some(self.edge_runs[e].as_slice());
+                if misplaces(surface, q, uv, samples, runs, c, reach) {
                     inside = !inside;
                 }
             }
@@ -891,7 +893,7 @@ fn misplaces(
     q: V3,
     uv: (f64, f64),
     samples: &[V3],
-    runs: &[Bounds],
+    runs: Option<&[Bounds]>,
     c: V3,
     beyond: f64,
 ) -> bool {
@@ -916,26 +918,29 @@ fn misplaces(
     let way = (e2.0 - uv.0, e2.1 - uv.1);
     let side = |p: (f64, f64)| way.0 * (p.1 - uv.1) - way.1 * (p.0 - uv.0);
     let along = |p: (f64, f64)| way.0 * (p.0 - uv.0) + way.1 * (p.1 - uv.1);
-    let mut crossings = 0;
-    for w in segments_near(samples, runs, q, d + beyond) {
+    let crosses = |w: &&[V3]| {
         if point_segment_distance(q, w[0], w[1]) > d + beyond {
-            continue;
+            return false;
         }
         let (Some(a), Some(b)) = (at(w[0]), at(w[1])) else {
-            continue;
+            return false;
         };
         let (sa, sb) = (side(a), side(b));
         if (sa > 0.0) == (sb > 0.0) {
-            continue;
+            return false;
         }
         // Where the segment meets the line of the way, as a fraction of it.
         let k = sa / (sa - sb);
         let x = (a.0 + k * (b.0 - a.0), a.1 + k * (b.1 - a.1));
         let s = along(x) / (way.0 * way.0 + way.1 * way.1);
-        if s > 0.0 && s < 1.0 {
-            crossings += 1;
-        }
-    }
+        s > 0.0 && s < 1.0
+    };
+    let crossings = match runs {
+        Some(runs) => segments_near(samples, runs, q, d + beyond)
+            .filter(crosses)
+            .count(),
+        None => samples.windows(2).filter(crosses).count(),
+    };
     crossings % 2 == 0
 }
 
