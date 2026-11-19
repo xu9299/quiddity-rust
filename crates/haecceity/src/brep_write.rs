@@ -802,6 +802,65 @@ fn place_frame(at: &crate::step::Placement, f: &Frame) -> Frame {
     }
 }
 
+fn analytic_surface(
+    b: &mut StepBuilder,
+    surface: &Surface,
+    raw: Option<(&RawFrame, crate::step::Placement)>,
+) -> Result<Option<m::SurfaceRef>, AuthorError> {
+    Ok(Some(match surface {
+        Surface::Plane { frame } => {
+            let p = frame_of(b, frame, raw)?;
+            m::SurfaceRef::Plane(
+                b.author()
+                    .add_plane("", m::Axis2Placement3dRef::Axis2Placement3d(p))?,
+            )
+        }
+        Surface::Cylinder { frame, radius } => {
+            let p = frame_of(b, frame, raw)?;
+            m::SurfaceRef::CylindricalSurface(b.author().add_cylindrical_surface(
+                "",
+                m::Axis2Placement3dRef::Axis2Placement3d(p),
+                *radius,
+            )?)
+        }
+        Surface::Cone {
+            frame,
+            radius,
+            semi_angle,
+        } => {
+            let p = frame_of(b, frame, raw)?;
+            m::SurfaceRef::ConicalSurface(b.author().add_conical_surface(
+                "",
+                m::Axis2Placement3dRef::Axis2Placement3d(p),
+                *radius,
+                *semi_angle,
+            )?)
+        }
+        Surface::Sphere { frame, radius } => {
+            let p = frame_of(b, frame, raw)?;
+            m::SurfaceRef::SphericalSurface(b.author().add_spherical_surface(
+                "",
+                m::Axis2Placement3dRef::Axis2Placement3d(p),
+                *radius,
+            )?)
+        }
+        Surface::Torus {
+            frame,
+            major,
+            minor,
+        } => {
+            let p = frame_of(b, frame, raw)?;
+            m::SurfaceRef::ToroidalSurface(b.author().add_toroidal_surface(
+                "",
+                m::Axis2Placement3dRef::Axis2Placement3d(p),
+                *major,
+                *minor,
+            )?)
+        }
+        _ => return Ok(None),
+    }))
+}
+
 impl<'p> Writer<'p> {
     fn new(part: &'p Part, name: &str) -> Result<Self, WriteError> {
         // The file's own uncertainty where the part keeps one: readers that heal to it
@@ -906,56 +965,10 @@ impl<'p> Writer<'p> {
         let raw = self.part.face_frame(face).map(|r| (r, at));
         let held = self.face(face);
         let b = &mut self.b;
+        if let Some(surface) = analytic_surface(b, &held.surface, raw)? {
+            return Ok(surface);
+        }
         Ok(match &held.surface {
-            Surface::Plane { frame } => {
-                let p = frame_of(b, frame, raw)?;
-                m::SurfaceRef::Plane(
-                    b.author()
-                        .add_plane("", m::Axis2Placement3dRef::Axis2Placement3d(p))?,
-                )
-            }
-            Surface::Cylinder { frame, radius } => {
-                let p = frame_of(b, frame, raw)?;
-                m::SurfaceRef::CylindricalSurface(b.author().add_cylindrical_surface(
-                    "",
-                    m::Axis2Placement3dRef::Axis2Placement3d(p),
-                    *radius,
-                )?)
-            }
-            Surface::Cone {
-                frame,
-                radius,
-                semi_angle,
-            } => {
-                let p = frame_of(b, frame, raw)?;
-                m::SurfaceRef::ConicalSurface(b.author().add_conical_surface(
-                    "",
-                    m::Axis2Placement3dRef::Axis2Placement3d(p),
-                    *radius,
-                    *semi_angle,
-                )?)
-            }
-            Surface::Sphere { frame, radius } => {
-                let p = frame_of(b, frame, raw)?;
-                m::SurfaceRef::SphericalSurface(b.author().add_spherical_surface(
-                    "",
-                    m::Axis2Placement3dRef::Axis2Placement3d(p),
-                    *radius,
-                )?)
-            }
-            Surface::Torus {
-                frame,
-                major,
-                minor,
-            } => {
-                let p = frame_of(b, frame, raw)?;
-                m::SurfaceRef::ToroidalSurface(b.author().add_toroidal_surface(
-                    "",
-                    m::Axis2Placement3dRef::Axis2Placement3d(p),
-                    *major,
-                    *minor,
-                )?)
-            }
             Surface::Freeform { kind, surface } => {
                 // A swept surface the file stated in millimetres is written as the file
                 // stated it, which converts back to the same NURBS.
@@ -995,6 +1008,11 @@ impl<'p> Writer<'p> {
             Surface::Other { kind } => {
                 return Err(WriteError::Unsupported(vec![format!(
                     "face {face}: no surface ({kind})"
+                )]));
+            }
+            _ => {
+                return Err(WriteError::Unsupported(vec![format!(
+                    "face {face}: unknown analytic surface"
                 )]));
             }
         })
@@ -1087,6 +1105,107 @@ impl<'p> Writer<'p> {
     /// A pcurve of *face* (entry *slot* of its `pcurves`, or of the file's pcurves on it when
     /// *raw*) on the face's written surface, in the file's parameter units; `None`
     /// with the reason when the part does not hold it in full.
+    fn raw_pcurve(
+        &mut self,
+        original: &RawCurve2d,
+        carrier: &Surface,
+        surface: &m::SurfaceRef,
+    ) -> Result<Result<m::PcurveId, String>, AuthorError> {
+        let scaled;
+        let source = if let Some(units) = self.part.file_units()
+            && units != (1., 1.)
+            && !matches!(*carrier, Surface::Freeform { .. })
+            && let Some((u, v)) = carrier.file_parameter_scales(units)
+            && let Some((a, b)) = carrier.file_parameter_scales((1., 1.))
+        {
+            let Some(curve) = original.scaled(u / a, v / b) else {
+                return Ok(Err("invalid STEP parameter units or curve".into()));
+            };
+            scaled = curve;
+            &scaled
+        } else {
+            original
+        };
+        let item = match source {
+            RawCurve2d::Conic {
+                origin,
+                reference,
+                major,
+                minor,
+            } => {
+                let a = self.b.author();
+                let location = m::CartesianPointRef::CartesianPoint(
+                    a.add_cartesian_point("", (*origin).into())?,
+                );
+                let reference = reference
+                    .map(|r| {
+                        a.add_direction("", r.into())
+                            .map(m::DirectionRef::Direction)
+                    })
+                    .transpose()?;
+                let at = m::Axis2PlacementRef::Axis2Placement2d(
+                    a.add_axis2_placement2d("", location, reference)?,
+                );
+                match minor {
+                    Some(b) => {
+                        m::RepresentationItemRef::Ellipse(a.add_ellipse("", at, *major, *b)?)
+                    }
+                    None => m::RepresentationItemRef::Circle(a.add_circle("", at, *major)?),
+                }
+            }
+            RawCurve2d::Line {
+                point,
+                direction,
+                magnitude,
+            } => {
+                let a = self.b.author();
+                let p = a.add_cartesian_point("", (*point).into())?;
+                let d = a.add_direction("", (*direction).into())?;
+                let v = a.add_vector("", m::DirectionRef::Direction(d), *magnitude)?;
+                m::RepresentationItemRef::Line(a.add_line(
+                    "",
+                    m::CartesianPointRef::CartesianPoint(p),
+                    m::VectorRef::Vector(v),
+                )?)
+            }
+            RawCurve2d::BSpline {
+                degree,
+                points,
+                multiplicities,
+                knots,
+                weights,
+            } => {
+                let a = self.b.author();
+                let cps = points
+                    .iter()
+                    .map(|&p| {
+                        a.add_cartesian_point("", p.into())
+                            .map(m::CartesianPointRef::CartesianPoint)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                match bspline_curve(
+                    &mut self.b,
+                    usize::try_from(*degree).unwrap_or(usize::MAX),
+                    cps,
+                    knots.clone(),
+                    multiplicities.clone(),
+                    weights.as_deref(),
+                )? {
+                    m::CurveRef::BSplineCurveWithKnots(i) => {
+                        m::RepresentationItemRef::BSplineCurveWithKnots(i)
+                    }
+                    m::CurveRef::Complex(i) => m::RepresentationItemRef::Complex(i),
+                    #[allow(
+                        clippy::unreachable,
+                        reason = "bspline_curve returns only a B-spline curve or its rational complex"
+                    )]
+                    _ => unreachable!("bspline_curve makes a B-spline"),
+                }
+            }
+        };
+        self.pcurve_on(item, surface).map(Ok)
+    }
+
     fn pcurve(
         &mut self,
         face: usize,
@@ -1096,58 +1215,11 @@ impl<'p> Writer<'p> {
     ) -> Result<Result<m::PcurveId, String>, AuthorError> {
         let part = self.part;
         if raw {
-            let item = match &part.file_pcurves(face)[slot].1 {
-                RawCurve2d::Line {
-                    point,
-                    direction,
-                    magnitude,
-                } => {
-                    let a = self.b.author();
-                    let p = a.add_cartesian_point("", (*point).into())?;
-                    let d = a.add_direction("", (*direction).into())?;
-                    let v = a.add_vector("", m::DirectionRef::Direction(d), *magnitude)?;
-                    m::RepresentationItemRef::Line(a.add_line(
-                        "",
-                        m::CartesianPointRef::CartesianPoint(p),
-                        m::VectorRef::Vector(v),
-                    )?)
-                }
-                RawCurve2d::BSpline {
-                    degree,
-                    points,
-                    multiplicities,
-                    knots,
-                    weights,
-                } => {
-                    let a = self.b.author();
-                    let cps = points
-                        .iter()
-                        .map(|&p| {
-                            a.add_cartesian_point("", p.into())
-                                .map(m::CartesianPointRef::CartesianPoint)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    match bspline_curve(
-                        &mut self.b,
-                        usize::try_from(*degree).unwrap_or(usize::MAX),
-                        cps,
-                        knots.clone(),
-                        multiplicities.clone(),
-                        weights.as_deref(),
-                    )? {
-                        m::CurveRef::BSplineCurveWithKnots(i) => {
-                            m::RepresentationItemRef::BSplineCurveWithKnots(i)
-                        }
-                        m::CurveRef::Complex(i) => m::RepresentationItemRef::Complex(i),
-                        #[allow(
-                            clippy::unreachable,
-                            reason = "bspline_curve returns only a B-spline curve or its rational complex"
-                        )]
-                        _ => unreachable!("bspline_curve makes a B-spline"),
-                    }
-                }
-            };
-            return self.pcurve_on(item, surface).map(Ok);
+            return self.raw_pcurve(
+                &part.file_pcurves(face)[slot].1,
+                &part.faces[face].surface,
+                surface,
+            );
         }
         let f = &part.faces[face];
         // The reader scales STEP's parameters to the held ones; this file's are millimetres
@@ -1447,7 +1519,7 @@ impl<'p> Writer<'p> {
 
         // Each edge's pcurves: per face using it, its distinct entries (an edge a face uses
         // twice, a seam, has its pcurves listed once per use).
-        // (face, slot, whether the slot is of the file's pcurves on a freeform face)
+        // (face, slot, whether the slot holds a raw STEP pcurve)
         let mut uses: Vec<Vec<(usize, usize, bool)>> = vec![Vec::new(); part.edges.len()];
         let mut seam: Vec<bool> = vec![false; part.edges.len()];
         for (f, face) in part.faces.iter().enumerate() {
@@ -1461,19 +1533,16 @@ impl<'p> Writer<'p> {
                 if k > 1 {
                     seam[e] = true;
                 }
-                // The file's own pcurves where its parameters are this file's: on a freeform
-                // surface written with them, on an analytic one when the file was in
-                // millimetres and radians (the held ones are those, reduced).
+                // Raw analytic trims can be converted to the output units. A converted
+                // freeform patch must still use the source surface's parameterisation.
                 let analytic = !matches!(face.surface, Surface::Freeform { .. });
                 let raw = !part.file_pcurves(f).is_empty()
                     && if analytic {
-                        part.file_units() == Some((1.0, 1.0))
+                        part.file_units().is_some()
                     } else {
                         self.file_parameters[f]
                     };
-                // The file's pcurves on this face that are not written (a freeform surface
-                // written without the file's parameters, an analytic one from a file in other
-                // units, where only the reduced held ones can be): reported.
+                // Report any raw trim that cannot be represented on the emitted surface.
                 if !raw {
                     let file = part
                         .file_pcurves(f)
@@ -1485,8 +1554,7 @@ impl<'p> Writer<'p> {
                     if missing > 0 {
                         report.pcurves_not_written.push(format!(
                             "face {f} edge {e}: {missing} of the file's pcurves (the surface is \
-                             not written with the file's parameters, or the file's units are not \
-                             millimetres and radians)"
+                             not written with the file's parameters or its units are unknown)"
                         ));
                     }
                 }
@@ -1513,6 +1581,18 @@ impl<'p> Writer<'p> {
             let curve = self.curve(i)?;
             let mut pcurves = Vec::new();
             let mut master = m::PreferredSurfaceCurveRepresentation::Curve3d;
+            if let Some((s, raw)) = part.detached_pcurves.get(&i) {
+                let held = s.placed(&self.edge_at(i));
+                if let Some(carrier) = analytic_surface(&mut self.b, &held, None)? {
+                    match self.raw_pcurve(raw, &held, &carrier)? {
+                        Ok(p) => {
+                            master = m::PreferredSurfaceCurveRepresentation::PcurveS1;
+                            pcurves.push(m::PcurveOrSurfaceRef::Pcurve(p));
+                        }
+                        Err(why) => report.pcurves_not_written.push(format!("edge {i}: {why}")),
+                    }
+                }
+            }
             for &(f, slot, raw) in &uses[i] {
                 if pcurves.len() == 2 {
                     report.pcurves_not_written.push(format!(
@@ -1587,9 +1667,13 @@ impl<'p> Writer<'p> {
                     }
                     m::LoopRef::EdgeLoop(a.add_edge_loop("", list)?)
                 };
-                bounds.push(m::FaceBoundRef::FaceBound(
-                    self.b.author().add_face_bound("", bound, !reverse)?,
-                ));
+                bounds.push(if part.outer_bounds.get(&f) == Some(&l) {
+                    m::FaceBoundRef::FaceOuterBound(
+                        self.b.author().add_face_outer_bound("", bound, !reverse)?,
+                    )
+                } else {
+                    m::FaceBoundRef::FaceBound(self.b.author().add_face_bound("", bound, !reverse)?)
+                });
             }
             face_ids.push(self.b.author().add_advanced_face(
                 "",

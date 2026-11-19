@@ -1983,7 +1983,7 @@ fn arc_label(part: &Part, a: usize, b: usize) -> &'static str {
     let arc = part.arc(a, b);
     let (mut tangent, mut folded, mut other) = (0, 0, 0);
     for e in part.shared_edges(a, b) {
-        let p = part.edges[e].midpoint();
+        let p = part.edge_midpoint(e);
         let normal = |f: usize| {
             let (u, v) = part.faces[f].surface.parameters(p, None)?;
             part.face_normal(f, u, v)

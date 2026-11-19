@@ -248,8 +248,7 @@ fn from_round(part: &Part, face: usize) -> Option<Occurrence<VChannel>> {
     let at = geom::add(apex, geom::scale(delta, 0.5));
     let mut context = vec![face];
     for &end in &ends {
-        let e = &part.edges[end];
-        let side = geom::dot(geom::sub(e.midpoint(), ta), axis);
+        let side = geom::dot(geom::sub(part.edge_midpoint(end), ta), axis);
         let direction = if side > 0.5 * length {
             axis
         } else {

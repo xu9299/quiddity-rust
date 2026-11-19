@@ -124,7 +124,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
     }
     for &(rim, center) in &rims {
         if geom::dist(
-            geom::sub(center, part.edges[rim].midpoint()),
+            geom::sub(center, part.edge_midpoint(rim)),
             geom::scale(opening, radius),
         ) > tolerance
         {
@@ -136,8 +136,7 @@ fn from_floor(part: &Part, floor: usize) -> Option<Occurrence<SemicircularBlindS
     for (side, wall) in sides.into_iter().zip(&walls) {
         context.push(exterior(part, side, wall.lip, opening)?);
         for &edge in &wall.ends {
-            let e = &part.edges[edge];
-            let station = geom::dot(geom::sub(e.midpoint(), mouth_center), axis);
+            let station = geom::dot(geom::sub(part.edge_midpoint(edge), mouth_center), axis);
             if station.abs() <= tolerance {
                 context.push(exterior(part, side, edge, geom::scale(axis, -1.))?);
             } else if (station - length).abs() <= tolerance

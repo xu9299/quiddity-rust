@@ -276,7 +276,7 @@ fn from_bottom(
     {
         return None;
     }
-    let mid = |e: usize| part.edges[e].midpoint();
+    let mid = |e: usize| part.edge_midpoint(e);
     let mut axis = [0.; 3];
     axis[slab.axis] = 1.;
     Some(Occurrence {

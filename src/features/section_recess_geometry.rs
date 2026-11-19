@@ -916,7 +916,7 @@ fn mixed_floor_section(
         let edge = &part.edges[e];
         let mut bulge = 0.0;
         if let Curve::Circle { radius, .. } = edge.curve {
-            let mid = project(edge.midpoint(), &frame);
+            let mid = project(part.edge_midpoint(e), &frame);
             let turn =
                 (mid[0] - start[0]) * (end[1] - mid[1]) - (mid[1] - start[1]) * (end[0] - mid[0]);
             if turn.abs() <= 1e-12 {

@@ -397,7 +397,7 @@ impl<'a> PartMesher<'a> {
         }
         let sheet = Sheet::new(&f.surface);
         let raw = part
-            .uv_loops(face)
+            .mesh_uv_loops(face)
             .ok_or("its boundary has no parameter-space loops")?;
         let mut loops = Vec::with_capacity(raw.len());
         let mut uv = BTreeMap::new();
@@ -460,7 +460,7 @@ impl<'a> PartMesher<'a> {
     /// Edge `edge`'s points at thinning level `level` (see [`BOUNDARY_LEVELS`]).
     fn make_plan(&self, edge: usize, level: usize) -> Plan {
         let part = self.part;
-        let samples = &part.edges[edge].samples;
+        let samples = part.boundary_edge_samples(edge);
         let n = samples.len();
         let boundary = BOUNDARY_LEVELS[level] * self.deflection;
         // The faces' views of the samples.
@@ -691,7 +691,10 @@ fn straying(
                         break;
                     };
                     let e = edges[place].0;
-                    let off = geom::dist(sheet.value(on.0, on.1), part.edges[e].samples[sample]);
+                    let off = geom::dist(
+                        sheet.value(on.0, on.1),
+                        part.boundary_edge_samples(e)[sample],
+                    );
                     if off > deflection {
                         inside = Some(d.signum());
                         break;
@@ -750,7 +753,7 @@ fn triangulate_face(
     let surface = sheet.surface;
     let period = sheet.period;
     let raw = part
-        .uv_loops(face)
+        .mesh_uv_loops(face)
         .ok_or("its boundary has no parameter-space loops")?;
     let poles = Poles::new(part, face, &sheet, plans, alias, deflection);
 

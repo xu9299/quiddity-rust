@@ -173,16 +173,16 @@ impl<'a> RayCaster<'a> {
 
     fn with_geometry(part: &'a Part, faces: Vec<usize>, face_boxes: FaceBoxes<'a>) -> Self {
         let edges = part.ray_edges.get_or_init(|| RayEdges {
-            boxes: part
-                .edges
-                .iter()
+            boxes: (0..part.edges.len())
                 .map(|e| {
                     let mut b = Bounds::empty();
-                    e.samples.iter().for_each(|p| b.add(*p));
+                    part.boundary_edge_samples(e).iter().for_each(|p| b.add(*p));
                     b
                 })
                 .collect(),
-            runs: part.edges.iter().map(|e| runs(&e.samples)).collect(),
+            runs: (0..part.edges.len())
+                .map(|e| runs(part.boundary_edge_samples(e)))
+                .collect(),
             cracks: (0..part.edges.len())
                 .map(|_| std::sync::OnceLock::new())
                 .collect(),
@@ -521,7 +521,7 @@ impl<'a> RayCaster<'a> {
             let band = COORD_FLOOR + deviation;
             deviation > COORD_FLOOR
                 && self.edge_boxes[e].contains(q, OVERSHOOT_BANDS * band)
-                && geom::dist(nearest_on_edge(&part.edges[e], q).0, q) <= OVERSHOOT_BANDS * band
+                && geom::dist(part.nearest_boundary_point(e, q).0, q) <= OVERSHOOT_BANDS * band
                 && self.past_neighbour(i, e, band, q)
         })
     }
@@ -542,7 +542,7 @@ impl<'a> RayCaster<'a> {
                 .parameters(p, None)
                 .map(|(u, v)| surface.value(u, v))
         };
-        let Some(foot) = onto(nearest_on_edge(&part.edges[e], q).0) else {
+        let Some(foot) = onto(part.nearest_boundary_point(e, q).0) else {
             return false;
         };
         let Some(away) = geom::unit(geom::sub(q, foot)) else {
@@ -579,8 +579,13 @@ impl<'a> RayCaster<'a> {
     /// Whether edge *e*'s polyline passes within *reach* of *q*: `polyline_distance(q, samples)
     /// <= reach`, the same distances compared.
     fn polyline_within(&self, e: usize, q: V3, reach: f64) -> bool {
-        segments_near(&self.part.edges[e].samples, &self.edge_runs[e], q, reach)
-            .any(|w| point_segment_distance(q, w[0], w[1]) <= reach)
+        segments_near(
+            self.part.boundary_edge_samples(e),
+            &self.edge_runs[e],
+            q,
+            reach,
+        )
+        .any(|w| point_segment_distance(q, w[0], w[1]) <= reach)
     }
 
     /// Whether a point on face *i*'s surface lies on the face: inside its trim, on its boundary
@@ -670,7 +675,7 @@ impl<'a> RayCaster<'a> {
             }
             // The polyline only finds the edges near; the distance that decides is the curve's,
             // at the tolerance OpenCascade's intersector is loaded with.
-            let (c, between_ends) = nearest_on_edge(edge, q);
+            let (c, between_ends) = part.nearest_boundary_point(e, q);
             let d = geom::dist(c, q);
             on_edge |= d <= COORD_FLOOR;
             if in_band.is_none() {
@@ -699,7 +704,7 @@ impl<'a> RayCaster<'a> {
                     surface,
                     q,
                     uv,
-                    &part.edges[e].samples,
+                    part.boundary_edge_samples(e),
                     &self.edge_runs[e],
                     c,
                     reach,
@@ -986,6 +991,12 @@ pub(super) fn polyline_distance(p: V3, samples: &[V3]) -> f64 {
 }
 
 impl Part {
+    fn nearest_boundary_point(&self, e: usize, q: V3) -> (V3, bool) {
+        self.spatial_trim(e)
+            .and_then(|(s, c)| c.nearest(s, &self.edges[e], q))
+            .unwrap_or_else(|| nearest_on_edge(&self.edges[e], q))
+    }
+
     /// Each of the face's edges with the furthest its samples lie from the face's surface.
     pub fn edge_deviation(&self, face: usize) -> &[(usize, f64)] {
         self.cache[face].edge_deviation.get_or_init(|| {
@@ -994,13 +1005,16 @@ impl Part {
                 .into_iter()
                 .map(|e| {
                     let mut hint = None;
-                    let worst = self.edges[e].samples.iter().fold(0.0f64, |worst, &p| {
-                        let Some(uv) = surface.parameters(p, hint) else {
-                            return worst;
-                        };
-                        hint = Some(uv);
-                        worst.max(geom::dist(surface.value(uv.0, uv.1), p))
-                    });
+                    let worst = self
+                        .boundary_edge_samples(e)
+                        .iter()
+                        .fold(0.0f64, |worst, &p| {
+                            let Some(uv) = surface.parameters(p, hint) else {
+                                return worst;
+                            };
+                            hint = Some(uv);
+                            worst.max(geom::dist(surface.value(uv.0, uv.1), p))
+                        });
                     (e, worst)
                 })
                 .collect()

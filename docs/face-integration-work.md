@@ -62,80 +62,51 @@ ordered `E > F` guard cannot trigger. Once it does trigger, Rust's `f64::max` ca
 reduce the non-NaN `E`, even if a later estimate is NaN. Evaluation failures remain
 failures; no new numerical answer is invented.
 
-## Boundary selection for face integrals
+## STEP face boundaries
 
-One complete, explicit STEP master-pcurve loop on a native, nonperiodic,
-noncollapsed B-spline or Bézier surface takes precedence when its canonical
-mass passes the checks below. Otherwise the projected 3D edges define the
-integration region. Near parallel surface tangents
-can make Gauss–Newton oscillate even with small position residuals; using the file's
-selected trim supplies positions and derivatives without that ill-conditioned solve.
-Faces using this path measure the region bounded by the **file's master pcurves**. This
-can differ from a 3D-edge answer by the file's own representation disagreement.
+A STEP surface curve has a spatial curve and up to two associated geometric
+representations. Its master flag selects the 3D curve or one of those slots.
+The pcurve's two coordinates belong to its named carrier. For a different
+incident face, the evaluator lifts it on its carrier and locates that spatial
+point on the receiving face. A retained analytic carrier can also stand alone
+without a topological face. A spatial master goes through the existing
+projection. Both choices may appear in the same loop. An explicit
+`FACE_OUTER_BOUND` supplies the outer contour. Where the file gives only
+ordinary face bounds, loop placement infers which one encloses the others.
 
-Each edge needs exactly one master pcurve, finite controls within the surface
-domain, and matching endpoints within the file's stated precision plus the kernel
-coordinate floor. The boundary check samples `|S(pc(t)) - C3d(t)|` at 33 equally
-spaced parameters (including endpoints) on **every span in the union of the 2D and
-3D curves' knot breaks**. Nonfinite distances or a sampled maximum greater than
-`0.001 * L` rule out the master trim. Here `L` is the diagonal of this trimmed face's
-`Part::face_bounds` axis-aligned box, in millimetres, with no unit-size floor. This
-is the bounding-box length normalization used for GVP centroid evidence; tensor
-comparisons separately normalize by the reference inertia trace. The interior
-check bounds sampled disagreement, not an unsampled mathematical supremum. It
-uses the existing GVP band, not STEP's usually much tighter declared precision.
-Endpoint and small-gap connectivity checks retain their original precision band.
+Analytic elementary surfaces and native B-spline and Bézier patches retain
+their own parameter units. For a converted swept patch the mapping accounts
+for the extrusion vector's magnitude or the rational quadratic parametrisation
+of each quarter revolution. Edge vertices delimit each pcurve in its own
+parameter. Periodic seams can shift a parameter by a whole turn, and a
+collapsed side can have several parameter values for one physical point.
 
-The master trim also requires `maximum_deviation * P / A <= 0.001`, using that **same
-sampled maximum**, the physical length `P` of the master trim on the surface
-(including the short UV closing segments), and its integrated area `A`. This
-rejects long thin strips whose disagreement is small against the diagonal but
-large against their width. Length uses bounded adaptive Gauss–Kronrod with a
-face-relative error budget; its summed estimated length error is added to `P`.
-The area already passes the master-trim integrator's numerical criteria before
-this guard runs, and neither mass nor moments are published before it passes.
+The kernel first certifies the declared region. The specialised integrator for
+one open spline patch remains available. Other evaluable regions use the
+general boundary integral, including holes and loops that wind around a
+periodic direction. Its density and orientation are those of the receiving
+surface. The same accepted region supplies area, flux, moments, containment,
+trim bounds and edge queries. Solid volume consumes the face flux. A whole
+sphere with a vertex loop uses its analytic formula.
 
-A known recall limit is that a NURBS pcurve's **whole knot domain must equal the
-edge interval**: a valid subinterval trim is still ineligible. Unsupported,
-missing, ambiguous or unresolved master trims remain unavailable.
+Endpoint matches and closing paths are checked against the file's length
+uncertainty plus the coordinate floor. Interior checks sample the union of the
+two representations' knot spans in physical coordinates. A sampled departure
+over one thousandth of the boundary's reference diagonal, or a departure times
+perimeter greater than one thousandth of area, rejects the declared region.
+These are sampled representation checks. Independent curve parameters can
+advance at different rates on the same spatial arc. The spatial curve remains
+available if a declaration cannot be evaluated or the integral fails its error
+checks. The mass cache publishes the chosen method along with its result so
+the first query for a centroid cannot choose another boundary.
 
-The outer rule retains its coarse `F = 1e-11 * magnitude`, `1e-9` local criterion,
-`MAX_DEPTH = 12`, and kink budget. Inner adaptive primitives sum their error
-estimates, use the same depth bound, and receive half of F through a conservative
-pcurve variation bound. Their explicitly node-paired weighted errors enter each
-outer panel's estimate. Unresolved integrals still refuse. These are numerical
-error estimates, as in the legacy walk, rather than rigorous true-error bounds.
-
-Canonical mass and boundary choice are published under one once-cell before any
-moments escape, including concurrent first queries. A moment query first tests
-canonical mass on the master trim. If it falls back to projection, the combined
-pass shares projected mass and moment work. Further moment queries use the
-boundary already chosen for mass.
-A completed but invalid canonical sum stays refused, as in a standalone mass query.
-A failure evaluating additional moment fields before canonical mass was determined
-still needs an independent canonical query; it cannot poison a valid mass cache.
-
-The analytic square in `master-trim-square.step` has a straight lower 3D edge
-and a bowed master pcurve, `y = 2hx(1 − x)` over `0 ≤ x ≤ 1`. Both boundaries
-integrate. The projected square has area 1 mm², while the master trim encloses
-`1 − h/3` mm². With `h = 0.0004`, the expected area is 0.9998666667 mm².
-
-### Export of source master flags
-
-STEP export preserves the source `PCURVE_S1`/`PCURVE_S2` flag on raw master slots
-of native B-spline and Bézier faces before any mass query. A source `CURVE_3D`
-designation stays `CURVE_3D`. This deliberately changes
-1,126 faces across the 11 flagged corpus files relative to the previous writer
-on main, which always emitted `CURVE_3D` for them. Export copies retained source
-metadata without integrating or consulting query-populated caches, preserving
-identical bytes with and without prior mass queries.
-
-The synthetic regression uses polynomial normal-offset edges on
-`S(u,v)=(w*u+v, epsilon*v, v²)`, with independent one-dimensional references for
-area, flux, centroid and central moments. The original narrow cases are rejected by the representation guards; a broad
-patch retains a localized ill-conditioned projection near its boundary while
-satisfying both bands. Endpoint-matching interior bulges also refuse. Neither reference bands
-nor quadrature tolerances are enlarged (ADR 0008).
+The bowed edge in `master-trim-square.step` has height
+`y = 2 h x (1 − x)` for `0 ≤ x ≤ 1`. Its 3D approximation is straight.
+The two areas are 1 and `1 − h/3` mm². For `h = 0.0004` the file selects
+0.9998666667 mm². Regression cases use the same construction on a plane,
+a trimmed patch with a hole, a seam-crossing cylinder and swept surfaces.
+STEP export retains selected raw pcurves and the explicit outer bound without
+requiring an area calculation.
 
 ## Settled volume queries
 

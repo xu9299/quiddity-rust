@@ -220,7 +220,12 @@ fn segment(
         Curve::Line { .. } => OpenCircularSectionSegment::line(start, end),
         Curve::Circle { frame, radius } => {
             let centre = project(frame.origin, axis);
-            let sweep = arc_sweep(centre, project(e.midpoint(), axis), *start, *end);
+            let sweep = arc_sweep(
+                centre,
+                project(part.edge_midpoint(edge), axis),
+                *start,
+                *end,
+            );
             OpenCircularSectionSegment::arc(
                 start,
                 end,

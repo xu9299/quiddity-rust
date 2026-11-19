@@ -418,14 +418,41 @@ impl Reader<'_> {
         }
     }
 
-    /// A 2D line or B-spline as the file states it.
+    /// A parameter-space curve in file coordinates.
     fn raw_curve_2d(&self, item: &m::RepresentationItemRef) -> Option<RawCurve2d> {
         let model = self.model;
         let point = |r: &m::CartesianPointRef| {
             let c = self.raw_point(r)?;
             Some([c[0], c[1]])
         };
+        let conic = |placement: &m::Axis2PlacementRef, major, minor| {
+            let m::Axis2PlacementRef::Axis2Placement2d(id) = placement else {
+                return None;
+            };
+            let at = model.get(m::Axis2Placement2dId(id.0))?;
+            let reference = match &at.ref_direction {
+                Some(d) => {
+                    let r = self.raw_ratios(d)?;
+                    Some([r[0], r[1]])
+                }
+                None => None,
+            };
+            Some(RawCurve2d::Conic {
+                origin: point(&at.location)?,
+                reference,
+                major,
+                minor,
+            })
+        };
         Some(match item {
+            m::RepresentationItemRef::Circle(i) => {
+                let c = model.get(m::CircleId(i.0))?;
+                conic(&c.position, c.radius, None)?
+            }
+            m::RepresentationItemRef::Ellipse(i) => {
+                let c = model.get(m::EllipseId(i.0))?;
+                conic(&c.position, c.semi_axis_1, Some(c.semi_axis_2))?
+            }
             m::RepresentationItemRef::Line(i) => {
                 let l = model.get(m::LineId(i.0))?;
                 let (d, magnitude) = self.raw_vector(&l.dir)?;
@@ -478,7 +505,7 @@ impl Reader<'_> {
         &self,
         face: &StepFace<'_>,
         edge_index: &HashMap<m::EntityKey, usize>,
-        collect_preferred: bool,
+        detached: &mut std::collections::BTreeMap<usize, (Surface, RawCurve2d)>,
     ) -> (Vec<(usize, RawCurve2d)>, Vec<usize>) {
         let basis = face.surface().key();
         let mut out = Vec::new();
@@ -504,7 +531,13 @@ impl Reader<'_> {
                         continue;
                     };
                     let pcurve = self.model.resolved(m::PcurveId(p.0));
-                    if pcurve.basis_surface.entity_key() != basis {
+                    let own = pcurve.basis_surface.entity_key() == basis;
+                    let selected = matches!(
+                        (master, slot),
+                        (m::PreferredSurfaceCurveRepresentation::PcurveS1, 0)
+                            | (m::PreferredSurfaceCurveRepresentation::PcurveS2, 1)
+                    );
+                    if !own && (!selected || detached.contains_key(&index)) {
                         continue;
                     }
                     let m::DefinitionalRepresentationRef::DefinitionalRepresentation(d) =
@@ -518,13 +551,17 @@ impl Reader<'_> {
                         .items
                     {
                         if let Some(curve) = self.raw_curve_2d(item) {
-                            if collect_preferred
-                                && matches!(
-                                    (master, slot),
-                                    (m::PreferredSurfaceCurveRepresentation::PcurveS1, 0)
-                                        | (m::PreferredSurfaceCurveRepresentation::PcurveS2, 1)
-                                )
-                            {
+                            if !own {
+                                let native = Reader {
+                                    placement: IDENTITY,
+                                    ..*self
+                                };
+                                if let Some(s) = native.independent_carrier(&pcurve.basis_surface) {
+                                    detached.insert(index, (s, curve));
+                                }
+                                break;
+                            }
+                            if selected {
                                 primary.push(out.len());
                             }
                             out.push((index, curve));
@@ -534,6 +571,47 @@ impl Reader<'_> {
             }
         }
         (out, primary)
+    }
+
+    /// An unbounded carrier referenced by a pcurve without an incident topological face.
+    fn independent_carrier(&self, r: &m::SurfaceRef) -> Option<Surface> {
+        let m = self.model;
+        Some(match r {
+            m::SurfaceRef::Plane(i) => Surface::Plane {
+                frame: self.placement(&m.get(m::PlaneId(i.0))?.position)?,
+            },
+            m::SurfaceRef::CylindricalSurface(i) => {
+                let s = m.get(m::CylindricalSurfaceId(i.0))?;
+                Surface::Cylinder {
+                    frame: self.placement(&s.position)?,
+                    radius: self.to_mm * s.radius,
+                }
+            }
+            m::SurfaceRef::ConicalSurface(i) => {
+                let s = m.get(m::ConicalSurfaceId(i.0))?;
+                Surface::Cone {
+                    frame: self.placement(&s.position)?,
+                    radius: self.to_mm * s.radius,
+                    semi_angle: self.to_rad * s.semi_angle,
+                }
+            }
+            m::SurfaceRef::SphericalSurface(i) => {
+                let s = m.get(m::SphericalSurfaceId(i.0))?;
+                Surface::Sphere {
+                    frame: self.placement(&s.position)?,
+                    radius: self.to_mm * s.radius,
+                }
+            }
+            m::SurfaceRef::ToroidalSurface(i) => {
+                let s = m.get(m::ToroidalSurfaceId(i.0))?;
+                Surface::Torus {
+                    frame: self.placement(&s.position)?,
+                    major: self.to_mm * s.major_radius,
+                    minor: self.to_mm * s.minor_radius,
+                }
+            }
+            _ => return None,
+        })
     }
 
     /// The file's frame ratios of an analytic surface.
@@ -655,14 +733,12 @@ impl Reader<'_> {
         edges: &[Edge],
     ) -> (Vec<(usize, Pcurve)>, Vec<Option<PcurveSpline>>) {
         let basis = face.surface().key();
-        let (su, sv) = match surface {
-            Surface::Plane { .. } => (self.to_mm, self.to_mm),
-            Surface::Cylinder { .. } => (self.to_rad, self.to_mm),
-            // STEP's cone v is axial height; OpenCascade's runs along the slant.
-            Surface::Cone { semi_angle, .. } => (self.to_rad, self.to_mm / semi_angle.cos()),
-            Surface::Sphere { .. } | Surface::Torus { .. } => (self.to_rad, self.to_rad),
-            Surface::Freeform { .. } | Surface::Other { .. } => return (Vec::new(), Vec::new()),
+        let Some((su, sv)) = surface.file_parameter_scales((self.to_mm, self.to_rad)) else {
+            return (Vec::new(), Vec::new());
         };
+        if matches!(surface, Surface::Freeform { .. }) {
+            return (Vec::new(), Vec::new());
+        }
         let scale = |(u, v): (f64, f64)| (u * su, v * sv);
         let mut out = Vec::new();
         // Per pcurve held, its B-spline form when it is one (for writing it back).
@@ -2167,6 +2243,8 @@ fn build(parsed: &Parsed, scope: Scope<'_>) -> Result<Read, StepError> {
     let mut swept = std::collections::BTreeMap::new();
     let mut file_pcurves = std::collections::BTreeMap::new();
     let mut primary_pcurves = std::collections::BTreeMap::new();
+    let mut detached_pcurves = std::collections::BTreeMap::new();
+    let mut outer_bounds = std::collections::BTreeMap::new();
     let (mut native_faces, mut native_edges) = (Vec::new(), Vec::new());
     let mut vertex_count = 0;
     for (is_solid, placement, faces, instance) in shells {
@@ -2226,7 +2304,11 @@ fn build(parsed: &Parsed, scope: Scope<'_>) -> Result<Read, StepError> {
             // Validate raw/scene cardinalities before building partial topology.
             ids.face(&face)?;
             let mut loops = Vec::new();
+            let mut declared_outer = Vec::new();
             for bound in face.bounds() {
+                if matches!(bound.key(), m::EntityKey::FaceOuterBound(_)) {
+                    declared_outer.push(loops.len());
+                }
                 let mut edges = Vec::new();
                 for (edge, forward) in bound.oriented_edges() {
                     if edges.len() >= limits::LOOP_EDGES {
@@ -2328,9 +2410,10 @@ fn build(parsed: &Parsed, scope: Scope<'_>) -> Result<Read, StepError> {
             {
                 swept.insert(out_faces.len(), source);
             }
-            let collect_preferred =
-                matches!(&surface,Surface::Freeform{kind,..} if matches!(*kind,"BSPLINE"|"BEZIER"));
-            let (raw, primary) = reader.file_pcurves(&face, &edge_index, collect_preferred);
+            if let [outer] = declared_outer.as_slice() {
+                outer_bounds.insert(out_faces.len(), *outer);
+            }
+            let (raw, primary) = reader.file_pcurves(&face, &edge_index, &mut detached_pcurves);
             if !primary.is_empty() {
                 primary_pcurves.insert(out_faces.len(), primary);
             }
@@ -2415,7 +2498,12 @@ fn build(parsed: &Parsed, scope: Scope<'_>) -> Result<Read, StepError> {
                 .ok_or_else(|| StepError::Unsupported("instance numbering differs".into()))?;
         }
     }
-    let part = Part::new(out_faces, edges_out, solids)
+    for (&f, slots) in &primary_pcurves {
+        for &slot in slots {
+            detached_pcurves.remove(&file_pcurves[&f][slot].0);
+        }
+    }
+    let mut part = Part::new(out_faces, edges_out, solids)
         .with_declared_length_unit(declared_length_unit)
         .with_unresolved(unresolved_faces, unresolved_edges)
         .with_sources(face_sources, edge_sources)
@@ -2430,8 +2518,10 @@ fn build(parsed: &Parsed, scope: Scope<'_>) -> Result<Read, StepError> {
             (reader.to_mm, reader.to_rad),
             units.precision.map(|p| p * reader.to_mm),
         )
-        .with_native_geometry(native_faces, native_edges)
-        .repair_inverted_shells();
+        .with_native_geometry(native_faces, native_edges);
+    part.outer_bounds = outer_bounds;
+    part.detached_pcurves = detached_pcurves;
+    let part = part.repair_inverted_shells();
     Ok(Read {
         part,
         instances: instance_of,

@@ -1,0 +1,691 @@
+//! STEP selects the master representation per edge. Each usable selection keeps its
+//! own parameter interval. The 3D edge and a pcurve need not use the same parameter.
+use super::*;
+use crate::brep::RawCurve2d;
+use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
+mod parameters;
+use parameters::Axis;
+
+#[derive(Debug)]
+pub(crate) struct ParamCurve {
+    source: Curve,
+    axes: [Axis; 2],
+    transfer: Option<Box<Transfer>>,
+}
+
+#[derive(Debug)]
+struct Transfer {
+    carrier: Arc<Surface>,
+    face: Arc<Surface>,
+    carrier_spans: (f64, f64),
+    face_spans: (f64, f64),
+}
+
+impl ParamCurve {
+    fn carrier_uv(&self, t: f64) -> V3 {
+        let p = self.source.value(t);
+        [self.axes[0].at(p[0]).0, self.axes[1].at(p[1]).0, 0.]
+    }
+    fn lifted(&self, t: f64, tr: &Transfer) -> ((f64, f64), V3) {
+        let q = self.carrier_uv(t);
+        let uv = wrap_closed(&tr.carrier, tr.carrier_spans, (q[0], q[1]));
+        (uv, tr.carrier.value(uv.0, uv.1))
+    }
+    pub(crate) fn value(&self, t: f64) -> V3 {
+        if let Some(tr) = &self.transfer {
+            let (_, p) = self.lifted(t, tr);
+            tr.face
+                .parameters(p, None)
+                .map_or([f64::NAN; 3], |(u, v)| [u, v, 0.])
+        } else {
+            self.carrier_uv(t)
+        }
+    }
+    pub(crate) fn derivative(&self, t: f64) -> V3 {
+        let p = self.source.value(t);
+        let d = self.source.derivative(t);
+        let velocity = [
+            self.axes[0].at(p[0]).1 * d[0],
+            self.axes[1].at(p[1]).1 * d[1],
+            0.,
+        ];
+        let Some(tr) = &self.transfer else {
+            return velocity;
+        };
+        let ((u, v), xyz) = self.lifted(t, tr);
+        let (su, sv) = tr.carrier.partials(u, v);
+        let tangent = geom::add(geom::scale(su, velocity[0]), geom::scale(sv, velocity[1]));
+        let Some((u, v)) = tr.face.parameters(xyz, None) else {
+            return [f64::NAN; 3];
+        };
+        let (du, dv) = uv_velocity(&tr.face, tr.face_spans, u, v, xyz, tangent);
+        [du, dv, 0.]
+    }
+    fn parameter(&self, q: V3) -> f64 {
+        let q = if let Some(tr) = &self.transfer {
+            let (u, v) = wrap_closed(&tr.face, tr.face_spans, (q[0], q[1]));
+            let p = tr.face.value(u, v);
+            let Some((u, v)) = tr.carrier.parameters(p, None) else {
+                return f64::NAN;
+            };
+            [u, v, 0.]
+        } else {
+            q
+        };
+        self.source
+            .parameter([self.axes[0].inverse(q[0]), self.axes[1].inverse(q[1]), 0.])
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct EdgeTrim {
+    pub(crate) curve: ParamCurve,
+    spans: (f64, f64),
+    pub(crate) interval: (f64, f64),
+    pub(crate) deviation: f64,
+    samples: OnceLock<Option<TrimSamples>>,
+    midpoint: OnceLock<Option<V3>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct TrimSamples {
+    pub(crate) ts: Vec<f64>,
+    pub(crate) points: Vec<V3>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct DeclaredBoundary {
+    pub(crate) edges: BTreeMap<usize, EdgeTrim>,
+    pub(crate) loops: OnceLock<Option<Vec<UvLoop>>>,
+    pub(crate) domain: OnceLock<Option<crate::uv::FaceDomain>>,
+}
+
+fn stationary_parameters(ts: &mut Vec<f64>, dirs: &[V3], velocity: impl Fn(f64) -> V3) {
+    let spans = ts.clone();
+    for dir in dirs {
+        for span in spans.windows(2) {
+            let (mut lo, mut hi) = (span[0], span[1]);
+            let left = geom::dot(velocity(lo), *dir);
+            let right = geom::dot(velocity(hi), *dir);
+            if left * right >= 0. {
+                continue;
+            }
+            for _ in 0..52 {
+                let mid = 0.5 * (lo + hi);
+                if geom::dot(velocity(mid), *dir).is_sign_negative() == left.is_sign_negative() {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            ts.push(0.5 * (lo + hi));
+        }
+    }
+}
+
+impl EdgeTrim {
+    fn point(&self, s: &Surface, t: f64) -> V3 {
+        if let Some(tr) = &self.curve.transfer {
+            return self.curve.lifted(t, tr).1;
+        }
+        let (u, v) = self.surface_uv(s, t);
+        s.value(u, v)
+    }
+
+    fn half_length_point(&self, s: &Surface) -> Option<V3> {
+        *self.midpoint.get_or_init(|| {
+            let nodes = self.nodes()?;
+            let speed = |t| {
+                let (u, v) = self.surface_uv(s, t);
+                let (su, sv) = s.partials(u, v);
+                let d = self.curve.derivative(t);
+                [geom::norm(geom::add(
+                    geom::scale(su, d[0]),
+                    geom::scale(sv, d[1]),
+                ))]
+            };
+            let lengths: Vec<_> = nodes
+                .windows(2)
+                .map(|w| integrate(w, speed)[0].abs())
+                .collect();
+            let mut remaining = 0.5 * lengths.iter().sum::<f64>();
+            for (w, length) in nodes.windows(2).zip(lengths) {
+                if remaining > length {
+                    remaining -= length;
+                    continue;
+                }
+                let (mut a, mut b) = (w[0], w[1]);
+                for _ in 0..48 {
+                    let m = 0.5 * (a + b);
+                    if integrate(&[w[0], m], speed)[0].abs() < remaining {
+                        a = m;
+                    } else {
+                        b = m;
+                    }
+                }
+                return Some(self.point(s, 0.5 * (a + b)));
+            }
+            None
+        })
+    }
+
+    pub(crate) fn nearest(
+        &self,
+        s: &Surface,
+        edge: &crate::brep::Edge,
+        q: V3,
+    ) -> Option<(V3, bool)> {
+        let samples = self.samples(s, edge)?;
+        let mut best = (self.interval.0, self.point(s, self.interval.0));
+        let end = (self.interval.1, self.point(s, self.interval.1));
+        if geom::dist(q, end.1) < geom::dist(q, best.1) {
+            best = end;
+        }
+        // Chords select candidate intervals only. Minimise on the lifted curve
+        // and compare its actual endpoints so a vertex remains a vertex.
+        for (w, p) in samples.ts.windows(2).zip(samples.points.windows(2)) {
+            let chord = geom::sub(p[1], p[0]);
+            let fraction =
+                (geom::dot(geom::sub(q, p[0]), chord) / geom::dot(chord, chord)).clamp(0., 1.);
+            let foot = geom::add(p[0], geom::scale(chord, fraction));
+            if geom::dist(q, foot) > geom::dist(q, best.1) + crate::sampling::CHORD_TOLERANCE {
+                continue;
+            }
+            let (mut a, mut b) = (w[0], w[1]);
+            for _ in 0..56 {
+                let l = (2. * a + b) / 3.;
+                let r = (a + 2. * b) / 3.;
+                if geom::dist(q, self.point(s, l)) <= geom::dist(q, self.point(s, r)) {
+                    b = r;
+                } else {
+                    a = l;
+                }
+            }
+            let t = 0.5 * (a + b);
+            let p = self.point(s, t);
+            if geom::dist(q, p) < geom::dist(q, best.1) {
+                best = (t, p);
+            }
+        }
+        Some((
+            best.1,
+            edge.is_closed() || (best.0 != self.interval.0 && best.0 != self.interval.1),
+        ))
+    }
+    pub(crate) fn samples(&self, s: &Surface, edge: &crate::brep::Edge) -> Option<&TrimSamples> {
+        self.samples
+            .get_or_init(|| {
+                let ts = self.nodes()?;
+                let eval = |t| {
+                    let (u, v) = self.surface_uv(s, t);
+                    s.value(u, v)
+                };
+                let mut samples = TrimSamples {
+                    ts: vec![*ts.first()?],
+                    points: vec![edge.start],
+                };
+                for w in ts.windows(2) {
+                    let mut stack = vec![(w[0], eval(w[0]), w[1], eval(w[1]), 0)];
+                    while let Some((a, p, b, q, depth)) = stack.pop() {
+                        if samples.points.len() >= MAX_PANELS {
+                            return None;
+                        }
+                        let t = 0.5 * (a + b);
+                        let m = eval(t);
+                        if depth < 14
+                            && geom::dist(m, geom::scale(geom::add(p, q), 0.5))
+                                > crate::sampling::CHORD_TOLERANCE
+                        {
+                            stack.push((t, m, b, q, depth + 1));
+                            stack.push((a, p, t, m, depth + 1));
+                        } else {
+                            samples.ts.push(b);
+                            samples.points.push(q);
+                        }
+                    }
+                }
+                *samples.points.last_mut()? = edge.end;
+                Some(samples)
+            })
+            .as_ref()
+    }
+    pub(crate) fn surface_uv(&self, s: &Surface, t: f64) -> (f64, f64) {
+        let p = self.curve.value(t);
+        wrap_closed(s, self.spans, (p[0], p[1]))
+    }
+    pub(crate) fn uv_extrema(&self) -> Vec<f64> {
+        if self.curve.transfer.is_some() {
+            let mut ts = self.nodes().unwrap_or_default();
+            stationary_parameters(&mut ts, &[[1., 0., 0.], [0., 1., 0.]], |t| {
+                self.curve.derivative(t)
+            });
+            return ts;
+        }
+        let mut ts = crate::sampling::extreme_parameters(
+            &self.curve.source,
+            self.interval,
+            &[[1., 0., 0.], [0., 1., 0.]],
+        );
+        ts.extend([self.interval.0, self.interval.1]);
+        ts
+    }
+
+    /// Bracket stationary coordinates of the lifted trim on each knot span.
+    /// On a plane the lifting map is affine, so use the ordinary curve extrema.
+    pub(crate) fn world_extrema(&self, surface: &Surface, dirs: &[V3]) -> Option<Vec<V3>> {
+        let mut ts = self.nodes()?;
+        if let Surface::Plane { frame } = surface
+            && self.curve.transfer.is_none()
+        {
+            let local: Vec<_> = dirs.iter().map(|d| frame.dir_to_local(*d)).collect();
+            ts.extend(crate::sampling::extreme_parameters(
+                &self.curve.source,
+                self.interval,
+                &local,
+            ));
+        } else {
+            let velocity = |t| {
+                let (u, v) = self.surface_uv(surface, t);
+                let d = self.curve.derivative(t);
+                let (su, sv) = surface.partials(u, v);
+                geom::add(geom::scale(su, d[0]), geom::scale(sv, d[1]))
+            };
+            stationary_parameters(&mut ts, dirs, velocity);
+        }
+        Some(
+            ts.into_iter()
+                .map(|t| {
+                    let (u, v) = self.surface_uv(surface, t);
+                    surface.value(u, v)
+                })
+                .collect(),
+        )
+    }
+    pub(crate) fn oriented(&self, forward: bool) -> (f64, f64) {
+        if forward {
+            self.interval
+        } else {
+            (self.interval.1, self.interval.0)
+        }
+    }
+
+    pub(crate) fn nodes(&self) -> Option<Vec<f64>> {
+        let (a, b) = self.interval;
+        let breaks = match &self.curve.source {
+            Curve::Nurbs(c) => c.breaks(),
+            _ => Vec::new(),
+        };
+        cuts(a, b, 16, &breaks)
+    }
+}
+
+impl DeclaredBoundary {
+    /// Keep #281's physical disagreement guard on the total trimmed area,
+    /// including the perimeter of holes and both uses of a seam.
+    pub(super) fn within_strip(&self, part: &Part, face: usize, area: f64) -> Option<bool> {
+        let deviation = self.edges.values().map(|c| c.deviation).fold(0.0, f64::max);
+        if deviation == 0. {
+            return Some(true);
+        }
+        let f = &part.faces[face];
+        let mut perimeter = 0.;
+        for &(edge, _) in f.loops.iter().flat_map(|lp| &lp.edges) {
+            let ed = &part.edges[edge];
+            let trim = self.edges.get(&edge);
+            let cut = if let Some(c) = trim {
+                c.nodes()?
+            } else {
+                let (a, b) =
+                    edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
+                curve_cuts(&f.surface, &ed.curve, a, b)?
+            };
+            let speed = |t| {
+                [if let Some(c) = trim {
+                    let (u, v) = c.surface_uv(&f.surface, t);
+                    let d = c.curve.derivative(t);
+                    let (su, sv) = f.surface.partials(u, v);
+                    geom::norm(geom::add(geom::scale(su, d[0]), geom::scale(sv, d[1])))
+                } else {
+                    geom::norm(ed.curve.derivative(t))
+                }]
+            };
+            let coarse = integrate(&cut, speed)[0].abs();
+            let (sum, error) = preferred::integrate_inner(
+                &cut,
+                1e-11 * coarse,
+                speed,
+                IntegralRule {
+                    components: Components::Prefix(1),
+                    observe_mass: None,
+                },
+            )?;
+            perimeter += sum[0].abs() + error;
+        }
+        let ratio = deviation * perimeter / area;
+        Some(ratio.is_finite() && ratio <= 0.001)
+    }
+}
+
+impl Part {
+    pub(crate) fn spatial_trim(&self, e: usize) -> Option<(&Surface, &EdgeTrim)> {
+        if !self.has_master_pcurves() {
+            return None;
+        }
+        let owner = self.primary_owner(e).map(|(f, _)| f);
+        if owner.is_none() && !self.detached_pcurves.contains_key(&e) {
+            return None;
+        }
+        owner
+            .into_iter()
+            .chain(
+                self.edge_faces()[e]
+                    .iter()
+                    .copied()
+                    .filter(|&f| Some(f) != owner),
+            )
+            .find_map(|f| {
+                Some((
+                    &self.faces[f].surface,
+                    self.measured_boundary(f)?.edges.get(&e)?,
+                ))
+            })
+    }
+
+    /// One physical discretisation per topological edge for mesh joins and ray candidates.
+    pub(crate) fn boundary_edge_samples(&self, e: usize) -> &[V3] {
+        self.spatial_trim(e)
+            .and_then(|(s, c)| c.samples(s, &self.edges[e]))
+            .map_or(&self.edges[e].samples, |samples| &samples.points)
+    }
+
+    /// The arc-length midpoint of the selected spatial boundary of edge `e`.
+    pub fn edge_midpoint(&self, e: usize) -> V3 {
+        self.spatial_trim(e)
+            .and_then(|(s, c)| c.half_length_point(s))
+            .unwrap_or_else(|| self.edges[e].midpoint())
+    }
+    /// A physical scale independent of trimmed-face queries (which themselves
+    /// use this choice). A rigid placement or a different query order cannot
+    /// introduce a recursive dependency on face bounds.
+    pub(super) fn trim_reference_length(&self, face: usize) -> f64 {
+        let mut bounds = geom::Bounds::empty();
+        for lp in &self.faces[face].loops {
+            for &(e, _) in &lp.edges {
+                for &p in &self.edges[e].samples {
+                    bounds.add(p);
+                }
+            }
+            if let Some(p) = lp.vertex {
+                bounds.add(p);
+            }
+        }
+        bounds.diagonal()
+    }
+
+    pub(crate) fn declared_boundary(&self, face: usize) -> Option<&DeclaredBoundary> {
+        self.cache[face]
+            .declared
+            .get_or_init(|| self.read_declared_boundary(face).map(Box::new))
+            .as_deref()
+    }
+
+    fn read_declared_boundary(&self, face: usize) -> Option<DeclaredBoundary> {
+        if !self.has_master_pcurves() {
+            return None;
+        }
+        if !self.faces[face]
+            .loops
+            .iter()
+            .flat_map(|lp| &lp.edges)
+            .any(|(e, _)| self.primary_owner(*e).is_some() || self.detached_pcurves.contains_key(e))
+        {
+            return None;
+        }
+        let entries = self.primary_pcurves(face);
+        let surface = &self.faces[face].surface;
+        let units = self.file_units()?;
+        let make_curve = |raw: &RawCurve2d, carrier: &Surface, owner: Option<usize>| {
+            let (scales, axes) = match carrier.file_parameter_scales(units) {
+                Some(scales) => (scales, [Axis::ID; 2]),
+                None => ((1., 1.), parameters::swept_axes(self, owner?)?),
+            };
+            Some(ParamCurve {
+                source: scaled_pcurve(raw, scales.0, scales.1)?,
+                axes,
+                transfer: None,
+            })
+        };
+        let length = self.trim_reference_length(face);
+        let tolerance = self.file_uncertainty().unwrap_or(0.).max(0.) + geom::COORD_FLOOR;
+        let mut result = DeclaredBoundary::default();
+        let mut previous = BTreeMap::new();
+        for (index, raw) in entries {
+            if let Some(other) = previous.insert(*index, raw) {
+                // A seam lists the same slots once per use. A second distinct
+                // selection for a single edge does not identify a unique curve.
+                let occurrences = self.faces[face]
+                    .loops
+                    .iter()
+                    .flat_map(|lp| &lp.edges)
+                    .filter(|(e, _)| e == index)
+                    .count();
+                if other != raw || occurrences < 2 {
+                    return None;
+                }
+                continue;
+            }
+            let curve = make_curve(raw, surface, Some(face))?;
+            let edge = &self.edges[*index];
+            result
+                .edges
+                .insert(*index, resolve(surface, edge, curve, tolerance, length)?);
+        }
+        let shared = |f: usize| {
+            self.cache[f]
+                .carrier
+                .get_or_init(|| Arc::new(self.faces[f].surface.clone()))
+                .clone()
+        };
+        for &(e, _) in self.faces[face].loops.iter().flat_map(|lp| &lp.edges) {
+            if result.edges.contains_key(&e) {
+                continue;
+            }
+            let (carrier, raw, owner) = if let Some((f, raw)) = self.primary_owner(e) {
+                (shared(f), raw, Some(f))
+            } else if let Some((s, raw)) = self.detached_pcurves.get(&e) {
+                (Arc::new(s.placed(&self.edge_placement(e))), raw, None)
+            } else {
+                continue;
+            };
+            let mut curve = make_curve(raw, &carrier, owner)?;
+            curve.transfer = Some(Box::new(Transfer {
+                carrier_spans: closed_spans(&carrier),
+                face_spans: closed_spans(surface),
+                carrier,
+                face: shared(face),
+            }));
+            result.edges.insert(
+                e,
+                resolve(surface, &self.edges[e], curve, tolerance, length)?,
+            );
+        }
+        (!result.edges.is_empty()).then_some(result)
+    }
+}
+
+fn scaled_pcurve(raw: &RawCurve2d, su: f64, sv: f64) -> Option<Curve> {
+    preferred::raw_param_curve(&raw.scaled(su, sv)?)
+}
+
+fn resolve(
+    surface: &Surface,
+    edge: &crate::brep::Edge,
+    curve: ParamCurve,
+    tolerance: f64,
+    length: f64,
+) -> Option<EdgeTrim> {
+    let spatial = edge_interval(
+        &edge.curve,
+        edge.start,
+        edge.end,
+        edge.same_sense,
+        edge.is_closed(),
+    );
+    let spans = closed_spans(surface);
+    let lift = |t| {
+        let q = curve.value(t);
+        let (u, v) = wrap_closed(surface, spans, (q[0], q[1]));
+        surface.value(u, v)
+    };
+    if !(length.is_finite() && length > 0.) {
+        return None;
+    }
+    let natural = match &curve.source {
+        Curve::Nurbs(c) => Some(c.domain()),
+        _ => None,
+    };
+    let period = curve.source.period();
+    let valid = |(a, b): (f64, f64)| {
+        if !a.is_finite() || !b.is_finite() || a == b {
+            return false;
+        }
+        let in_domain = natural.is_none_or(|(lo, hi)| {
+            let eps = 64. * f64::EPSILON * lo.abs().max(hi.abs()).max(hi - lo);
+            if period.is_some() {
+                (b - a).abs() <= hi - lo + eps
+            } else {
+                a.min(b) >= lo - eps && a.max(b) <= hi + eps
+            }
+        });
+        // A bounded NURBS evaluator clamps outside parameters to its endpoint.
+        // Such a match must not suppress inversion of the pcurve's own endpoints.
+        let on_surface = |t| {
+            let q = curve.value(t);
+            let (u, v) = wrap_closed(surface, spans, (q[0], q[1]));
+            match surface {
+                Surface::Freeform { surface: s, .. } => {
+                    let (u0, u1, v0, v1) = s.domain();
+                    (u0..=u1).contains(&u) && (v0..=v1).contains(&v)
+                }
+                _ => u.is_finite() && v.is_finite(),
+            }
+        };
+        in_domain
+            && on_surface(a)
+            && on_surface(b)
+            && geom::dist(lift(a), edge.start) <= tolerance
+            && geom::dist(lift(b), edge.end) <= tolerance
+    };
+    let (pu, pv) = surface.periodic();
+    let periods = [
+        if pu { std::f64::consts::TAU } else { spans.0 },
+        if pv { std::f64::consts::TAU } else { spans.1 },
+    ];
+    let guess = |p, near: V3| {
+        let (u, v) = surface.parameters(p, Some((near[0], near[1])))?;
+        let mut q = [u, v, 0.];
+        for k in 0..2 {
+            if periods[k].is_finite() {
+                q[k] += periods[k] * ((near[k] - q[k]) / periods[k]).round();
+            }
+        }
+        Some(curve.parameter(q))
+    };
+    let guessed = || {
+        let a = guess(edge.start, curve.value(natural.map_or(0., |ab| ab.0)))?;
+        let mut b = guess(edge.end, curve.value(a))?;
+        if let Some(period) = period {
+            if edge.is_closed() {
+                b = a + if edge.same_sense { period } else { -period };
+            } else if (b > a) != edge.same_sense {
+                b += if edge.same_sense { period } else { -period };
+            }
+        }
+        Some((a, b))
+    };
+    let interval = [
+        Some(spatial),
+        natural.filter(|_| edge.same_sense),
+        natural.map(|(a, b)| (b, a)).filter(|_| !edge.same_sense),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|&ab| valid(ab))
+    .or_else(|| guessed().filter(|&ab| valid(ab)))?;
+    let mut trim = EdgeTrim {
+        curve,
+        spans,
+        interval,
+        deviation: 0.,
+        samples: OnceLock::new(),
+        midpoint: OnceLock::new(),
+    };
+    let (a, b) = interval;
+    let knots = match &trim.curve.source {
+        Curve::Nurbs(c) => c.breaks(),
+        _ => Vec::new(),
+    };
+    let mut breaks = cuts(a, b, 1, &knots)?;
+    if let Curve::Nurbs(c) = &edge.curve {
+        for k in c.breaks() {
+            let x = (k - spatial.0) / (spatial.1 - spatial.0);
+            if (0.0..1.).contains(&x) {
+                breaks.push(a + (b - a) * x);
+            }
+        }
+        breaks.sort_by(|x, y| {
+            if b >= a {
+                x.total_cmp(y)
+            } else {
+                y.total_cmp(x)
+            }
+        });
+        breaks.dedup();
+    }
+    // Compare geometry in physical units. Corresponding vertices do not imply
+    // that independent curve parameters advance at the same speed (e.g. the
+    // rational-quadratic and angular parametrisations of exactly the same arc).
+    let bound = 0.001 * length;
+    for span in breaks.windows(2) {
+        for j in 0..=32 {
+            let t = span[0] + (span[1] - span[0]) * (j as f64 / 32.);
+            let (u, v) = trim.surface_uv(surface, t);
+            if !u.is_finite() || !v.is_finite() {
+                return None;
+            }
+            if let Surface::Freeform { surface: s, .. } = surface {
+                let (u0, u1, v0, v1) = s.domain();
+                if u < u0 || u > u1 || v < v0 || v > v1 {
+                    return None;
+                }
+            }
+            let p = surface.value(u, v);
+            if let Some(tr) = &trim.curve.transfer {
+                let (_, xyz) = trim.curve.lifted(t, tr);
+                let residual = geom::dist(p, xyz);
+                if !residual.is_finite() || residual > tolerance {
+                    return None;
+                }
+            }
+            let t3 = spatial.0 + (spatial.1 - spatial.0) * ((t - a) / (b - a));
+            let mut d = geom::dist(p, edge.curve.value(t3));
+            if d > geom::COORD_FLOOR {
+                let mut foot = edge.curve.parameter(p);
+                if let Some(period) = edge.curve.period() {
+                    foot += period * ((t3 - foot) / period).round();
+                }
+                let foot = foot.clamp(spatial.0.min(spatial.1), spatial.0.max(spatial.1));
+                d = d.min(geom::dist(p, edge.curve.value(foot)));
+            }
+            if !d.is_finite() || d > bound {
+                return None;
+            }
+            trim.deviation = trim.deviation.max(d);
+        }
+    }
+    Some(trim)
+}
+
+#[cfg(test)]
+mod tests;
