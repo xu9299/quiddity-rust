@@ -158,8 +158,12 @@ a double-D bore, a turned chamfer or a recess use a rim written as a spline.
 Points, tangents and arc length still come from the original parameterisation.
 
 A planar extrusion copies the selected spatial curve into both caps. A selected
-planar rational spline sweeps to a tensor-product surface with the same knots
-and weights and two rows of poles displaced by the sweep vector. For a planar
+planar rational spline is first restricted to the interval between its STEP
+vertices, including a segment that crosses the knot seam. Homogeneous de Boor
+evaluation gives the Bézier poles and weights on each retained knot span.
+Translating those poles produces an exact tensor-product side wall. For a
+quarter-circle cut, the other three quarters of its generating circle must
+not seed the wall's ray intersections. For a planar
 recess wall adjacent to a cylinder, a straight UV line with a small angular
 component defines a helix. Its maximum distance from the segment joining the
 STEP vertices is bounded by the larger endpoint mismatch plus `r Δu²/8`.

@@ -13,7 +13,7 @@ in [docs/alpha1.md](docs/alpha1.md).
   bounds and edge witnesses can now follow a selected pcurve even when the
   independently approximated 3D edge also encloses a measurable area. Trimmed
   drawings, mesh joins, edge distances and feature measurements use the same
-  edge selection. A planar sweep preserves a selected spline in both caps and
+  edge selection. A planar sweep preserves the finite interval of a selected spline in both caps and
   its side wall. Hole, rim and profile proofs use the selected curve.
   Circular hole, recess and turned-feature proofs can recognise an arc encoded
   as a rational spline on an incident cylinder or cone.

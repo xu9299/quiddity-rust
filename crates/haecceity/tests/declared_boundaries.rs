@@ -73,6 +73,33 @@ fn circular_feature_support_keeps_the_selected_spline_and_its_interval() {
 }
 
 #[test]
+fn sweeping_a_selected_quarter_arc_keeps_its_finite_side_and_empty_cut() {
+    use haecceity::{
+        classify::Classifier,
+        rays::RayCaster,
+        sweep::extrude_face,
+        volume::{Probe, common_volume},
+    };
+    let file = common::fixtures().join("captured/85e5cdbaee3f051b.step.gz");
+    let part = read_step_file(&file).unwrap();
+    assert_eq!(part.face_source(6).unwrap().entity, 473);
+    let sweep = extrude_face(&part, 6, [0.; 3], [-25., 0., 0.]).unwrap();
+    let rays = RayCaster::for_solid(&sweep, 0);
+    let origin = [-19.914436919, 11.004339173, -11.];
+    let hits = rays.trimmed_hits(origin, [0., 0., 1.], 24.).unwrap();
+    let dy: f64 = origin[1] - 15.;
+    let expected = 21. - (16. - dy * dy).sqrt();
+    assert_eq!(hits.len(), 2);
+    assert!((hits[0].t - expected).abs() < 1e-8 && (hits[1].t - 21.).abs() < 1e-10);
+    let (volume, _) = sweep.solid_mass(0).unwrap();
+    assert!((volume - 100. * std::f64::consts::PI).abs() < 1e-8);
+    assert_eq!(
+        common_volume(&Classifier::for_solid(&part, 0), &Probe::Solid(rays)),
+        Some(0.)
+    );
+}
+
+#[test]
 fn trim_moments_survive_placement() {
     let Some(dir) = common::corpus_dir() else {
         assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());

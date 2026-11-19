@@ -137,7 +137,7 @@ fn copy_edge(part: &Part, e: usize, by: V3, level: usize, vertex_ids: &[usize]) 
                 radius: *radius,
             },
             Curve::Nurbs(n) => {
-                let mut translated = n.clone();
+                let mut translated = n.finite_segment(a, b)?;
                 translated.transform_points(|p| geom::add(p, by));
                 Curve::Nurbs(translated)
             }
