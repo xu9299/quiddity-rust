@@ -1,11 +1,11 @@
-name: Master trim area survey and ARM regression
+name: STEP declared boundary survey and ARM regression
 on:
   push:
-    branches: [validation/master-trim-survey-20261119]
+    branches: [validation/step-declared-boundaries-20261119]
 permissions:
   contents: read
 concurrency:
-  group: master-trim-survey-${{ github.ref }}
+  group: declared-boundary-survey-${{ github.ref }}
   cancel-in-progress: false
 env:
   CARGO_BUILD_JOBS: "6"
@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
-  SOURCE: 8818c56edf67a1b2ea1d9b9c744c6a5471014e9a
-  TREE: ade1295655b5766c6c9d2fa4b8dea2ee7568a2a8
+  SOURCE: 2e9b3971c1ee36d34e22f419d8ddc83c397aa37f
+  TREE: 353d0a1e2fffa12773b13c36291cd2ade556fced
 jobs:
   verify:
     strategy:
@@ -26,7 +26,7 @@ jobs:
         include:
           - runner: macos-15
             task: survey-and-strict
-          - runner: xcode-27
+          - runner: macos-15
             task: workspace
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
@@ -125,6 +125,23 @@ jobs:
       - name: Check strict ARM snapshot reproduction
         if: "!cancelled() && matrix.task == 'survey-and-strict'"
         run: cargo run -p snapshot-tool --release --locked -- --check --verify-dir ../evidence/verified 2>&1 | tee ../evidence/strict.log
+      - name: Compare all committed captured effective-surface parts
+        if: "!cancelled() && matrix.task == 'survey-and-strict'"
+        run: |
+          mkdir -p ../evidence/captured
+          uv run --no-project --python 3.13 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, subprocess
+          root = Path("tests/fixtures/captured/effective_surfaces/parts")
+          files = subprocess.check_output(["git","ls-files","-z","--",str(root)]).decode().rstrip("\0").split("\0")
+          rows = [{"file":Path(f).relative_to(root).as_posix(),"sha256":hashlib.sha256(Path(f).read_bytes()).hexdigest()} for f in sorted(files)]
+          assert len(rows) == 260
+          Path("../evidence/captured/manifest.json").write_text(json.dumps({"files":rows}))
+          PY
+          uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
+            --manifest ../evidence/captured/manifest.json --corpus tests/fixtures/captured/effective_surfaces/parts \
+            --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
+            --control crates/haecceity/tests/fixtures/master-trim-square.step --out ../evidence/captured | tee ../evidence/captured/survey.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
