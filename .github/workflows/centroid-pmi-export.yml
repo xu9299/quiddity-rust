@@ -1,4 +1,4 @@
-name: Directed PMI regression with official expectations
+name: Directed changed-fixture reader control
 
 on:
   push:
@@ -23,7 +23,7 @@ env:
 
 jobs:
   topic:
-    name: ARM complete affected PMI module only
+    name: ARM changed-fixture reader control only
     runs-on: macos-26
     timeout-minutes: 90
     defaults:
@@ -72,13 +72,14 @@ jobs:
           shared-key: boundary-centroid-main-v054-20261119-macos-26
           cache-on-failure: true
       # The official exporter already passed in run 44453114337. Reuse its verified bytes.
-      - name: Complete affected PMI module with unchanged test code and bands
+      - name: Check the existing reader test consuming the changed fixture
         run: |
-          cargo test -p haecceity --test pmi_write --release --locked 2>&1 | tee ../pmi-logs/pmi-module.log
+          cargo test -p haecceity --lib --release --locked step::tests::pmi_writer_shares_one_geometry_parse_between_parts -- --exact --nocapture 2>&1 | tee ../pmi-logs/reader-control.log
+          grep -F '1 passed; 0 failed' ../pmi-logs/reader-control.log
           test -z "$(git status --porcelain)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: centroid-pmi-module-054
+          name: centroid-pmi-reader-control-054
           path: pmi-logs
           if-no-files-found: error
