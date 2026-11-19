@@ -1,4 +1,4 @@
-# Reducing work without changing face-integral decisions
+# Face integration and boundary selection
 
 This change retains the integration densities, quadrature nodes, operation order,
 initial cuts, error criteria, depth limit and kink budget. It does not infer failure
@@ -75,10 +75,10 @@ can differ from a 3D-edge answer by the file's own representation disagreement.
 
 Each edge needs exactly one master pcurve, finite controls within the surface
 domain, and matching endpoints within the file's stated precision plus the kernel
-coordinate floor. Recovery additionally samples `|S(pc(t)) - C3d(t)|` at 33 equally
+coordinate floor. The boundary check samples `|S(pc(t)) - C3d(t)|` at 33 equally
 spaced parameters (including endpoints) on **every span in the union of the 2D and
 3D curves' knot breaks**. Nonfinite distances or a sampled maximum greater than
-`0.001 * L` refuse recovery. Here `L` is the diagonal of this trimmed face's
+`0.001 * L` rule out the master trim. Here `L` is the diagonal of this trimmed face's
 `Part::face_bounds` axis-aligned box, in millimetres, with no unit-size floor. This
 is the bounding-box length normalization used for GVP centroid evidence; tensor
 comparisons separately normalize by the reference inertia trace. The interior
@@ -86,13 +86,13 @@ check bounds sampled disagreement, not an unsampled mathematical supremum. It
 uses the existing GVP band, not STEP's usually much tighter declared precision.
 Endpoint and small-gap connectivity checks retain their original precision band.
 
-Recovery also requires `maximum_deviation * P / A <= 0.001`, using that **same
+The master trim also requires `maximum_deviation * P / A <= 0.001`, using that **same
 sampled maximum**, the physical length `P` of the master trim on the surface
 (including the short UV closing segments), and its integrated area `A`. This
 rejects long thin strips whose disagreement is small against the diagonal but
 large against their width. Length uses bounded adaptive Gauss–Kronrod with a
 face-relative error budget; its summed estimated length error is added to `P`.
-The area already passes the recovery integrator's numerical criteria before
+The area already passes the master-trim integrator's numerical criteria before
 this guard runs, and neither mass nor moments are published before it passes.
 
 A known recall limit is that a NURBS pcurve's **whole knot domain must equal the
@@ -114,11 +114,17 @@ boundary already chosen for mass.
 A completed but invalid canonical sum stays refused, as in a standalone mass query.
 A failure evaluating additional moment fields before canonical mass was determined
 still needs an independent canonical query; it cannot poison a valid mass cache.
+
+The analytic square in `master-trim-square.step` has a straight lower 3D edge
+and a bowed master pcurve, `y = 2hx(1 − x)` over `0 ≤ x ≤ 1`. Both boundaries
+integrate. The projected square has area 1 mm², while the master trim encloses
+`1 − h/3` mm². With `h = 0.0004`, the expected area is 0.9998666667 mm².
+
 ### Export of source master flags
 
 STEP export preserves the source `PCURVE_S1`/`PCURVE_S2` flag on raw master slots
-of native B-spline and Bézier faces, even when no mass query or recovery has taken
-place. A source `CURVE_3D` designation stays `CURVE_3D`. This deliberately changes
+of native B-spline and Bézier faces before any mass query. A source `CURVE_3D`
+designation stays `CURVE_3D`. This deliberately changes
 1,126 faces across the 11 flagged corpus files relative to the previous writer
 on main, which always emitted `CURVE_3D` for them. Export copies retained source
 metadata without integrating or consulting query-populated caches, preserving
