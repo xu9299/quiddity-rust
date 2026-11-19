@@ -16,17 +16,17 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
-  SOURCE: b726a0ad88d418abe550067ba61679598e838d74
-  TREE: fde1399131f6101c2fc0b50604b84b8406583393
+  SOURCE: 08e03a568beadb5ce301924de198cc568fefcc44
+  TREE: 3b08c97919ac2cbca542121b9e79dd410600e5c3
 jobs:
   verify:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          - runner: ubuntu-24.04
             task: survey
-          - runner: macos-15
+          - runner: macos-26
             task: strict
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
@@ -57,10 +57,10 @@ jobs:
         run: |
           mkdir -p ../evidence/verified
           rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
-          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; cargo -V; } | tee ../evidence/environment.log
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; if [ "$(uname -s)" = Darwin ]; then sw_vers; else cat /etc/os-release; fi; rustc -vV; cargo -V; } | tee ../evidence/environment.log
           test "$(git rev-parse HEAD)" = "$SOURCE"
           test "$(git rev-parse HEAD^{tree})" = "$TREE"
-          test "$(uname -m)" = arm64
+          if [ "${{ matrix.task }}" = strict ]; then test "$(uname -m)" = arm64; fi
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: source -> ../target
@@ -81,7 +81,7 @@ jobs:
       - name: Compare face areas, fingerprints and recognition on all pinned inputs
         if: matrix.task == 'survey'
         run: |
-          if ! command -v uv >/dev/null; then brew install uv; fi
+          if ! command -v uv >/dev/null; then if [ "$(uname -s)" = Darwin ]; then brew install uv; else pipx install uv; export PATH="$HOME/.local/bin:$PATH"; fi; fi
           uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
             --manifest tests/fixtures/corpus.json --corpus ../corpus \
             --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
@@ -137,7 +137,7 @@ jobs:
           retention-days: 30
 
   build-tests:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     defaults:
       run:
@@ -179,7 +179,7 @@ jobs:
 
   workspace-shard:
     needs: build-tests
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 355
     strategy:
       fail-fast: false
@@ -213,10 +213,10 @@ jobs:
           mkdir -p ../evidence
           test "$(uname -m)" = arm64
           test "$(git rev-parse HEAD^{tree})" = "$TREE"
-          if ! command -v uv >/dev/null; then brew install uv; fi
+          if ! command -v uv >/dev/null; then if [ "$(uname -s)" = Darwin ]; then brew install uv; else pipx install uv; export PATH="$HOME/.local/bin:$PATH"; fi; fi
           echo "$(git rev-parse HEAD) $(git -C ../corpus rev-parse HEAD)" > ../evidence/source.txt
           archive=(--archive-file ../tests.tar.zst --extract-to "$PWD" --extract-overwrite --workspace-remap "$PWD")
-          cargo-nextest nextest list "${archive[@]}" --profile ci -E 'not test(rust_snapshot)' --message-format json > ../evidence/tests.json
+          cargo-nextest nextest list "${archive[@]}" --profile ci --message-format json > ../evidence/tests.json
           uv run --no-project --python 3.13 .github/shards.py ../evidence/tests.json .config/test-times.json macOS ${{ matrix.shard }} 4 > ../evidence/shard.filter
           cargo-nextest nextest run --profile ci "${archive[@]}" -E "$(cat ../evidence/shard.filter)" 2>&1 | tee ../evidence/workspace.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
