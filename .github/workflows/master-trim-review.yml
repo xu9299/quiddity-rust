@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: 847421798ef70f0d6a677999f5b4cb57522819e5
-  SOURCE: 60725d241b6458e5f590521ded1c8ad2fdce68f8
-  TREE: 6050def6db9914b988c9f9b1415413adfbbb8dcb
+  SOURCE: 6113e798055181e19ecd8d1e0c6a61b68cd5e54c
+  TREE: 4a7a4e9581a842ab8cc4ae30151028154d70aabb
 jobs:
   verify:
     strategy:
@@ -128,6 +128,14 @@ jobs:
             --manifest ../evidence/captured/manifest.json --corpus tests/fixtures/captured/effective_surfaces/parts \
             --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
             --control crates/haecceity/tests/fixtures/master-trim-square.step --out ../evidence/captured | tee ../evidence/captured/survey.log
+      - name: Identify each changed public volume outside the ordinary probe comparator
+        if: "!cancelled() && matrix.task == 'survey'"
+        run: |
+          cp ../harness/.github/master-trim-survey/probe_diff.rs examples/master_trim_probe_diff.rs
+          gzip -dc tests/fixtures/probes.json.gz > "$RUNNER_TEMP/input-probes.json"
+          gzip -dc tests/fixtures/rust-snapshot/probes.json.gz > "$RUNNER_TEMP/expected-probes.json"
+          cargo run --release --locked --example master_trim_probe_diff -- "$RUNNER_TEMP/input-probes.json" "$RUNNER_TEMP/expected-probes.json" "$QUIDDITY_CORPUS" ../evidence/probe-differences.json
+          rm examples/master_trim_probe_diff.rs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -182,6 +190,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 355
     strategy:
+      max-parallel: 2
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
