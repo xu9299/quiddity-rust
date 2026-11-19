@@ -100,6 +100,53 @@ fn sweeping_a_selected_quarter_arc_keeps_its_finite_side_and_empty_cut() {
 }
 
 #[test]
+fn a_closed_spline_hole_sweeps_to_a_complete_band_at_its_knot_seam() {
+    use haecceity::{
+        classify::Classifier,
+        geom::Surface,
+        rays::RayCaster,
+        sweep::extrude_face,
+        volume::{Probe, common_volume},
+    };
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("mfcadpp/10155.step")).unwrap();
+    assert_eq!(part.face_source(24).unwrap().entity, 2387);
+    let depth = 7.98651;
+    let inset = 1e-6 * (1. + depth);
+    let height = depth - 2. * inset;
+    let probe = extrude_face(&part, 24, [0., 0., -inset], [0., 0., -height]).unwrap();
+    let side = probe
+        .faces
+        .iter()
+        .position(|f| matches!(f.surface, Surface::Freeform { .. }) && f.loops.len() == 2)
+        .unwrap();
+    // Each rim ends at its starting STEP vertex after one full turn.
+    // The side area is perimeter times height, and volume is cap area times height.
+    let rim = part
+        .face_edges(24)
+        .into_iter()
+        .find(|&e| part.edges[e].is_closed())
+        .unwrap();
+    let geom::Curve::Circle { radius, .. } = part.edges[rim].curve else {
+        panic!("the file supplies an independent 3D circle for the hole");
+    };
+    let expected_side = std::f64::consts::TAU * radius * height;
+    assert!((probe.face_mass(side).unwrap()[0] - expected_side).abs() < 1e-8);
+    let expected_volume = part.face_mass(24).unwrap()[0] * height;
+    assert!((probe.solid_mass(0).unwrap().0 - expected_volume).abs() < 1e-8);
+    assert_eq!(
+        common_volume(
+            &Classifier::for_solid(&part, 0),
+            &Probe::Solid(RayCaster::for_solid(&probe, 0))
+        ),
+        Some(0.)
+    );
+}
+
+#[test]
 fn trim_moments_survive_placement() {
     let Some(dir) = common::corpus_dir() else {
         assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());

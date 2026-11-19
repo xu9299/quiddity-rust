@@ -889,31 +889,43 @@ impl Part {
         let uv = self.loops_on(face, boundary)?;
         let domain = self.domain_on(face, boundary)?;
         let (_, shifts) = self.place_loops(face, boundary)?;
-        // A loop runs round u when its boundary does (on a closed B-spline surface, which the
-        // reader does not mark periodic, when it ends most of the parameter range from where
-        // it began).
-        let open = |lp: &UvLoop, pick: fn(&(f64, f64)) -> f64, far: f64| match (
-            lp.points.first(),
-            lp.points.last(),
-        ) {
-            (Some(a), Some(b)) => (pick(b) - pick(a)).abs() > far,
-            _ => false,
+        let spans = closed_spans(surface);
+        // On a closed spline, inversion may give a seam vertex the very same
+        // parameter at both ends of a loop that goes all the way around.
+        // Add increments on the nearest branch, as the face domain does. A
+        // local trim that crosses the seam and comes back has zero net turns.
+        let winding = |lp: &UvLoop, pick: fn(&(f64, f64)) -> f64, span: f64, threshold: f64| {
+            if span.is_finite() {
+                let travel: f64 = lp
+                    .points
+                    .windows(2)
+                    .map(|pair| {
+                        let step = pick(&pair[1]) - pick(&pair[0]);
+                        step - span * (step / span).round()
+                    })
+                    .sum();
+                return travel.abs() > span / 2.;
+            }
+            lp.points
+                .first()
+                .zip(lp.points.last())
+                .is_some_and(|(a, b)| (pick(b) - pick(a)).abs() > threshold)
         };
         let half = |range: (f64, f64)| 0.5 * (range.1 - range.0);
-        let far_v = if pv { 1.0 } else { half(domain.v_range()) };
-        let along_v = if pu {
-            uv.iter().any(|lp| lp.winds_u)
-        } else {
-            uv.iter()
-                .any(|lp| open(lp, |p| p.0, half(domain.u_range())))
+        let along_v = uv.iter().any(|lp| {
+            if pu {
+                lp.winds_u
+            } else {
+                winding(lp, |p| p.0, spans.0, half(domain.u_range()))
+            }
+        });
+        let winds_v = |lp: &UvLoop| {
+            lp.winds_v || (spans.1.is_finite() && winding(lp, |p| p.1, spans.1, f64::INFINITY))
         };
-        if along_v && uv.iter().any(|lp| open(lp, |p| p.1, far_v)) {
+        let far_v = if pv { 1.0 } else { half(domain.v_range()) };
+        if along_v && uv.iter().any(|lp| winding(lp, |p| p.1, spans.1, far_v)) {
             return None;
         }
-        // On a closed B-spline surface the walk unwraps its parameters across the surface's
-        // seam (a face's own seam need not lie on it), so the integrands read the surface a
-        // whole span round.
-        let spans = closed_spans(surface);
         let evaluator = match surface {
             Surface::Freeform { surface, .. } => Some(std::cell::RefCell::new(
                 crate::nurbs::SurfaceEvaluation::new(surface),
@@ -1024,7 +1036,7 @@ impl Part {
                 } else {
                     (panel.0, panel.3)
                 };
-                let winding = along_v || uv[i].winds_v;
+                let winding = along_v || winds_v(&uv[i]);
                 let direction =
                     self.direction_on(face, boundary, i, (!winding).then_some(swept))?;
                 for k in 0..5 {
@@ -1081,7 +1093,7 @@ impl Part {
                 swept = refined.3;
             }
             // A loop that winds round either parameter has no signed area to read.
-            let winding = along_v || uv[i].winds_v;
+            let winding = along_v || winds_v(&uv[i]);
             let direction = self.direction_on(face, boundary, i, (!winding).then_some(swept))?;
             for k in 0..N {
                 total[k] += direction * sum[k];

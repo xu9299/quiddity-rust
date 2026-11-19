@@ -170,6 +170,15 @@ STEP vertices is bounded by the larger endpoint mismatch plus `r Δu²/8`.
 The wall classifier and the adjoining slot end-wall proof accept it as straight at the kernel coordinate floor
 when this bound fits. Area, length and proximity still evaluate the helix.
 
+The two rims of a swept closed spline can start and end at the same knot
+value despite traversing a full period. Summing successive parameter changes
+on the nearest branch gives the winding used by the boundary integral. A
+short trim that crosses the seam and returns has zero net winding. On
+`mfcadpp/10155.step` the hole in face #2387 sweeps to a full band:
+the side area is its rim length times the sweep height, and independent
+OpenCascade extrusion gives a volume of 1987.3563215954 mm³ with zero
+intersection with the original solid.
+
 In a periodic face domain, regular ends of selected coedges use their shared
 STEP vertex in the parameter branch of each coedge. A winding ray exactly on
 a cylindrical seam must see the same finite cut as the two neighbouring
