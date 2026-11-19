@@ -148,6 +148,24 @@ regular, nonperiodic parameter chart. A ray through this gap must see the
 central hole, the material and the exterior in their geometric order.
 Both incident faces then classify each floor rim as concave.
 
+Before accepting a declared domain, the loop builder tests candidate crossings
+between its finite coedges in the receiving surface's parameters. It reuses the
+samples for that domain to locate candidates, follows the appropriate periodic
+branch and refines on the selected curves. A transverse interior intersection
+at a regular surface point invalidates the domain. The same check includes a
+spatial coedge projected onto the face and a pcurve lifted from another carrier.
+
+For the independent moment controls on `cgb242` and `cgb243`, the spatial
+reference changes only the affected master selectors. With the original selectors,
+the corresponding sphere, cylinder and plane references integrate the Cartesian
+densities 1, x and x xᵀ on the receiving surface. A Green primitive integrates
+in v between a fixed ordinate and the selected pcurve, followed by Gauss
+quadrature along each smooth finite edge span. Cylinder and plane densities
+are polynomial in v. The spherical density includes r² cos(v). On a STEP
+cone the file's v measures axial distance, so the corresponding generator
+distance in OpenCascade is v/cos(semi-angle). Both sets of controls use the
+original area, centroid and tensor tolerances.
+
 The bowed edge in `master-trim-square.step` has height
 `y = 2 h x (1 − x)` for `0 ≤ x ≤ 1`. Its 3D approximation is straight.
 The two areas are 1 and `1 − h/3` mm². For `h = 0.0004` the file selects

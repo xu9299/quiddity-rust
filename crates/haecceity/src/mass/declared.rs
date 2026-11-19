@@ -5,6 +5,7 @@ use crate::brep::RawCurve2d;
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 mod intersections;
+pub(crate) use intersections::TrimCrossings;
 mod parameters;
 mod rim;
 use parameters::Axis;
@@ -877,9 +878,10 @@ impl Part {
                 .edges
                 .insert(e, resolve(surface, &self.edges[e], curve, tolerance)?);
         }
-        if result.edges.is_empty() || intersections::crosses(&result, self, surface, tolerance) {
+        if result.edges.is_empty() {
             return None;
         }
+        self.loops_on(face, Some(&result))?;
         Some(result)
     }
 }

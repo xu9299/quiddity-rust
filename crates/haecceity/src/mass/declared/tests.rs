@@ -264,6 +264,25 @@ fn edge_distance_and_planar_sweep_respect_a_bowed_master() {
 }
 
 #[test]
+fn mixed_and_transferred_edges_measure_the_same_simple_region() {
+    for (height, area, usable) in [("0.04", 1. - 0.04 / 3., true), ("2.4", 1., false)] {
+        let local = plane().replace("(0.5,0.0004)", &format!("(0.5,{height})"));
+        let spatial = entity(&local, 142, "SURFACE_CURVE('',#135,(#141),.CURVE_3D.)");
+        let other_plane = local.replace(
+            "#117=PCURVE('',#108",
+            "#197=PLANE('',#11);\n#117=PCURVE('',#197",
+        );
+        // At height 2.4 the lower quadratic crosses the upper edge twice.
+        // Its spatial alternate is the straight lower side of the unit square.
+        for text in [local, spatial, other_plane] {
+            let part = crate::step::read_step(text.as_bytes()).unwrap();
+            assert_eq!(part.measured_boundary(0).is_some(), usable);
+            assert!((part.face_mass(0).unwrap()[0] - area).abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
 fn declared_outer_and_hole_survive_a_step_round_trip() {
     let mut extra = String::new();
     for (i, (x, y), line) in [
@@ -378,6 +397,12 @@ fn cylinder_crossing_the_seam_uses_its_declared_curve() {
     swept=swept.replace("#108=SURFACE_OF_REVOLUTION","#203=CARTESIAN_POINT('',(1.,0.,0.));\n#205=VECTOR('',#13,1.);\n#206=AXIS1_PLACEMENT('',#12,#13);\n#207=LINE('',#203,#205);\n#108=SURFACE_OF_REVOLUTION");
     // A small nonzero turn is still a helix. Its proved distance from the
     // segment is available to a wall classifier with a positional tolerance.
+    // The top spatial circle and the bowed pcurve now cross on both sides of longitude zero.
+    let crossed = entity(&text, 113, "CARTESIAN_POINT('',(0.,2.4))");
+    let crossed = entity(&crossed, 142, "SURFACE_CURVE('',#135,(#141),.CURVE_3D.)");
+    let part = crate::step::read_step(crossed.as_bytes()).unwrap();
+    assert!(part.measured_boundary(0).is_none());
+    assert!((part.face_mass(0).unwrap()[0] - 1.).abs() < 1e-11);
     let almost_axial = entity(&text, 125, "DIRECTION('',(1.E-12,1.))");
     let part = crate::step::read_step(almost_axial.as_bytes()).unwrap();
     assert!(part.boundary_edge_curve(1).is_none());

@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0
-  SOURCE: 8882bfe08720f2e0955bd2b1ef234d3d9f1e77ac
-  TREE: c45cf69acc6c0490081f9cfdbdc940c9c9356396
+  SOURCE: 9928d2e0e89d18ca629a67a63f8b0573143f483d
+  TREE: 61c61daf6668426daf03fd9d761053a3c6be0aec
 jobs:
   verify:
     strategy:
@@ -82,6 +82,7 @@ jobs:
         if: matrix.task == 'survey'
         run: |
           if ! command -v uv >/dev/null; then if [ "$(uname -s)" = Darwin ]; then brew install uv; else pipx install uv; export PATH="$HOME/.local/bin:$PATH"; fi; fi
+          uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/mixed_boundary_controls.py "$RUNNER_TEMP/survey-$BASE" "$RUNNER_TEMP/survey-$SOURCE" ../evidence/mixed-boundary-controls.json
           uv run --no-project --python 3.13 ../harness/.github/master-trim-survey/survey.py \
             --manifest tests/fixtures/corpus.json --corpus ../corpus \
             --baseline "$RUNNER_TEMP/survey-$BASE" --candidate "$RUNNER_TEMP/survey-$SOURCE" \
