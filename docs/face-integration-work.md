@@ -137,8 +137,14 @@ translation and rotation at the original absolute tolerance.
 Feature proofs that require a straight or circular boundary query the selected
 primitive and its finite parameter interval. Length, points at a fraction of arc
 length and nearest-point queries also evaluate a general curve on its carrier.
-A planar extrusion can copy straight sides and circular arcs. If the selected
-side is a general curve, this constructor cannot form its side wall.
+A planar extrusion copies the selected spatial curve into both caps. A selected
+planar rational spline sweeps to a tensor-product surface with the same knots
+and weights and two rows of poles displaced by the sweep vector. For a planar
+recess wall adjacent to a cylinder, a straight UV line with a small angular
+component defines a helix. Its maximum distance from the segment joining the
+STEP vertices is bounded by the larger endpoint mismatch plus `r Δu²/8`.
+The wall classifier accepts it as straight at the kernel coordinate floor
+when this bound fits. Area, length and proximity still evaluate the helix.
 
 In `cadgenbench_inputs/cgb243.step.gz`, spherical face `#55337` has radius
 2.5 mm. Its three surface curves select `PCURVE_S1`. One is on the sphere and

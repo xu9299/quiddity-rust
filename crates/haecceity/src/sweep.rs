@@ -5,8 +5,8 @@
 //! The prism is built exactly: the face itself at both ends and one side face per edge, a plane
 //! along each straight edge and a cylinder along each circular arc whose axis runs with the
 //! sweep. A closed circle (a hole's whole rim) sweeps to a seamless cylinder band bounded by its
-//! two copies. Other edges (free-form curves, arcs about an axis across the sweep) are not swept;
-//! the caller is told so and must not treat the region as proved either way.
+//! two copies. A selected planar spline sweeps to its tensor product with a linear segment.
+//! A boundary without a supported spatial curve cannot supply a swept solid.
 
 use super::brep::{Edge, Face, Loop, Part, Solid};
 use super::geom::{self, Curve, Frame, Surface, V3};
@@ -14,7 +14,7 @@ use super::sampling::sample_edge;
 
 /// *face* of *part* moved by *offset* and swept along *sweep*, as a one-solid part, or `None`
 /// when the face is not planar, the sweep runs in its plane, or an edge is not a straight line
-/// or a circle or circular arc about an axis along the sweep.
+/// or a circle about the sweep axis or a selected spline in the cap's plane.
 pub fn extrude_face(part: &Part, face: usize, offset: V3, sweep: V3) -> Option<Part> {
     let f = &part.faces[face];
     let Surface::Plane { frame } = f.surface else {
@@ -27,7 +27,7 @@ pub fn extrude_face(part: &Part, face: usize, offset: V3, sweep: V3) -> Option<P
     let top_by = geom::add(offset, sweep);
     // Each source edge once: its copies at both ends.
     let source: Vec<usize> = part.face_edges(face);
-    let vertex_ids = sweepable_vertices(part, &source, up)?;
+    let vertex_ids = sweepable_vertices(part, &source, frame, up)?;
     let n_vertices = vertex_ids.len();
     // Edges: bottom copies, top copies, then one rising edge per vertex.
     let mut edges = Vec::with_capacity(2 * source.len() + n_vertices);
@@ -78,13 +78,20 @@ pub fn extrude_face(part: &Part, face: usize, offset: V3, sweep: V3) -> Option<P
 }
 
 /// The vertices of the *source* edges, each once in order of first use, or `None` when an edge
-/// is neither a straight line nor a circle or circular arc about an axis along *up*.
-fn sweepable_vertices(part: &Part, source: &[usize], up: V3) -> Option<Vec<usize>> {
+/// has no supported spatial curve for its side wall.
+fn sweepable_vertices(part: &Part, source: &[usize], cap: Frame, up: V3) -> Option<Vec<usize>> {
     let mut vertex_ids: Vec<usize> = Vec::new();
     for &e in source {
         let edge = &part.edges[e];
         match part.boundary_edge_curve(e)? {
             Curve::Line { .. } if !edge.is_closed() => {}
+            Curve::Nurbs(n)
+                if part.spatial_trim(e).is_some()
+                    && n.control_points().iter().all(|&p| {
+                        let roundoff =
+                            64. * f64::EPSILON * geom::norm(p).max(geom::norm(cap.origin)).max(1.);
+                        geom::dot(geom::sub(p, cap.origin), cap.z).abs() <= roundoff
+                    }) => {}
             Curve::Circle { frame: c, .. } if 1.0 - geom::dot(c.z, up).abs() <= 1e-9 => {}
             _ => return None,
         }
@@ -100,7 +107,7 @@ fn sweepable_vertices(part: &Part, source: &[usize], up: V3) -> Option<Vec<usize
 /// *v*'s index among the swept vertices.
 #[allow(
     clippy::expect_used,
-    reason = "sweepable_vertices admits only line and circle edges and collects both ends of each"
+    reason = "sweepable_vertices checks the curve type and collects both ends of each edge"
 )]
 fn vertex_index(vertex_ids: &[usize], v: usize) -> usize {
     vertex_ids.iter().position(|&x| x == v).expect("collected")
@@ -109,7 +116,7 @@ fn vertex_index(vertex_ids: &[usize], v: usize) -> usize {
 /// A copy of *edge* moved by *by*, its vertices those of end *level* (0 near, 1 far).
 #[allow(
     clippy::unreachable,
-    reason = "sweepable_vertices admits only line and circle edges and collects both ends of each"
+    reason = "sweepable_vertices checks the curve type and collects both ends of each edge"
 )]
 fn copy_edge(part: &Part, e: usize, by: V3, level: usize, vertex_ids: &[usize]) -> Option<Edge> {
     let edge = &part.edges[e];
@@ -129,6 +136,11 @@ fn copy_edge(part: &Part, e: usize, by: V3, level: usize, vertex_ids: &[usize]) 
                 },
                 radius: *radius,
             },
+            Curve::Nurbs(n) => {
+                let mut translated = n.clone();
+                translated.transform_points(|p| geom::add(p, by));
+                Curve::Nurbs(translated)
+            }
             _ => unreachable!("refused above"),
         },
         start: geom::add(edge.start, by),
@@ -296,6 +308,29 @@ fn side_face(
             frame: *frame,
             radius: *radius,
         },
+        Curve::Nurbs(top) => {
+            let Curve::Nurbs(bottom) = &edges[t - n].curve else {
+                return None;
+            };
+            let poles = bottom
+                .control_points()
+                .iter()
+                .zip(top.control_points())
+                .map(|(&a, &b)| vec![a, b])
+                .collect();
+            let weights = top.weights().iter().map(|&w| vec![w, w]).collect();
+            Surface::Freeform {
+                kind: "EXTRUSION",
+                surface: Box::new(crate::nurbs::NurbsSurface::new(
+                    top.degree(),
+                    1,
+                    poles,
+                    weights,
+                    top.knots().to_vec(),
+                    vec![0., 0., 1., 1.],
+                )?),
+            }
+        }
         // sweepable_vertices refuses every other curve.
         _ => return None,
     };

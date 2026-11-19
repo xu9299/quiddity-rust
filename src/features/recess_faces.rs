@@ -44,6 +44,12 @@ fn is_wall(part: &Part, face: usize) -> bool {
         match part.boundary_edge_curve(*e) {
             Some(&Curve::Line { .. }) => lines += 1,
             Some(&Curve::Circle { .. }) => circles += 1,
+            None if part
+                .declared_cylinder_chord_error(*e)
+                .is_some_and(|error| error <= crate::kernel::geom::COORD_FLOOR) =>
+            {
+                lines += 1
+            }
             _ => return false,
         }
     }

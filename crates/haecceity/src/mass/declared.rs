@@ -765,6 +765,28 @@ impl Part {
         trim.length(surface)
     }
 
+    /// Upper bound in mm on the deviation from the segment between the STEP
+    /// vertices, for a straight UV trim on a cylinder. In affine UV parameter
+    /// on [0,1] the axial component is linear and the second derivative has
+    /// norm r·Δu². Linear interpolation therefore contributes at most r·Δu²/8.
+    pub fn declared_cylinder_chord_error(&self, e: usize) -> Option<f64> {
+        let (face, trim) = self.spatial_trim(e)?;
+        let carrier = trim.curve.transfer.as_ref().map_or(face, |tr| &tr.carrier);
+        let Surface::Cylinder { radius, .. } = carrier else {
+            return None;
+        };
+        trim.curve.line()?;
+        let edge = &self.edges[e];
+        if edge.is_closed() {
+            return None;
+        }
+        let (a, b) = trim.interval;
+        let turn = trim.curve.carrier_uv(b)[0] - trim.curve.carrier_uv(a)[0];
+        let ends = geom::dist(trim.point(face, a), edge.start)
+            .max(geom::dist(trim.point(face, b), edge.end));
+        Some(ends + radius.abs() * turn * turn / 8.)
+    }
+
     /// The arc-length midpoint of the selected spatial boundary of edge `e`.
     pub fn edge_midpoint(&self, e: usize) -> V3 {
         self.declared_edge_at_length(e, 0.5)

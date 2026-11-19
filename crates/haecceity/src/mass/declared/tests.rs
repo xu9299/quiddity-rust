@@ -253,8 +253,9 @@ fn edge_distance_and_planar_sweep_respect_a_bowed_master() {
     let expected = [0.5, 0.0002, 0.];
     assert!(part.edge_distance(0, expected, 0.5) < 1e-10);
     assert!(part.declared_edge_length(0).unwrap() > 1.);
-    // The planar sweep accepts only straight or circular boundaries.
-    assert!(crate::sweep::extrude_face(&part, 0, [0.; 3], [0., 0., 1.]).is_none());
+    let prism = crate::sweep::extrude_face(&part, 0, [0.; 3], [0., 0., 1.]).unwrap();
+    assert!(prism.solid_is_valid(0));
+    assert!((prism.solid_mass(0).unwrap().0 - (1. - 0.0004 / 3.)).abs() < 1e-11);
     let spatial = plane().replace(".PCURVE_S1.", ".CURVE_3D.");
     let part = crate::step::read_step(spatial.as_bytes()).unwrap();
     assert!((part.edge_distance(0, expected, 0.5) - 0.0002).abs() < 1e-12);
@@ -376,6 +377,13 @@ fn cylinder_crossing_the_seam_uses_its_declared_curve() {
     text=text.replace("#108=CYLINDRICAL", "#201=CARTESIAN_POINT('',(0.,0.,1.));\n#202=AXIS2_PLACEMENT_3D('',#201,#13,#14);\n#108=CYLINDRICAL");
     let mut swept = entity(&text, 108, "SURFACE_OF_REVOLUTION('',#207,#206)");
     swept=swept.replace("#108=SURFACE_OF_REVOLUTION","#203=CARTESIAN_POINT('',(1.,0.,0.));\n#205=VECTOR('',#13,1.);\n#206=AXIS1_PLACEMENT('',#12,#13);\n#207=LINE('',#203,#205);\n#108=SURFACE_OF_REVOLUTION");
+    // A small nonzero turn is still a helix. Its proved distance from the
+    // segment is available to a wall classifier with a positional tolerance.
+    let almost_axial = entity(&text, 125, "DIRECTION('',(1.E-12,1.))");
+    let part = crate::step::read_step(almost_axial.as_bytes()).unwrap();
+    assert!(part.boundary_edge_curve(1).is_none());
+    assert!(part.declared_cylinder_chord_error(1).unwrap() <= geom::COORD_FLOOR);
+    assert!(part.declared_cylinder_chord_error(0).is_none());
     for source in [text, swept] {
         let p = crate::step::read_step(source.as_bytes()).unwrap();
         let area = p.face_mass(0).unwrap()[0];
