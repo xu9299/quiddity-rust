@@ -41,6 +41,7 @@ jobs:
           proof="$GITHUB_WORKSPACE/evidence"
           mkdir -p "$proof"
           rustup toolchain install 1.99.1 --profile minimal
+          if ! command -v uv >/dev/null; then HOMEBREW_NO_AUTO_UPDATE=1 brew install uv; fi
           { uname -a; sw_vers; rustc -vV; cargo -V; } > "$proof/environment.log"
           git -C source worktree add --detach ../baseline "$BASE"
           for role in baseline candidate; do
