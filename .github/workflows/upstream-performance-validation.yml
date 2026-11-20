@@ -2,7 +2,7 @@ name: Quiddity upstream candidate validation
 
 on:
   push:
-    branches: ['validation/upstream-document-evidence-20261120']
+    branches: ['validation/upstream-document-evidence-arm27-20261120']
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ env:
 
 jobs:
   validate:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 360
     defaults:
       run:
