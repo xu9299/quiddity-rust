@@ -1,0 +1,66 @@
+name: One transformed STEP on ARM macOS
+on:
+  push:
+    branches: [validation/step-declared-roundtrip-probe-20261120]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: xcode-27
+    timeout-minutes: 100
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1
+      CARGO_BUILD_JOBS: 6
+      CARGO_TERM_COLOR: never
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      BASE: f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0
+      SOURCE: e8d1e3ef731c5d18be223b41d227377403694c0e
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: .github/roundtrip-probe
+          path: harness
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-xcode-27
+          save-if: false
+      - name: Compare the upstream test's recognition documents on one public fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          tools="$GITHUB_WORKSPACE/harness/.github/roundtrip-probe"
+          proof="$GITHUB_WORKSPACE/evidence"
+          mkdir -p "$proof"
+          rustup toolchain install 1.99.1 --profile minimal
+          { uname -a; sw_vers; rustc -vV; cargo -V; } > "$proof/environment.log"
+          git -C source worktree add --detach ../baseline "$BASE"
+          for role in baseline candidate; do
+            if [ "$role" = baseline ]; then dir=baseline; expected="$BASE"; else dir=source; expected="$SOURCE"; fi
+            test "$(git -C "$dir" rev-parse HEAD)" = "$expected"
+            mkdir -p "$proof/$role"
+            git -C "$dir" rev-parse HEAD 'HEAD^{tree}' > "$proof/$role/identity.txt"
+            shasum -a 256 "$dir/tests/fixtures/slanted_bead.step" > "$proof/$role/fixture.sha256"
+            uv run --no-project --python 3.13 "$tools/instrument_roundtrip.py" "$dir/tests/brep_write.rs"
+            for order in mass-first recognition-first; do
+              export MOVED_ORDER="$order" MOVED_OUTPUT="$proof/$role/$order"
+              mkdir -p "$MOVED_OUTPUT"
+              (cd "$dir" && cargo test --workspace --release --locked --test brep_write report_a_single_moved_slanted_bead -- --exact --nocapture) 2>&1 | tee "$MOVED_OUTPUT/test.log"
+              test -s "$MOVED_OUTPUT/moved.json" && test -s "$MOVED_OUTPUT/read-back.json"
+            done
+          done
+          uv run --no-project --python 3.13 "$tools/describe_roundtrip.py" "$proof"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: moved-roundtrip-arm
+          path: evidence
+          retention-days: 30
