@@ -1,7 +1,7 @@
 name: STEP declared boundary survey and ARM regression
 on:
   push:
-    branches: [validation/step-declared-boundaries-20261119]
+    branches: [validation/step-declared-boundaries-on-304]
 permissions:
   contents: read
 concurrency:
@@ -15,9 +15,9 @@ env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
-  BASE: f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0
-  SOURCE: e8d1e3ef731c5d18be223b41d227377403694c0e
-  TREE: 4a82d9c844e7905c77a19327fc17de35d3afa447
+  BASE: 9a9709835d385528be5e49369d381bf3589bf051
+  SOURCE: b327322590a626a5593f712570a1309fb94e11f7
+  TREE: be98fd54393101bba9c28d2db419c0d0204865a0
 jobs:
   verify:
     strategy:
@@ -215,6 +215,35 @@ jobs:
         with:
           name: declared-arm-doc
           path: arm-doc/
+          retention-days: 30
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: harness
+          sparse-checkout: .github/master-trim-survey
+          persist-credentials: false
+      - name: Compare the moved slanted bead in both query orders
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          helper="$GITHUB_WORKSPACE/harness/.github/master-trim-survey"
+          sample="$GITHUB_WORKSPACE/moved-readback"
+          mkdir -p "$sample"
+          git rev-parse HEAD 'HEAD^{tree}' > "$sample/identity.txt"
+          shasum -a 256 tests/fixtures/slanted_bead.step > "$sample/input.sha256"
+          trap 'git restore -- tests/brep_write.rs' EXIT
+          uv run --no-project --python 3.13 "$helper/instrument_roundtrip.py" tests/brep_write.rs
+          for order in mass-first recognition-first; do
+            export MOVED_ORDER="$order" MOVED_OUTPUT="$sample/$order"
+            mkdir -p "$MOVED_OUTPUT"
+            cargo test --workspace --release --locked --test brep_write report_a_single_moved_slanted_bead -- --exact --nocapture 2>&1 | tee "$MOVED_OUTPUT/test.log"
+          done
+          uv run --no-project --python 3.13 "$helper/summarise_current_moved.py" "$sample"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: declared-moved-readback
+          path: moved-readback/
           retention-days: 30
 
   workspace-shard:
