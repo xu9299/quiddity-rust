@@ -15,7 +15,7 @@ use super::cylinders::{CylinderEvidence, coaxial_axis_lines};
 use super::placed::{Grid, Placed};
 use super::policy::{self, AXIS_ALIGNED_COS};
 use crate::kernel::brep::Part;
-use crate::kernel::geom::{self, Bounds, Curve, Surface, V3};
+use crate::kernel::geom::{self, Bounds, Surface, V3};
 use crate::kernel::py;
 
 /// Coaxial analytic axes may differ by modelling noise only (a fraction of the diameter).
@@ -77,14 +77,6 @@ pub fn transverse_planes(part: &Part, neighbours: &[usize], axis: V3) -> Vec<usi
 }
 }
 
-/// A circular edge's radius and centre.
-fn circle(part: &Part, edge: usize) -> Option<(f64, V3)> {
-    match part.edges[edge].curve {
-        Curve::Circle { frame, radius } => Some((radius, frame.origin)),
-        _ => None,
-    }
-}
-
 /// A circular rim: its radius and centre.
 pub type Rim = (f64, V3);
 
@@ -98,7 +90,10 @@ pub fn cone_rims(part: &Part, face: usize) -> Option<(Rim, Rim, f64)> {
     let mut circles: Vec<(f64, V3)> = part
         .face_edges(face)
         .into_iter()
-        .filter_map(|e| circle(part, e))
+        .filter_map(|e| match part.boundary_edge_support(e)? {
+            crate::kernel::geom::Curve::Circle { frame, radius } => Some((*radius, frame.origin)),
+            _ => None,
+        })
         .collect();
     if circles.len() < 2 {
         return None;

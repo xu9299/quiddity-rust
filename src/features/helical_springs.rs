@@ -201,8 +201,7 @@ fn tubes(part: &Part, faces: &[usize]) -> Option<Vec<Tube>> {
                         && geom::dot(geom::sub(frame.origin, t.points[i]), t.tangents[i]).abs()
                             < tolerance(radius)
                         && part.face_edges(f).into_iter().all(|e| {
-                            part.edges[e]
-                                .samples
+                            part.boundary_edge_samples(e)
                                 .iter()
                                 .all(|&p| geom::dist(p, t.points[i]) <= radius + tolerance(radius))
                         })

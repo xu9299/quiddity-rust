@@ -125,10 +125,9 @@ impl<'a> Classifier<'a> {
         let (part, rays) = (self.rays.part, &self.rays);
         // On an edge, a face's own containment test is at its boundary and may say no.
         let on_edge = self.edges.iter().any(|&e| {
-            let edge = &part.edges[e];
             rays.edge_boxes[e].contains(p, rays.edge_tol)
-                && polyline_distance(p, &edge.samples) <= rays.edge_tol
-                && geom::dist(edge.curve.value(edge.curve.parameter(p)), p) <= ON_TOLERANCE
+                && polyline_distance(p, part.boundary_edge_samples(e)) <= rays.edge_tol
+                && geom::dist(part.nearest_boundary_point(e, p).0, p) <= ON_TOLERANCE
         });
         on_edge
             || rays.faces.iter().any(|&i| {

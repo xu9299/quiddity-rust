@@ -61,7 +61,7 @@ pub(super) fn wall(
     if edges.len() != 4
         || edges
             .iter()
-            .any(|&e| !matches!(part.edges[e].curve, Curve::Line { .. }))
+            .any(|&e| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
     {
         return None;
     }
@@ -130,7 +130,7 @@ pub(super) fn exterior(part: &Part, wall: usize, edge: usize, direction: V3) -> 
 
 fn from_edge(part: &Part, edge: usize) -> Option<Occurrence<VChannel>> {
     let e = &part.edges[edge];
-    if !matches!(e.curve, Curve::Line { .. }) || e.is_closed() {
+    if !matches!(part.boundary_edge_curve(edge), Some(Curve::Line { .. })) || e.is_closed() {
         return None;
     }
     let [a, b] = part.edge_faces()[edge][..] else {
@@ -186,7 +186,7 @@ fn from_round(part: &Part, face: usize) -> Option<Occurrence<VChannel>> {
     let edges = part.face_edges(face);
     let (lines, ends): (Vec<usize>, Vec<usize>) = edges
         .into_iter()
-        .partition(|&e| matches!(part.edges[e].curve, Curve::Line { .. }));
+        .partition(|&e| matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })));
     let (&[la, lb], 2) = (&lines[..], ends.len()) else {
         return None;
     };
@@ -248,8 +248,7 @@ fn from_round(part: &Part, face: usize) -> Option<Occurrence<VChannel>> {
     let at = geom::add(apex, geom::scale(delta, 0.5));
     let mut context = vec![face];
     for &end in &ends {
-        let e = &part.edges[end];
-        let side = geom::dot(geom::sub(e.midpoint(), ta), axis);
+        let side = geom::dot(geom::sub(part.edge_midpoint(end), ta), axis);
         let direction = if side > 0.5 * length {
             axis
         } else {

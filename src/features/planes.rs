@@ -158,7 +158,7 @@ pub fn linear_quad(part: &Part, face: usize) -> bool {
         && part
             .outer_edges(face)
             .iter()
-            .all(|&e| matches!(part.edges[e].curve, Curve::Line { .. }))
+            .all(|&e| matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
         && vertices.len() == 4
 }
 }

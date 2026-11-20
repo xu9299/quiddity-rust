@@ -31,7 +31,7 @@ fn occurrence(proposal: Proposal<Slot>) -> Occurrence<Slot> {
 /// bounds and meet its defining walls through the proved-radius corner cylinders.
 pub(crate) fn claim_rectangular_end_walls(part: &Part, slot: &Slot, defining: &mut Vec<usize>) {
     use super::recess_records::{axis_index, third_axis};
-    use crate::kernel::geom::{Curve, Surface};
+    use crate::kernel::geom::Surface;
     let Some(radius) = slot.corner_radius.filter(|r| *r > 0.) else {
         return;
     };
@@ -110,7 +110,7 @@ pub(crate) fn claim_rectangular_end_walls(part: &Part, slot: &Slot, defining: &m
                             && part
                                 .shared_edges(f, g)
                                 .iter()
-                                .any(|&e| matches!(part.edges[e].curve, Curve::Line { .. }))
+                                .any(|&e| super::recess_faces::wall_edge_is_straight(part, e))
                             && part.neighbours(g).iter().any(|h| {
                                 walls.contains(h) && {
                                     let hb = part.face_bounds(*h);

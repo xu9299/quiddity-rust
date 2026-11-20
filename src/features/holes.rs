@@ -896,8 +896,8 @@ fn mouth_chamfer(part: &Part, seg: &Segment, hi: bool) -> Option<(MouthChamfer, 
                     && geom::dot(geom::sub(wide, frame.origin), normal).abs() <= tol
             }) && part.arc(face, support) == Some(Arc::Convex)
                 && part.shared_edges(face, support).iter().any(|&edge| {
-                    let crate::kernel::geom::Curve::Circle { frame, radius } =
-                        part.edges[edge].curve
+                    let Some(&crate::kernel::geom::Curve::Circle { frame, radius }) =
+                        part.boundary_edge_support(edge)
                     else {
                         return false;
                     };
@@ -1118,7 +1118,7 @@ pub(crate) fn claim_flat_floor(
                 .flat_map(|e| {
                     [
                         part.edges[e].start,
-                        part.edges[e].midpoint(),
+                        part.edge_midpoint(e),
                         part.edges[e].end,
                     ]
                 })
@@ -1161,7 +1161,7 @@ pub(crate) fn claim_flat_floor(
                         && adjacent.iter().all(|g| *g == f || walls.contains(g))
                         && [
                             part.edges[e].start,
-                            part.edges[e].midpoint(),
+                            part.edge_midpoint(e),
                             part.edges[e].end,
                         ]
                         .iter()
@@ -1217,7 +1217,7 @@ pub(crate) fn claim_drill_point(
                     && shared.iter().all(|&e| {
                         [
                             part.edges[e].start,
-                            part.edges[e].midpoint(),
+                            part.edge_midpoint(e),
                             part.edges[e].end,
                         ]
                         .iter()

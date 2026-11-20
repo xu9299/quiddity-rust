@@ -172,6 +172,64 @@ fn a_crossing_a_straying_edge_overshoots_yields_to_the_bore_across_it() {
     assert_eq!(faces, [172, 175]);
 }
 
+/// On mfcadpp/10163 a cylinder's selected trim has 17 samples. The adjacent
+/// plane uses 29 samples from its spatial boundary. Correcting the plane's winding
+/// against the cylinder's polygon creates a fifth crossing through a closed
+/// solid and refuses the independently empty section-passage probe.
+#[test]
+fn the_face_domain_and_its_winding_correction_share_the_same_chords() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let file = "mfcadpp/10163.step";
+    let part = read_step_file(&dir.join(file)).unwrap();
+    let solid = Classifier::for_solid(&part, 0);
+    let origin = [6.1669931049909295, -1.0000000000001292, 8.805436765471812];
+    let faces: Vec<_> = solid
+        .rays()
+        .trimmed_hits(origin, [0.0, 1.0, 0.0], 46.59631258649815)
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.face)
+        .collect();
+    assert_eq!(faces, [6, 12, 5, 3]);
+
+    let probe = probes()
+        .into_iter()
+        .filter(|p| p["file"] == file)
+        .nth(6)
+        .unwrap();
+    assert_eq!(probe["caller"], "_section_passages");
+    assert_eq!(probe["volume"], 0.0);
+    assert_eq!(measure(&probe, &[solid])["volume"], 0.0);
+}
+
+/// The thin cylindrical-passage probe has two incoming hits on its shared
+/// cap edge, 3.7e-8 mm apart. Its STEP uncertainty is 1e-7 mm. A nudge along
+/// that edge cannot establish parity; across it both sides resolve the same
+/// interval. An independent solid Boolean finds no shared volume.
+#[test]
+fn the_two_sides_of_a_declared_probe_edge_agree_on_its_empty_intersection() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let file = "mfcadpp/10155.step";
+    let part = read_step_file(&dir.join(file)).unwrap();
+    let probe = probes()
+        .into_iter()
+        .filter(|p| p["file"] == file)
+        .nth(5)
+        .unwrap();
+    assert_eq!(probe["caller"], "_cylindrical_passages");
+    assert_eq!(probe["volume"], 0.0);
+    assert_eq!(
+        measure(&probe, &[Classifier::for_solid(&part, 0)])["volume"],
+        0.0
+    );
+}
+
 /// Measure a Rust probe for the independent references and Rust snapshot.
 fn measure(p: &Value, solids: &[Classifier<'_>]) -> Value {
     let probe_part: Part;

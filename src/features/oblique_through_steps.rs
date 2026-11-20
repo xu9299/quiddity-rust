@@ -170,7 +170,7 @@ pub(super) fn linear_outer_quad(part: &Part, face: usize) -> Option<Vec<V3>> {
         || !part
             .outer_edges(face)
             .iter()
-            .all(|&edge| matches!(part.edges[edge].curve, Curve::Line { .. }))
+            .all(|&edge| matches!(part.boundary_edge_curve(edge), Some(Curve::Line { .. })))
     {
         return None;
     }
@@ -204,7 +204,7 @@ pub(super) fn seam_endpoints(part: &Part, a: usize, b: usize) -> Option<(V3, V3)
     if edges.is_empty()
         || edges
             .iter()
-            .any(|&e| !matches!(part.edges[e].curve, Curve::Line { .. }))
+            .any(|&e| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
     {
         return None;
     }

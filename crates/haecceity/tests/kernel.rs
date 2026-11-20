@@ -140,16 +140,28 @@ fn a_jump_along_a_collapsed_side_leaves_the_area_unchanged() {
         [1.0, 0.0, 0.0, -78.9],
         [0.0, 1.0, 0.0, 41.3],
     ];
-    let area = |placement: &haecceity::step::Placement| {
-        let part = haecceity::step::read_step_file_placed(&path, placement).unwrap();
-        part.face_mass(726).unwrap()[0]
-    };
-    let (unmoved, moved) = (area(&haecceity::step::IDENTITY), area(&moved));
-    assert!((unmoved - 18.22923018).abs() < 1e-7, "{unmoved}");
-    assert!(
-        (moved - unmoved).abs() < 1e-9 * unmoved,
-        "{unmoved} moved {moved}"
-    );
+    let bytes =
+        haecceity::step::decode_step_file_bytes(&path, std::fs::read(&path).unwrap()).unwrap();
+    let declared = std::str::from_utf8(&bytes).unwrap();
+    let spatial = declared
+        .replace(".PCURVE_S1.", ".CURVE_3D.")
+        .replace(".PCURVE_S2.", ".CURVE_3D.");
+    // The original projection control and the independently integrated master
+    // each keep the same absolute area band and the same motion bound.
+    for (source, expected) in [(declared, 18.22922442), (spatial.as_str(), 18.22923018)] {
+        let areas = |placement: &haecceity::step::Placement| {
+            let part = haecceity::step::read_step_placed(source.as_bytes(), placement).unwrap();
+            [715, 726].map(|face| part.face_mass(face).unwrap()[0])
+        };
+        let original = areas(&haecceity::step::IDENTITY);
+        for (unmoved, moved) in original.into_iter().zip(areas(&moved)) {
+            assert!((unmoved - expected).abs() < 1e-7, "{unmoved}");
+            assert!(
+                (moved - unmoved).abs() < 1e-9 * unmoved,
+                "{unmoved} moved {moved}"
+            );
+        }
+    }
 }
 
 /// Two quarter cylinders of radius 7 on axes 14 apart (x = ±7, y = 0) kiss along x = y = 0 with
@@ -509,11 +521,15 @@ fn volume_probes_refuse_rather_than_read_unanswered_rays_as_air() {
     use haecceity::volume::{Probe, common_volume};
     // Box(30, 30, 20) - Cylinder(5, 20), with the bore's surface made one the rays cannot
     // intersect.
-    let mut part = fixture("rejected_bored_box.step");
-    let bore = (0..part.faces.len())
-        .find(|&f| part.faces[f].surface.kind() == SurfaceType::Cylinder)
+    let source = fixture("rejected_bored_box.step");
+    let mut faces = source.faces;
+    let bore = faces
+        .iter_mut()
+        .find(|f| f.surface.kind() == SurfaceType::Cylinder)
         .unwrap();
-    part.faces[bore].surface = Surface::Other { kind: "test" };
+    bore.surface = Surface::Other { kind: "test" };
+    // The file's original ray and trim caches describe a working bore.
+    let part = haecceity::Part::new(faces, source.edges, source.solids);
     let solid = Classifier::new(&part);
     let probe = |min: [f64; 3], max: [f64; 3]| Probe::Box(Bounds { min, max });
     // Lines clear of the bore still answer: a 4 × 4 × 10 box in the material.
@@ -526,10 +542,12 @@ fn volume_probes_refuse_rather_than_read_unanswered_rays_as_air() {
     );
     // With every surface unresolvable, a box clear of every face is placed by its centre, which
     // the classifier leaves `Unknown`: no answer, not empty.
-    let mut blind = fixture("rejected_bored_box.step");
-    for face in &mut blind.faces {
+    let source = fixture("rejected_bored_box.step");
+    let mut faces = source.faces;
+    for face in &mut faces {
         face.surface = Surface::Other { kind: "test" };
     }
+    let blind = haecceity::Part::new(faces, source.edges, source.solids);
     let solid = Classifier::new(&blind);
     assert_eq!(solid.classify([10.0, 10.0, 0.0]), State::Unknown);
     assert_eq!(
@@ -685,8 +703,9 @@ fn surface_recovery_moves_with_the_part() {
 /// from the pole (nist_ftc_07 49, 51); a cone pcurve running to the apex at another u (cgb243
 /// 19); a B-spline edge whose samples missed its end (nist_ctc_05 79, cgb242 558); and a
 /// B-spline face whose surface collapses at a corner of it, where v is arbitrary (cgb242 289,
-/// to its samples' 2.4e-6). A pcurve constant in v fixes the edge's v (cgb217 106: the bore's
-/// B-spline rim strays 0.0187 above the plane its pcurve, v = 24.5, gives).
+/// to its samples' 2.4e-6). For cgb217 face 106, the selected pcurve is a line on spline surface #12488.
+/// Projecting that curve onto the bore axis gives 24.518993418091 mm. Its second slot,
+/// a different pcurve on the cylinder itself, keeps v = 24.5 throughout.
 #[test]
 fn uv_bounds_are_the_range_of_the_boundary_edges() {
     let Some(dir) = common::corpus_dir() else {
@@ -745,7 +764,14 @@ fn uv_bounds_are_the_range_of_the_boundary_edges() {
             -2.916583493,
             1e-8,
         ),
-        ("cadgenbench_inputs/cgb243.step.gz", 19, 0, PI, 1e-9),
+        // On the cone at its apex, the selected spline ends at pole #2628.
+        (
+            "cadgenbench_inputs/cgb243.step.gz",
+            19,
+            0,
+            2.988943325195,
+            1e-9,
+        ),
         ("nist/nist_ftc_07_asme1_rd.stp", 49, 3, 1.553343034, 1e-8),
         ("nist/nist_ftc_07_asme1_rd.stp", 51, 2, -1.553343034, 1e-8),
         ("nist/nist_ctc_05_asme1_rd.stp", 79, 1, 0.9030627005, 1e-9),
@@ -763,7 +789,13 @@ fn uv_bounds_are_the_range_of_the_boundary_edges() {
             -0.0001523131,
             1e-9,
         ),
-        ("cadgenbench_inputs/cgb217.step.gz", 106, 3, 24.5, 1e-9),
+        (
+            "cadgenbench_inputs/cgb217.step.gz",
+            106,
+            3,
+            24.518993418091,
+            1e-9,
+        ),
     ];
     let mut parts = std::collections::BTreeMap::new();
     for (file, face, side, want, tol) in cases {
@@ -777,6 +809,43 @@ fn uv_bounds_are_the_range_of_the_boundary_edges() {
             "{file} face {face} side {side}: {got} vs {want}"
         );
     }
+    // The original reference projects the spatial edge at the same cone tip.
+    let spatial = common::with_spatial_edges(
+        &dir.join("cadgenbench_inputs/cgb243.step.gz"),
+        &[2586, 2619, 2643].into_iter().collect(),
+    );
+    assert!((spatial.uv_bounds(19).unwrap().0 - PI).abs() <= 1e-9);
+}
+
+#[test]
+fn a_cylinder_rim_uses_the_height_of_the_selected_carrier() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let path = dir.join("cadgenbench_inputs/cgb217.step.gz");
+    let bytes =
+        haecceity::step::decode_step_file_bytes(&path, std::fs::read(&path).unwrap()).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let selected = "SURFACE_CURVE('',#12693,(#12704,#12711),.PCURVE_S1.)";
+    assert_eq!(text.matches(selected).count(), 1);
+    let height = |edge| {
+        let changed = text.replace(selected, edge);
+        haecceity::read_step(changed.as_bytes())
+            .unwrap()
+            .uv_bounds(106)
+            .unwrap()
+            .3
+    };
+    // S1 runs on the neighbouring spline; S2 is a parallel of the cylinder.
+    // The alternate spatial spline and circle do not change either pcurve.
+    assert!((height(selected) - 24.518993418091).abs() < 1e-8);
+    let flat = "SURFACE_CURVE('',#12693,(#12704,#12711),.PCURVE_S2.)";
+    assert!((height(flat) - 24.5).abs() < 1e-9);
+    let spatial = "SURFACE_CURVE('',#12693,(#12704,#12711),.CURVE_3D.)";
+    assert!((height(spatial) - 24.51868961048).abs() < 1e-9);
+    let consistent = "SURFACE_CURVE('',#12452,(#12704,#12711),.PCURVE_S2.)";
+    assert!((height(consistent) - 24.5).abs() < 1e-9);
 }
 
 /// A face's box reaches its edges' and its surface's extremes between their samples: cgb207's

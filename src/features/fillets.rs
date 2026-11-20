@@ -354,10 +354,12 @@ pub(crate) fn curved_wall_corner(
                     // tilted within modelling precision: test their whole trimmed length
                     // against the analytic tangent generator, without an angular allowance.
                     if shared.iter().any(|&e| {
-                        !matches!(part.edges[e].curve, crate::kernel::geom::Curve::Line { .. })
-                            || [part.edges[e].start, part.edges[e].end]
-                                .iter()
-                                .any(|&p| geom::norm(geom::cross(geom::sub(p, point), run)) > tol)
+                        !matches!(
+                            part.boundary_edge_curve(e),
+                            Some(crate::kernel::geom::Curve::Line { .. })
+                        ) || [part.edges[e].start, part.edges[e].end]
+                            .iter()
+                            .any(|&p| geom::norm(geom::cross(geom::sub(p, point), run)) > tol)
                     }) {
                         continue;
                     }
@@ -522,10 +524,10 @@ fn spherical_corner(
             return None;
         }
         let run = axes[&n];
-        let crate::kernel::geom::Curve::Circle {
+        let Some(&crate::kernel::geom::Curve::Circle {
             frame: arc,
             radius: r,
-        } = part.edges[edge].curve
+        }) = part.boundary_edge_support(edge)
         else {
             return None;
         };
