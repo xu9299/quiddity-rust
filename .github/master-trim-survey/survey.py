@@ -28,6 +28,41 @@ def changed_rows(a, b, key):
     return changed_keys(left, right)
 
 
+def compare_moments(old, new):
+    sides = [old["moments"], new["moments"]]
+    faces = old["faces"]
+    assert len(sides[0]) == len(sides[1]) == len(faces)
+    result = {"measured": [sum(m is not None for m in side) for side in sides],
+              "gained": [], "lost": [], "centroids_moved_over_1e_6_mm": 0,
+              "tensors_changed_over_1ppm": 0, "max_centroid_shift": None,
+              "mass_and_moment_areas_outside_1ppm": [0, 0]}
+    for side, doc in enumerate((old, new)):
+        for f, m in zip(doc["faces"], sides[side], strict=True):
+            if m is None:
+                continue
+            area, centre, tensor = m
+            assert len(centre) == 3 and len(tensor) == 3 and all(len(r) == 3 for r in tensor)
+            assert area > 0 and all(math.isfinite(x) for x in [area, *centre, *(v for r in tensor for v in r)])
+            if f["area"] is None or abs(area - f["area"]) > 1e-6 * f["area"]:
+                result["mass_and_moment_areas_outside_1ppm"][side] += 1
+    for f, a, b in zip(faces, *sides, strict=True):
+        key = {"index": f["index"], "entity": f["entity"]}
+        if a is None or b is None:
+            if a is not b:
+                result["gained" if a is None else "lost"].append(key)
+            continue
+        shift = math.dist(a[1], b[1])
+        if shift > 1e-6:
+            result["centroids_moved_over_1e_6_mm"] += 1
+        if shift and (result["max_centroid_shift"] is None or shift > result["max_centroid_shift"]["distance_mm"]):
+            result["max_centroid_shift"] = {**key, "distance_mm": shift, "before": a[1], "after": b[1]}
+        before = [c for row in a[2] for c in row]
+        after = [c for row in b[2] for c in row]
+        if math.dist(before, after) > 1e-6 * math.hypot(*before):
+            result["tensors_changed_over_1ppm"] += 1
+    return result
+
+
 def compare(name, pair):
     old, new = pair
     if "read_error" in old or "read_error" in new:
@@ -54,7 +89,7 @@ def compare(name, pair):
     feat_fp = changed_rows(fa["features"], fb["features"], "id")
     return dict(file=name, faces=len(old["faces"]),
                 measured=[sum(f["area"] is not None for f in side["faces"]) for side in pair],
-                areas=changed, gained=gained, lost=lost,
+                areas=changed, gained=gained, lost=lost, moments=compare_moments(old, new),
                 fingerprint_fields=changed_keys(fa, fb), face_fingerprints=face_fp,
                 feature_fingerprints=feat_fp, document_fields=changed_keys(da, db),
                 record_ids=changed_rows(da["records"], db["records"], "id"),
@@ -109,6 +144,18 @@ def main():
                   record_counts=[sum(r["record_counts"][i] for r in assessed) for i in range(2)],
                   counts_by_document_field=dict(collections.Counter(k for r in assessed for k in r["document_fields"])),
                   control_areas=witness)
+    max_shifts = [{"file": r["file"], **r["moments"]["max_centroid_shift"]} for r in assessed
+                  if r["moments"]["max_centroid_shift"] is not None]
+    report["moments"] = {
+        "measured": [sum(r["moments"]["measured"][i] for r in assessed) for i in range(2)],
+        "gained": sum(len(r["moments"]["gained"]) for r in assessed),
+        "lost": sum(len(r["moments"]["lost"]) for r in assessed),
+        "centroids_moved_over_1e_6_mm": sum(r["moments"]["centroids_moved_over_1e_6_mm"] for r in assessed),
+        "tensors_changed_over_1ppm": sum(r["moments"]["tensors_changed_over_1ppm"] for r in assessed),
+        "max_centroid_shift": max(max_shifts, key=lambda q: q["distance_mm"], default=None),
+        "mass_and_moment_areas_outside_1ppm": [
+            sum(r["moments"]["mass_and_moment_areas_outside_1ppm"][i] for r in assessed) for i in range(2)],
+    }
     (args.out / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.out / "per-file.json").write_text(json.dumps(rows, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)

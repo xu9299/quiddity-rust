@@ -25,7 +25,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             json!({"index": i, "entity": part.face_source(i).map(|s| s.entity), "area": area})
         })
         .collect();
-    println!("{}", json!({"faces": faces, "recognition": recognition}));
+    // Preserve the recognition and legacy area survey's normal query order. A
+    // complete moment query can fail separately on a very small finite face.
+    let moments: Vec<_> = (0..part.faces.len())
+        .map(|i| part.face_moments(i).map(|m| (m.area, m.centroid, m.second_moments)))
+        .collect();
+    println!("{}", json!({"faces": faces, "recognition": recognition, "moments": moments}));
     Ok(())
 }
 
