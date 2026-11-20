@@ -38,6 +38,21 @@ Reading, decompression or STEP parsing failures raise `ValueError`; unsupported 
 types raise `TypeError`. The input is read once, so both documents derive from the same
 STEP content.
 
+### Document and face evidence
+
+`recognise_document_with_evidence(step)` returns the same recognition document and
+evidence from the same shared analysis. This entry point skips the face and feature
+fingerprints used to compare model revisions.
+
+The JSON envelope is `quiddity-rust/document-analysis/1`. Its `document` field is
+the full joint result's `recognition.document`. The `evidence` and `evidence_error`
+fields follow the joint API's coordinate and refusal rules. File paths and STEP bytes
+have the same input rules, including provenance and gzip support for paths.
+
+Rust callers can use `file_api::recognise_document_with_evidence_file` or
+`file_api::recognise_document_with_evidence_bytes`. The capabilities document lists the
+function name and the `document_analysis` envelope version.
+
 ## Coordinates, categories and error semantics
 
 Recognition document parameters remain in file coordinates. When a part frame can be

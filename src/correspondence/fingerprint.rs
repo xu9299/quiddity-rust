@@ -1205,6 +1205,51 @@ pub(crate) fn published_fingerprint_in(
     published_fingerprint_impl(ctx, part, features, source, Some(motion))
 }
 
+/// The defining face lists used by the recognition document.
+pub(crate) fn published_record_faces(
+    features: &crate::published_records::PublishedFeatures,
+) -> BTreeMap<String, Vec<usize>> {
+    let working = features.working();
+    let json = records_json(working);
+    let mut out = BTreeMap::new();
+    for (key, records) in json.as_object().expect("an object") {
+        let Some(records) = records.as_array() else {
+            continue;
+        };
+        let table = family(key)
+            .unwrap_or_else(|| panic!("family {key} has no fingerprint table (FAMILIES)"));
+        for (n, record) in records.iter().enumerate() {
+            let mut own = record_faces(&json, working, key, n, record, table.members);
+            own.sort_unstable();
+            own.dedup();
+            out.insert(features.published_id(key, n), own);
+        }
+    }
+    out
+}
+
+fn record_faces(
+    json: &Value,
+    features: &Features,
+    key: &str,
+    n: usize,
+    record: &Value,
+    members: Option<(&str, &str)>,
+) -> Vec<usize> {
+    match (features.defining.get(key), members) {
+        (Some(defining), _) => defining.get(n).cloned().unwrap_or_else(|| {
+            panic!(
+                "family {key} has a record at {n} but defining faces for {}",
+                defining.len()
+            )
+        }),
+        (None, Some(members)) => derived_faces(json, features, key, members, record),
+        (None, None) => {
+            panic!("family {key} has no defining faces in Features::defining and is not derived")
+        }
+    }
+}
+
 fn published_fingerprint_impl(
     ctx: &crate::features::Context<'_>,
     part: &Part,
@@ -1297,19 +1342,7 @@ fn fingerprint_with_axes(
         let table = family(key)
             .unwrap_or_else(|| panic!("family {key} has no fingerprint table (FAMILIES)"));
         for (n, record) in records.iter().enumerate() {
-            let faces_of = match (features.defining.get(key.as_str()), table.members) {
-                (Some(defining), _) => defining.get(n).cloned().unwrap_or_else(|| {
-                    panic!(
-                        "family {key} has {} records but defining faces for {}",
-                        records.len(),
-                        defining.len()
-                    )
-                }),
-                (None, Some(members)) => derived_faces(&json, features, key, members, record),
-                (None, None) => panic!(
-                    "family {key} has no defining faces in Features::defining and is not derived"
-                ),
-            };
+            let faces_of = record_faces(&json, features, key, n, record, table.members);
             let mut fp = feature(&faces, format!("{key}/{n}"), table, record, faces_of, &axis);
             if !fp.faces.is_empty() && (key == "bosses" || key == "plates") {
                 fp.neighbourhood = supporting_neighbourhood(&faces, &fp.faces, ctx);

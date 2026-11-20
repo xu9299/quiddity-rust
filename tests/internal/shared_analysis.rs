@@ -5,6 +5,23 @@ use quiddity::{
 };
 use serde_json::{Value, json};
 
+const SHARED_FIXTURES: &[&str] = &[
+    "golden_simple_through_hole.step",
+    "golden_bolt_circle_and_rectangular_grid.step",
+    "golden_oriented_slots.step",
+    "golden_blind_pockets_and_pocket_patterns.step",
+    "golden_gusset_rib_patterns.step",
+    "golden_oriented_chamfer.step",
+    "pocket_floor_fillet.step",
+    "pocket_partial_floor_fillet.step",
+    "pocket_floor_island.step.gz",
+    "open_shell.step",
+    "broken/unresolved_surface.step",
+    "unowned_recess_solid.step.gz",
+    "unowned_recess_shell.step.gz",
+    "unowned_recess_mixed.step.gz",
+];
+
 fn compare(part: &quiddity::Part) {
     let separate = correspondence::recognise(part);
     let framed = matches!(separate.frame, RecordFrame::Inferred(_));
@@ -31,26 +48,59 @@ fn compare(part: &quiddity::Part) {
 
 #[test]
 fn shared_analysis_matches_complete_documents() {
-    for file in [
-        "golden_simple_through_hole.step",
-        "golden_bolt_circle_and_rectangular_grid.step",
-        "golden_oriented_slots.step",
-        "golden_blind_pockets_and_pocket_patterns.step",
-        "golden_gusset_rib_patterns.step",
-        "golden_oriented_chamfer.step",
-        "pocket_floor_fillet.step",
-        "pocket_partial_floor_fillet.step",
-        "pocket_floor_island.step.gz",
-        "open_shell.step",
-        "broken/unresolved_surface.step",
-        "unowned_recess_solid.step.gz",
-        "unowned_recess_shell.step.gz",
-        "unowned_recess_mixed.step.gz",
-    ] {
+    for file in SHARED_FIXTURES {
         eprintln!("shared analysis: {file}");
         let part = step::read_step_file(&common::fixtures().join(file)).unwrap();
         compare(&part);
     }
+}
+
+fn compare_document(path: &std::path::Path) {
+    let path = path.to_str().unwrap();
+    let full: Value =
+        serde_json::from_str(&file_api::recognise_with_evidence_file(path).unwrap()).unwrap();
+    let document = file_api::recognise_document_with_evidence_file(path).unwrap();
+    let expected = file_api::json(&json!({
+        "schema_version": "quiddity-rust/document-analysis/1",
+        "document": full["recognition"]["document"],
+        "evidence": full["evidence"],
+        "evidence_error": full["evidence_error"],
+    }))
+    .unwrap();
+    assert_eq!(document, expected, "{path}");
+}
+
+#[test]
+fn document_analysis_matches_full_joint_output() {
+    for file in SHARED_FIXTURES
+        .iter()
+        .copied()
+        .chain(["captured/frames/sphere.step"])
+    {
+        compare_document(&common::fixtures().join(file));
+    }
+}
+
+#[test]
+fn document_analysis_preserves_locally_degraded_corpus_records() {
+    let Some(corpus) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    for file in ["13975.step.gz", "14052.step.gz"] {
+        compare_document(&corpus.join("inventory_refusal").join(file));
+    }
+}
+
+#[test]
+fn document_analysis_accepts_bytes_and_reports_input_errors() {
+    let path = common::fixtures().join("golden_simple_through_hole.step");
+    let from_file =
+        file_api::recognise_document_with_evidence_file(path.to_str().unwrap()).unwrap();
+    let from_bytes =
+        file_api::recognise_document_with_evidence_bytes(std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(from_file, from_bytes);
+    assert!(file_api::recognise_document_with_evidence_bytes(b"not a STEP file".to_vec()).is_err());
 }
 
 #[test]

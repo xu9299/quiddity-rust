@@ -106,7 +106,38 @@ fn publish(
     features: Features,
     frame: RecordFrame,
 ) -> Recognition {
-    if let RecordFrame::Inferred(inferred) = &frame {
+    let (published, fingerprints) = publish_with(
+        part,
+        ctx,
+        features,
+        frame,
+        fingerprint::published_fingerprint_in,
+    );
+    Recognition {
+        features: published.features,
+        fingerprints,
+        frame: published.frame,
+        source_sha256: None,
+        input_repairs: published.input_repairs,
+        body_evidence: published.body_evidence,
+    }
+}
+
+struct PublishedRecognition {
+    features: PublishedFeatures,
+    frame: RecordFrame,
+    input_repairs: Vec<String>,
+    body_evidence: BTreeMap<usize, crate::recognition::BodyReason>,
+}
+
+fn publish_with<T>(
+    part: &Part,
+    ctx: &features::Context<'_>,
+    features: Features,
+    frame: RecordFrame,
+    finish: impl FnOnce(&Part, &PublishedFeatures, &features::Context<'_>) -> T,
+) -> (PublishedRecognition, T) {
+    let (features, body_evidence, result) = if let RecordFrame::Inferred(inferred) = &frame {
         let working = ctx.part;
         let body_evidence = crate::body::evidence(working, &features);
         let Mapped {
@@ -119,27 +150,22 @@ fn publish(
         // motion, so they stay intrinsic to the part: publishing on the file's grid would make a
         // derived size (hi − lo) depend on where the part is placed, and a near-aligned frame's
         // publication in the file's axes (#70) would change its axes by the round-off it drops.
-        let fingerprints = fingerprint::published_fingerprint_in(part, &fingerprinted, ctx);
-        Recognition {
-            features,
-            fingerprints,
-            frame,
-            source_sha256: None,
-            input_repairs: part.input_repairs().to_vec(),
-            body_evidence,
-        }
+        let result = finish(part, &fingerprinted, ctx);
+        (features, body_evidence, result)
     } else {
         let features: PublishedFeatures = features.into();
-        let fingerprints = fingerprint::published_fingerprint_in(part, &features, ctx);
-        Recognition {
+        let result = finish(part, &features, ctx);
+        (features, BTreeMap::new(), result)
+    };
+    (
+        PublishedRecognition {
             features,
-            fingerprints,
             frame,
-            source_sha256: None,
             input_repairs: part.input_repairs().to_vec(),
-            body_evidence: BTreeMap::new(),
-        }
-    }
+            body_evidence,
+        },
+        result,
+    )
 }
 
 /// Recognise and project evidence from one inventory.
@@ -153,7 +179,7 @@ fn publish(
 /// Evidence failure does not erase recognition.
 /// Strict/local-degradation retries and publication post-pass retries remain intact.
 pub fn recognise_with_evidence(part: &Part) -> RecognitionWithEvidence {
-    let (recognition, evidence) = joint_analysis(part);
+    let (recognition, evidence) = joint_analysis(part, publish, normalisation_refused);
     RecognitionWithEvidence {
         recognition,
         evidence,
@@ -169,10 +195,45 @@ pub struct RecognitionWithEvidence {
         Result<crate::evidence_view::EvidenceDocument, crate::evidence_view::EvidenceViewError>,
 }
 
-fn joint_analysis(
+pub(crate) fn recognise_document_with_evidence(
     part: &Part,
+    source_sha256: &str,
 ) -> (
-    Recognition,
+    crate::recognition::RecognitionDocument,
+    Result<crate::evidence_view::EvidenceDocument, crate::evidence_view::EvidenceViewError>,
+) {
+    let publish_document = |part: &Part, ctx: &features::Context<'_>, features, frame| {
+        let (published, faces) = publish_with(part, ctx, features, frame, |_, features, _| {
+            fingerprint::published_record_faces(features)
+        });
+        crate::recognition::document_with_faces(
+            &published.features,
+            |id| faces.get(id).map(Vec::as_slice),
+            &published.frame,
+            Some(source_sha256),
+            &published.input_repairs,
+            &published.body_evidence,
+            part.faces.len(),
+        )
+    };
+    joint_analysis(part, publish_document, |part| {
+        publish_document(
+            part,
+            &features::Context::new(part),
+            Features::default(),
+            RecordFrame::Refused {
+                reason: frames::FrameRefusal::NonrigidFrame,
+            },
+        )
+    })
+}
+
+fn joint_analysis<T>(
+    part: &Part,
+    publish: impl Fn(&Part, &features::Context<'_>, Features, RecordFrame) -> T,
+    normalisation_refused: impl FnOnce(&Part) -> T,
+) -> (
+    T,
     Result<crate::evidence_view::EvidenceDocument, crate::evidence_view::EvidenceViewError>,
 ) {
     use crate::evidence_view::{self, EvidenceViewError};

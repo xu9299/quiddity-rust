@@ -14,6 +14,17 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 
 
+def assert_document_analysis(step, full):
+    raw = quiddity.recognise_document_with_evidence(step)
+    assert raw.endswith("\n")
+    assert json.loads(raw) == {
+        "schema_version": "quiddity-rust/document-analysis/1",
+        "document": full["recognition"]["document"],
+        "evidence": full["evidence"],
+        "evidence_error": full["evidence_error"],
+    }
+
+
 @pytest.mark.parametrize("fixture", [
     "golden_simple_through_hole.step",
     "golden_oriented_slots.step",
@@ -40,6 +51,7 @@ def test_shared_analysis_matches_both_public_calls(fixture, as_bytes):
     assert result["recognition"]["document"]["source_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert result["evidence"]["coordinate_space"] == ("part" if framed else "file")
     assert "face_sources" in result["evidence"] and "edge_sources" in result["evidence"]
+    assert_document_analysis(step, result)
 
 
 def test_shared_analysis_gzip_preserves_file_digest(tmp_path):
@@ -52,6 +64,7 @@ def test_shared_analysis_gzip_preserves_file_digest(tmp_path):
     framed = result["recognition"]["document"]["frame"]["status"] == "inferred"
     assert result["evidence"] == json.loads(quiddity.evidence(str(path), framed=framed))
     assert result["evidence_error"] is None
+    assert_document_analysis(str(path), result)
 
 
 @pytest.mark.parametrize("as_bytes", [False, True])
@@ -92,27 +105,34 @@ def test_shared_analysis_keeps_local_refusal_and_independent_evidence(tmp_path, 
     assert raw_candidates
     assert all(record["evidence_status"] == "unproved" for record in raw_candidates)
     assert any(feature["family"] == "step_levels" for feature in evidence["features"])
+    assert_document_analysis(step, result)
 
 
 @pytest.mark.parametrize("payload", [b"", b"not STEP", str(FIXTURES / "missing-shared-analysis.step")])
 def test_shared_analysis_input_errors_raise(payload):
     with pytest.raises(ValueError, match=r".+"):
         quiddity.recognise_with_evidence(payload)
+    with pytest.raises(ValueError, match=r".+"):
+        quiddity.recognise_document_with_evidence(payload)
 
 
 @pytest.mark.parametrize("payload", [None, 12, object()])
 def test_shared_analysis_rejects_other_input_types(payload):
     with pytest.raises(TypeError, match="str path or STEP bytes"):
         quiddity.recognise_with_evidence(payload)
+    with pytest.raises(TypeError, match="str path or STEP bytes"):
+        quiddity.recognise_document_with_evidence(payload)
 
 
 def test_shared_analysis_export_and_type_stub_agree():
-    assert "recognise_with_evidence" in quiddity.__all__
     capabilities = json.loads(quiddity.capabilities())
-    assert "recognise_with_evidence" in capabilities["functions"]
     assert capabilities["analysis"] == "quiddity-rust/analysis/1"
+    assert capabilities["document_analysis"] == "quiddity-rust/document-analysis/1"
     stub = Path(quiddity.__file__).with_suffix(".pyi")
     functions = {node.name: node for node in ast.parse(stub.read_text()).body if isinstance(node, ast.FunctionDef)}
-    signature = functions["recognise_with_evidence"]
-    assert ast.unparse(signature.args.args[0].annotation) == "str | bytes"
-    assert ast.unparse(signature.returns) == "str"
+    for name in ("recognise_with_evidence", "recognise_document_with_evidence"):
+        assert name in quiddity.__all__
+        assert name in capabilities["functions"]
+        signature = functions[name]
+        assert ast.unparse(signature.args.args[0].annotation) == "str | bytes"
+        assert ast.unparse(signature.returns) == "str"

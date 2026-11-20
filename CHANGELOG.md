@@ -8,6 +8,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Added
 
+- File, byte and Python entry points return a recognition document and face evidence
+  from shared analysis without computing correspondence fingerprints.
+
 - Owned-snapshot STEP geometry entry points release parsed input bytes before B-rep
   construction; file and recognition snapshot readers preserve the original source digest.
 

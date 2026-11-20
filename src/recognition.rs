@@ -453,15 +453,35 @@ pub(crate) fn working_families(features: &Features) -> Vec<(String, Vec<Value>)>
 /// The document of *recognition*, a part of *face_count* faces: each record with its
 /// fingerprint's faces (or source evidence's defining faces for a refusal).
 pub fn document(recognition: &Recognition, face_count: usize) -> RecognitionDocument {
-    let working = recognition.features.working();
-    let faces: BTreeMap<&str, &Vec<usize>> = recognition
+    let faces: BTreeMap<_, _> = recognition
         .fingerprints
         .features
         .iter()
-        .map(|f| (f.id.as_str(), &f.faces))
+        .map(|f| (f.id.as_str(), f.faces.as_slice()))
         .collect();
+    document_with_faces(
+        &recognition.features,
+        |id| faces.get(id).copied(),
+        &recognition.frame,
+        recognition.source_sha256.as_deref(),
+        &recognition.input_repairs,
+        &recognition.body_evidence,
+        face_count,
+    )
+}
+
+pub(crate) fn document_with_faces<'a>(
+    features: &crate::published_records::PublishedFeatures,
+    faces_of: impl Fn(&str) -> Option<&'a [usize]>,
+    frame: &crate::frames::RecordFrame,
+    source_sha256: Option<&str>,
+    input_repairs: &[String],
+    body_evidence: &BTreeMap<usize, BodyReason>,
+    face_count: usize,
+) -> RecognitionDocument {
+    let working = features.working();
     let mut records = Vec::new();
-    let families = recognition.features.families();
+    let families = features.families();
     for (family, list) in &families {
         for (n, record) in list.iter().enumerate() {
             let id = format!("{family}/{n}");
@@ -499,29 +519,22 @@ pub fn document(recognition: &Recognition, face_count: usize) -> RecognitionDocu
                     .defining_faces()
                     .to_vec()
             } else {
-                faces
-                    .get(id.as_str())
-                    .unwrap_or_else(|| panic!("{id} has no fingerprint"))
+                faces_of(&id)
+                    .unwrap_or_else(|| panic!("{id} has no defining face list"))
                     .to_vec()
             };
-            let (working_family, working_n) = recognition.features.working_record(family, n);
+            let (working_family, working_n) = features.working_record(family, n);
             records.push(Record {
                 record_type: record_type(working, working_family, working_n).into(),
                 faces,
                 id,
                 family: family.clone(),
-                evidence_status: record_status(
-                    &recognition.features,
-                    family,
-                    n,
-                    parameters,
-                    &families,
-                ),
+                evidence_status: record_status(features, family, n, parameters, &families),
                 parameters: parameters.clone(),
             });
         }
     }
-    let face_accounting = account_faces(&records, &recognition.body_evidence, face_count);
+    let face_accounting = account_faces(&records, body_evidence, face_count);
     RecognitionDocument {
         failures: working.failures.clone(),
         complete: (!working.failures.is_empty()).then_some(false),
@@ -531,13 +544,13 @@ pub fn document(recognition: &Recognition, face_count: usize) -> RecognitionDocu
             version: env!("CARGO_PKG_VERSION").into(),
         },
         coordinate_space: "file".into(),
-        frame: recognition.frame.clone(),
+        frame: frame.clone(),
         face_count,
         face_accounting: Some(face_accounting),
         records,
-        source_sha256: recognition.source_sha256.clone(),
+        source_sha256: source_sha256.map(str::to_owned),
         run_mode: working.run_mode,
-        input_repairs: recognition.input_repairs.clone(),
+        input_repairs: input_repairs.to_vec(),
     }
 }
 

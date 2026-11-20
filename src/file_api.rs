@@ -54,13 +54,7 @@ pub fn recognise_with_evidence_file(path: &str) -> Result<String, String> {
 }
 
 fn recognise_with_evidence_snapshot(path: &str, bytes: Vec<u8>) -> Result<String, String> {
-    let digest = Sha256::digest(&bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    let step_bytes = step::decode_step_file_bytes(std::path::Path::new(path), bytes)
-        .map_err(|e| format!("{path}: {e}"))?;
-    let part = step::read_step_owned(step_bytes).map_err(|e| format!("{path}: {e}"))?;
+    let (part, digest) = analysis_input(path, bytes)?;
     let crate::correspondence::RecognitionWithEvidence {
         mut recognition,
         evidence,
@@ -68,16 +62,59 @@ fn recognise_with_evidence_snapshot(path: &str, bytes: Vec<u8>) -> Result<String
     } = crate::correspondence::recognise_with_evidence(&part);
     recognition.source_sha256 = Some(digest);
     let document = crate::recognition::document(&recognition, part.faces.len());
-    let (evidence, evidence_error) = match evidence {
-        Ok(document) => (Some(document), None),
-        Err(error) => (None, Some(error.to_string())),
-    };
+    let (evidence, evidence_error) = evidence_fields(evidence);
     json(&json!({
         "schema_version": "quiddity-rust/analysis/1",
         "recognition": serve::RecognitionOutput { recognition, document },
         "evidence": evidence,
         "evidence_error": evidence_error,
     }))
+}
+
+/// A recognition document and face evidence from one STEP snapshot, without
+/// computing revision correspondence fingerprints.
+pub fn recognise_document_with_evidence_bytes(bytes: Vec<u8>) -> Result<String, String> {
+    recognise_document_with_evidence_snapshot("<bytes>", bytes)
+}
+
+/// Read a STEP file once, including gzip inputs, for the recognition document
+/// and its face evidence. Coordinate and refusal rules match the full joint API.
+pub fn recognise_document_with_evidence_file(path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    recognise_document_with_evidence_snapshot(path, bytes)
+}
+
+fn recognise_document_with_evidence_snapshot(path: &str, bytes: Vec<u8>) -> Result<String, String> {
+    let (part, digest) = analysis_input(path, bytes)?;
+    let (document, evidence) =
+        crate::correspondence::recognise_document_with_evidence(&part, &digest);
+    let (evidence, evidence_error) = evidence_fields(evidence);
+    json(&json!({
+        "schema_version": "quiddity-rust/document-analysis/1",
+        "document": document,
+        "evidence": evidence,
+        "evidence_error": evidence_error,
+    }))
+}
+
+fn analysis_input(path: &str, bytes: Vec<u8>) -> Result<(Part, String), String> {
+    let digest = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let step_bytes = step::decode_step_file_bytes(std::path::Path::new(path), bytes)
+        .map_err(|e| format!("{path}: {e}"))?;
+    let part = step::read_step_owned(step_bytes).map_err(|e| format!("{path}: {e}"))?;
+    Ok((part, digest))
+}
+
+fn evidence_fields(
+    evidence: Result<evidence_view::EvidenceDocument, evidence_view::EvidenceViewError>,
+) -> (Option<evidence_view::EvidenceDocument>, Option<String>) {
+    match evidence {
+        Ok(document) => (Some(document), None),
+        Err(error) => (None, Some(error.to_string())),
+    }
 }
 
 /// The evidence of a loaded part.
@@ -156,9 +193,10 @@ pub fn capabilities() -> String {
         "recognition": crate::recognition::SCHEMA_VERSION,
         "evidence": "quiddity-rust/evidence/1",
         "analysis": "quiddity-rust/analysis/1",
+        "document_analysis": "quiddity-rust/document-analysis/1",
         "fingerprints": crate::correspondence::fingerprint::FINGERPRINT_VERSION,
         "inputs": ["step-path", "step-bytes"],
-        "functions": ["recognise", "evidence", "recognise_with_evidence", "anchor", "fingerprints", "correspond", "capabilities"],
+        "functions": ["recognise", "evidence", "recognise_with_evidence", "recognise_document_with_evidence", "anchor", "fingerprints", "correspond", "capabilities"],
         "pmi_json_import": cfg!(feature = "json-import"),
     })).expect("capabilities serialise")
 }

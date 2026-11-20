@@ -23,6 +23,7 @@ with open("part.step", "rb") as stream:
 | --- | --- |
 | `recognise(step: str \| bytes)` | Exactly the Rust CLI recognition envelope: family arrays, `fingerprints`, and the `/6` `document`, including stdout's trailing newline |
 | `recognise_with_evidence(step: str \| bytes)` | [Shared analysis](shared-analysis.md): complete recognition, evidence and an explicit evidence error from one shared analysis |
+| `recognise_document_with_evidence(step: str \| bytes)` | [Document and face evidence](shared-analysis.md#document-and-face-evidence): the recognition document and original face evidence without correspondence fingerprints |
 | `evidence(step, framed=False)` | [Evidence/1](evidence.md): family, record, defining/constituent faces, instance groups, hosts, pattern members and rejected candidates |
 | `anchor(step, face: int)` | `{face, point: [x,y,z], uv: [u,v]}` from haecceity's proved trimmed-face anchor, in file coordinates |
 | `fingerprints(step)` | The existing fingerprints/3 document |
