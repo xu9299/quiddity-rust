@@ -1,0 +1,67 @@
+name: Section proof and selector comparisons on ARM macOS
+on:
+  push:
+    branches: [validation/declared-section-comparison-on-304]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: xcode-27
+    timeout-minutes: 100
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1
+      CARGO_BUILD_JOBS: 6
+      CARGO_TERM_COLOR: never
+      BASE: 9a9709835d385528be5e49369d381bf3589bf051
+      SOURCE: b327322590a626a5593f712570a1309fb94e11f7
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: .github/declared-section-probe
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          sparse-checkout: mfcadpp/10163.step
+          sparse-checkout-cone-mode: false
+          path: corpus
+          persist-credentials: false
+      - name: Compare the three affected public inputs using independent builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          tools="$GITHUB_WORKSPACE/harness/.github/declared-section-probe"
+          proof="$GITHUB_WORKSPACE/evidence"
+          mkdir -p "$proof"
+          rustup toolchain install 1.99.1 --profile minimal
+          if ! command -v uv >/dev/null; then HOMEBREW_NO_AUTO_UPDATE=1 brew install uv; fi
+          { uname -a; sw_vers; rustc -vV; cargo -V; git -C corpus rev-parse HEAD; } > "$proof/environment.log"
+          git -C source worktree add --detach ../baseline "$BASE"
+          for role in baseline candidate; do
+            if [ "$role" = baseline ]; then dir=baseline; sha="$BASE"; else dir=source; sha="$SOURCE"; fi
+            export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build-$role"
+            test ! -d "$CARGO_TARGET_DIR"
+            test "$(git -C "$dir" rev-parse HEAD)" = "$sha"
+            mkdir -p "$proof/$role"
+            git -C "$dir" rev-parse HEAD 'HEAD^{tree}' > "$proof/$role/identity.txt"
+            uv run --no-project --python 3.13 "$tools/instrument.py" "$dir" "$proof/$role"
+            (cd "$dir" && cargo build --locked --release --example section_diagnostic --message-format=json-render-diagnostics) > "$proof/$role/compiler.jsonl"
+            exe="$CARGO_TARGET_DIR/release/examples/section_diagnostic"
+            shasum -a 256 "$exe" > "$proof/$role/binary.sha256"
+            uv run --no-project --python 3.13 "$tools/cases.py" "$dir" "$GITHUB_WORKSPACE/corpus" "$proof/$role" "$exe"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: declared-section-motion-arm
+          path: evidence
+          retention-days: 30
