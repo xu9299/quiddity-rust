@@ -1,7 +1,7 @@
-name: STEP declared boundary survey and ARM regression
+name: STEP face integrals, corpus comparison and ARM regressions
 on:
   push:
-    branches: [validation/step-declared-boundaries-on-309]
+    branches: [validation/face-integrals-309]
 permissions:
   contents: read
 concurrency:
@@ -16,8 +16,8 @@ env:
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
   BASE: dadea7189f83b50002ce337934aeef87c5e19b88
-  SOURCE: d4cbdf6ea3e9307fafb6ce983521047288997059
-  TREE: f4797ee7a224585a5e07e53f931b0ba200d7364a
+  SOURCE: 775bc3c31c7b0a4773fc9289767990e8785b75c8
+  TREE: 4caef1586368ba7fe14450ec5b4d4a5bc418022e
 jobs:
   verify:
     strategy:
@@ -137,18 +137,6 @@ jobs:
           gzip -dc tests/fixtures/rust-snapshot/probes.json.gz > "$RUNNER_TEMP/expected-probes.json"
           cargo run --release --locked --example master_trim_probe_diff -- "$RUNNER_TEMP/input-probes.json" "$RUNNER_TEMP/expected-probes.json" "$QUIDDITY_CORPUS" ../evidence/probe-differences.json
           rm examples/master_trim_probe_diff.rs
-      - name: Install pinned Rust API checker
-        continue-on-error: true
-        if: "!cancelled() && matrix.task == 'survey'"
-        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
-        with:
-          tool: cargo-semver-checks@0.51.0
-      - name: Check the public drawing API against the published releases
-        if: "!cancelled() && matrix.task == 'survey'"
-        run: |
-          if ! cargo semver-checks --version 2>/dev/null | grep -Fq '0.51.0'; then cargo install cargo-semver-checks --version 0.51.0 --locked; fi
-          uv run --no-project --python 3.13 .github/test_check_semver.py
-          uv run --no-project --python 3.13 .github/check_semver.py 2>&1 | tee ../evidence/semver.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -215,35 +203,6 @@ jobs:
         with:
           name: declared-arm-doc
           path: arm-doc/
-          retention-days: 30
-
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          path: harness
-          sparse-checkout: .github/master-trim-survey
-          persist-credentials: false
-      - name: Compare the moved slanted bead in both query orders
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          helper="$GITHUB_WORKSPACE/harness/.github/master-trim-survey"
-          sample="$GITHUB_WORKSPACE/moved-readback"
-          mkdir -p "$sample"
-          git rev-parse HEAD 'HEAD^{tree}' > "$sample/identity.txt"
-          shasum -a 256 tests/fixtures/slanted_bead.step > "$sample/input.sha256"
-          trap 'git restore -- tests/brep_write.rs' EXIT
-          uv run --no-project --python 3.13 "$helper/instrument_roundtrip.py" tests/brep_write.rs
-          for order in mass-first recognition-first; do
-            export MOVED_ORDER="$order" MOVED_OUTPUT="$sample/$order"
-            mkdir -p "$MOVED_OUTPUT"
-            cargo test --workspace --release --locked --test brep_write report_a_single_moved_slanted_bead -- --exact --nocapture 2>&1 | tee "$MOVED_OUTPUT/test.log"
-          done
-          uv run --no-project --python 3.13 "$helper/summarise_current_moved.py" "$sample"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: declared-moved-readback
-          path: moved-readback/
           retention-days: 30
 
   workspace-shard:
