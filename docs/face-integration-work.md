@@ -313,3 +313,15 @@ projection of the selected pcurve evaluated on its declared carrier. Three
 quintic pcurves on cylinder #797 in `mfcadpp/1000.step` lift slightly outside
 the planes of their alternate ellipses. The HLR test evaluates their projected
 midpoints independently from the six STEP Bézier controls on each edge.
+
+A small trim on a distant spline can have an accurately measurable area while
+subtracting the moment origin from a world-space surface point loses the
+precision needed by adaptive quadrature. If that moment integral fails, the
+same finite pcurves are integrated in the same parameter chart after translating
+the spline control net to a boundary vertex. On face #17 of
+`cadgenbench/threaded_connector_109.step`, the two isoparametric edges and
+the linear spline selected by the file form a triangle with vertices
+(5, 0), (5.000105592299, 0) and (5, 0.000009668174198149).
+Tensor Gauss integration of the source surface over this triangle gives
+3.307124882796035 × 10⁻⁸ mm² and a centroid at
+(51.559984959625815, 0.04771000100467721, 367.61422777543277) mm.

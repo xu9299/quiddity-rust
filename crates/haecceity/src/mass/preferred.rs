@@ -397,18 +397,7 @@ impl Part {
         // equal homogeneous terms. Translate controls before evaluating them;
         // add the origin only to the point passed to the physical density.
         let origin = self.edges[fc.loops[0].edges[0].0].start;
-        let local = crate::nurbs::NurbsSurface::new(
-            surface.degree_u,
-            surface.degree_v,
-            surface
-                .control_points
-                .iter()
-                .map(|row| row.iter().map(|p| geom::sub(*p, origin)).collect())
-                .collect(),
-            surface.weights.clone(),
-            surface.knots_u.clone(),
-            surface.knots_v.clone(),
-        )?;
+        let local = surface.relative_to(origin)?;
         let evaluator = std::cell::RefCell::new(crate::nurbs::SurfaceEvaluation::new(&local));
         let f = |u, v| {
             let (p, su, sv) = evaluator.borrow_mut().value_and_partials(u, v);

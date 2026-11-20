@@ -783,6 +783,7 @@ impl Part {
         let mut terms = self.integrate_boundary(
             face,
             Some(boundary),
+            None,
             |p, su, sv| mass_density(geom::sub(p, origin), su, sv),
             IntegralRule {
                 components: Components::Prefix(5),
@@ -886,6 +887,7 @@ impl Part {
         self.integrate_boundary(
             face,
             boundary,
+            None,
             |p, su, sv| {
                 let y = f(p, su, sv);
                 std::array::from_fn(|k| y[k])
@@ -905,13 +907,14 @@ impl Part {
         rule: IntegralRule,
         observed: &mut Option<FaceMass>,
     ) -> Option<[f64; N]> {
-        self.integrate_boundary(face, None, f, rule, observed)
+        self.integrate_boundary(face, None, None, f, rule, observed)
     }
 
     fn integrate_boundary<const N: usize>(
         &self,
         face: usize,
         boundary: Option<&DeclaredBoundary>,
+        local_spline: Option<&crate::nurbs::NurbsSurface>,
         f: impl Fn(V3, V3, V3) -> [f64; N],
         rule: IntegralRule,
         observed: &mut Option<FaceMass>,
@@ -961,7 +964,7 @@ impl Part {
         }
         let evaluator = match surface {
             Surface::Freeform { surface, .. } => Some(std::cell::RefCell::new(
-                crate::nurbs::SurfaceEvaluation::new(surface),
+                crate::nurbs::SurfaceEvaluation::new(local_spline.unwrap_or(surface)),
             )),
             _ => None,
         };
@@ -1796,27 +1799,53 @@ impl Part {
         if !scale.is_finite() || scale <= 0.0 {
             return None;
         }
-        let [area, mx, my, mz, nx, ny, nz, xx, yy, zz, xy, xz, yz] =
-            self.moment_integral(face, [0, 13, 4, 5, 6], |p, su, sv| {
+        let density = |offset, n: V3, flux| {
+            let w = geom::norm(n);
+            let [x, y, z] = geom::scale(offset, 1.0 / scale);
+            [
+                w,
+                x * w,
+                y * w,
+                z * w,
+                n[0],
+                n[1],
+                n[2],
+                x * x * w,
+                y * y * w,
+                z * z * w,
+                x * y * w,
+                x * z * w,
+                y * z * w,
+                flux,
+            ]
+        };
+        let [area, mx, my, mz, nx, ny, nz, xx, yy, zz, xy, xz, yz] = self
+            .moment_integral(face, [0, 13, 4, 5, 6], |p, su, sv| {
                 let n = geom::cross(su, sv);
-                let w = geom::norm(n);
-                let [x, y, z] = geom::scale(geom::sub(p, origin), 1.0 / scale);
-                [
-                    w,
-                    x * w,
-                    y * w,
-                    z * w,
-                    n[0],
-                    n[1],
-                    n[2],
-                    x * x * w,
-                    y * y * w,
-                    z * z * w,
-                    x * y * w,
-                    x * z * w,
-                    y * z * w,
-                    geom::dot(p, n),
-                ]
+                density(geom::sub(p, origin), n, geom::dot(p, n))
+            })
+            .or_else(|| {
+                // A small trim far from the origin can lose significant digits
+                // when the spline evaluator forms a world point and the moment
+                // density subtracts the origin. Evaluate the same UV boundary
+                // against locally translated controls, retaining the error test.
+                let Surface::Freeform { surface, .. } = surface else {
+                    return None;
+                };
+                let boundary = self.measured_boundary(face)?;
+                let local = surface.relative_to(origin)?;
+                let values = self.integrate_boundary(
+                    face,
+                    Some(boundary),
+                    Some(&local),
+                    |offset, su, sv| density(offset, geom::cross(su, sv), 0.0),
+                    IntegralRule {
+                        components: Components::Prefix(13),
+                        observe_mass: None,
+                    },
+                    &mut None,
+                )?;
+                Some(std::array::from_fn(|k| values[k]))
             })?;
         if area <= 0.0 || !area.is_finite() {
             return None;

@@ -627,6 +627,22 @@ fn grid_params(knots: &[f64], degree: usize, per_span: usize) -> Vec<f64> {
 }
 
 impl NurbsSurface {
+    /// Express the same spline relative to a nearby origin before evaluating
+    /// positions and derivatives. The parameter net and weights are unchanged.
+    pub(crate) fn relative_to(&self, origin: V3) -> Option<Self> {
+        Self::new(
+            self.degree_u,
+            self.degree_v,
+            self.control_points
+                .iter()
+                .map(|row| row.iter().map(|p| geom::sub(*p, origin)).collect())
+                .collect(),
+            self.weights.clone(),
+            self.knots_u.clone(),
+            self.knots_v.clone(),
+        )
+    }
+
     /// Clone the defining net for an owned drawing, leaving the inverse grid
     /// with the part that needed it.
     pub(crate) fn geometry_clone(&self) -> Self {

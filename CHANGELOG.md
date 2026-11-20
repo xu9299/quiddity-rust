@@ -30,6 +30,10 @@ Pending version: 0.6.0
 
 ### Fixed
 
+- Face moments on small STEP-selected spline trims can resolve their centroid
+  and second moments far from the origin by evaluating the control net in
+  local coordinates at the existing integration tolerance.
+
 - Honour each STEP edge's master representation and explicit outer bound on
   trimmed faces. Area, moments, containment, sections, drawings, meshing and
   feature measurements use the selected finite curves, including pcurves on
