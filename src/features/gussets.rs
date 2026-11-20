@@ -96,7 +96,7 @@ fn cap(part: &Part, face: usize) -> Option<Cap> {
     if edges.len() != 3
         || edges
             .iter()
-            .any(|&e| !matches!(part.edges[e].curve, Curve::Line { .. }))
+            .any(|&e| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
     {
         return None;
     }

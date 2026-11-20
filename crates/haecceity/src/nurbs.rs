@@ -142,15 +142,34 @@ fn basis_and_derivative(knots: &[f64], degree: usize, span: usize, t: f64) -> (B
 }
 
 /// A rational B-spline curve in world coordinates.
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct NurbsCurve {
     degree: usize,
     control_points: Vec<V3>,
     weights: Vec<f64>,
     knots: Vec<f64>,
+    #[cfg_attr(feature = "json", serde(skip))]
     closed: bool,
     /// Samples over the domain seeding inversion, built on first use.
+    #[cfg_attr(feature = "json", serde(skip))]
     table: std::sync::OnceLock<Vec<(f64, V3)>>,
+}
+
+#[cfg(feature = "json")]
+impl<'de> serde::Deserialize<'de> for NurbsCurve {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Data {
+            degree: usize,
+            control_points: Vec<V3>,
+            weights: Vec<f64>,
+            knots: Vec<f64>,
+        }
+        let a = Data::deserialize(d)?;
+        Self::new(a.degree, a.control_points, a.weights, a.knots)
+            .ok_or_else(|| serde::de::Error::custom("invalid NURBS curve"))
+    }
 }
 
 /// Whether the arrays describe a well-formed B-spline: `knots = n + degree + 1`, positive
@@ -208,6 +227,97 @@ impl NurbsCurve {
             self.knots[self.degree],
             self.knots[self.knots.len() - self.degree - 1],
         )
+    }
+
+    /// Restrict a sweep's generator to its finite edge before constructing the
+    /// side surface. Each nonempty knot span is restricted by homogeneous
+    /// de Boor evaluation of its Bézier control points (the spline blossom).
+    /// A closed generator can cross the last knot once in either direction.
+    pub(crate) fn finite_segment(&self, a: f64, b: f64) -> Option<Self> {
+        let (start, end) = (a.min(b), a.max(b));
+        let (lo, hi) = self.domain();
+        if start == lo && end == hi {
+            return Some(self.clone());
+        }
+        if !a.is_finite() || !b.is_finite() || start >= end {
+            return None;
+        }
+        let period = hi - lo;
+        let shift = if start >= lo && end <= hi {
+            0.
+        } else {
+            if !self.is_closed() || end - start > period * (1. + 8. * f64::EPSILON) {
+                return None;
+            }
+            ((start - lo) / period).floor() * period
+        };
+        let degree = self.degree;
+        let mut points = Vec::new();
+        let mut weights = Vec::new();
+        let mut knots = Vec::new();
+        for offset in [shift, shift + period] {
+            if lo + offset >= end {
+                break;
+            }
+            for span in degree..self.control_points.len() {
+                let left = start.max(self.knots[span] + offset);
+                let right = end.min(self.knots[span + 1] + offset);
+                if left >= right {
+                    continue;
+                }
+                let join = !points.is_empty() && degree > 0;
+                let first = self.span_control(span, left - offset, right - offset, 0);
+                // Adjacent rational Bézier spans may use different weight
+                // scales, particularly at the seam of a closed spline.
+                let continuous = join
+                    && (self.knots[span] > lo && self.knots[span - degree] < self.knots[span]
+                        || points.last() == Some(&first.0));
+                let skip = usize::from(continuous);
+                let scale = if continuous {
+                    *weights.last()? / first.1
+                } else {
+                    1.
+                };
+                knots.extend(std::iter::repeat_n(left, degree + 1 - skip));
+                if !continuous {
+                    points.push(first.0);
+                    weights.push(first.1);
+                }
+                for j in 1..=degree {
+                    let (point, weight) = self.span_control(span, left - offset, right - offset, j);
+                    points.push(point);
+                    weights.push(weight * scale);
+                }
+            }
+            if end <= hi + offset {
+                break;
+            }
+        }
+        knots.extend(std::iter::repeat_n(end, degree + 1));
+        Self::new(degree, points, weights, knots)
+    }
+
+    /// The blossom at degree - j copies of left and j copies of right.
+    fn span_control(&self, span: usize, left: f64, right: f64, j: usize) -> (V3, f64) {
+        let p = self.degree;
+        let mut work = [[0.; 4]; MAX_DEGREE + 1];
+        for (k, h) in work[..=p].iter_mut().enumerate() {
+            let idx = span - p + k;
+            let [x, y, z] = self.control_points[idx];
+            let w = self.weights[idx];
+            *h = [x * w, y * w, z * w, w];
+        }
+        for level in 1..=p {
+            let t = if level <= p - j { left } else { right };
+            for k in (level..=p).rev() {
+                let i = span - p + k;
+                let alpha = (t - self.knots[i]) / (self.knots[i + p + 1 - level] - self.knots[i]);
+                work[k] =
+                    std::array::from_fn(|n| (1. - alpha) * work[k - 1][n] + alpha * work[k][n]);
+            }
+        }
+        let [x, y, z, w] = work[p];
+        ([x / w, y / w, z / w], w)
     }
 
     pub fn degree(&self) -> usize {
@@ -334,6 +444,7 @@ impl NurbsCurve {
 }
 
 /// A rational B-spline surface, control points indexed `[u][v]`.
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Clone)]
 pub struct NurbsSurface {
     pub degree_u: usize,
@@ -344,11 +455,48 @@ pub struct NurbsSurface {
     pub knots_v: Vec<f64>,
     /// A sampled grid over the domain: seeds for inversion and ray intersection, built on
     /// first use so that reading a file pays nothing for surfaces no query touches.
+    #[cfg_attr(feature = "json", serde(skip))]
     grid: std::sync::OnceLock<Grid>,
 }
 
 /// The surface's own data, without the grid: a cache built on first use, which would make the
 /// output depend on which queries have been asked.
+impl PartialEq for NurbsSurface {
+    fn eq(&self, other: &Self) -> bool {
+        self.degree_u == other.degree_u
+            && self.degree_v == other.degree_v
+            && self.control_points == other.control_points
+            && self.weights == other.weights
+            && self.knots_u == other.knots_u
+            && self.knots_v == other.knots_v
+    }
+}
+
+#[cfg(feature = "json")]
+impl<'de> serde::Deserialize<'de> for NurbsSurface {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Data {
+            degree_u: usize,
+            degree_v: usize,
+            control_points: Vec<Vec<V3>>,
+            weights: Vec<Vec<f64>>,
+            knots_u: Vec<f64>,
+            knots_v: Vec<f64>,
+        }
+        let s = Data::deserialize(d)?;
+        Self::new(
+            s.degree_u,
+            s.degree_v,
+            s.control_points,
+            s.weights,
+            s.knots_u,
+            s.knots_v,
+        )
+        .ok_or_else(|| serde::de::Error::custom("invalid NURBS surface"))
+    }
+}
+
 impl std::fmt::Debug for NurbsSurface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NurbsSurface")
@@ -479,6 +627,36 @@ fn grid_params(knots: &[f64], degree: usize, per_span: usize) -> Vec<f64> {
 }
 
 impl NurbsSurface {
+    /// Express the same spline relative to a nearby origin before evaluating
+    /// positions and derivatives. The parameter net and weights are unchanged.
+    pub(crate) fn relative_to(&self, origin: V3) -> Option<Self> {
+        Self::new(
+            self.degree_u,
+            self.degree_v,
+            self.control_points
+                .iter()
+                .map(|row| row.iter().map(|p| geom::sub(*p, origin)).collect())
+                .collect(),
+            self.weights.clone(),
+            self.knots_u.clone(),
+            self.knots_v.clone(),
+        )
+    }
+
+    /// Clone the defining net for an owned drawing, leaving the inverse grid
+    /// with the part that needed it.
+    pub(crate) fn geometry_clone(&self) -> Self {
+        Self {
+            degree_u: self.degree_u,
+            degree_v: self.degree_v,
+            control_points: self.control_points.clone(),
+            weights: self.weights.clone(),
+            knots_u: self.knots_u.clone(),
+            knots_v: self.knots_v.clone(),
+            grid: std::sync::OnceLock::new(),
+        }
+    }
+
     pub(crate) fn transform_points(&mut self, point: impl Fn(V3) -> V3) {
         for p in self.control_points.iter_mut().flatten() {
             *p = point(*p);
@@ -1379,6 +1557,36 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn restricting_a_rational_spline_preserves_points_and_tangents_across_its_knots() {
+        let original = NurbsCurve::new(
+            3,
+            vec![
+                [0.; 3],
+                [1., 2., 0.],
+                [2., 0., 1.],
+                [2., 3., 1.],
+                [1., 4., 3.],
+                [0., 1., 2.],
+                [0.; 3],
+            ],
+            vec![1., 0.7, 1.4, 0.91, 1.2, 2., 1.5],
+            vec![0., 0., 0., 0., 0.25, 0.5, 0.5, 1., 1., 1., 1.],
+        )
+        .unwrap();
+        for (a, b) in [(0.17, 0.86), (0.86, 0.17), (0.3, 1.17), (-0.21, 0.18)] {
+            let piece = original.finite_segment(a, b).unwrap();
+            let (lo, hi) = (a.min(b), a.max(b));
+            assert_eq!(piece.domain(), (lo, hi));
+            for i in 0..=64 {
+                let u = lo + (hi - lo) * (i as f64 / 64.);
+                let t = u.rem_euclid(1.);
+                assert!(geom::dist(piece.value(u), original.value(t)) < 1e-13);
+                assert!(geom::dist(piece.derivative(u), original.derivative(t)) < 1e-12);
+            }
+        }
     }
 
     #[test]

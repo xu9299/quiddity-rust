@@ -42,7 +42,7 @@ fn canonical(value: f64, floor: f64) -> f64 {
 fn recovered_extent(part: &Part, face: usize, direction: V3) -> (f64, f64) {
     part.face_edges(face)
         .into_iter()
-        .flat_map(|e| part.edges[e].samples.iter())
+        .flat_map(|e| part.boundary_edge_samples(e).iter())
         .map(|p| geom::dot(*p, direction))
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), s| {
             (lo.min(s), hi.max(s))
@@ -65,7 +65,7 @@ fn recovered_span(part: &Part, face: usize, frame: &Frame, radius: f64) -> Optio
     let tolerance = recover::tolerance(part, face)?;
     let mut angles: Vec<f64> = Vec::new();
     for e in seen.keys() {
-        for p in &part.edges[*e].samples {
+        for p in part.boundary_edge_samples(*e) {
             let l = frame.to_local(*p);
             if (l[0].hypot(l[1]) - radius).abs() > tolerance {
                 return None;

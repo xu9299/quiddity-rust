@@ -7,6 +7,7 @@ use std::f64::consts::{PI, TAU};
 use super::brep::{Face, Loop, Part, Pcurve};
 use super::geom::{self, Frame, Surface, V3};
 use super::sampling::{edge_interval, extremes_along};
+use crate::mass::{DeclaredBoundary, TrimCrossings};
 
 /// The face's boundary as (u, v) polylines.
 ///
@@ -270,9 +271,13 @@ pub struct UvLoop {
 }
 
 impl Part {
-    /// The face's outer loop (`BRepTools::OuterWire`): the first loop, replaced by any later loop
-    /// whose parameter-space box contains the current one's (a later tie wins).
+    /// The explicit outer bound, unless a different loop encloses it.
     pub fn outer_loop(&self, face: usize) -> Option<usize> {
+        if self.faces[face].loops.len() == 1
+            && let Some(&outer) = self.outer_bounds.get(&face)
+        {
+            return Some(outer);
+        }
         self.loop_placement(face).map(|(outer, _)| outer)
     }
 
@@ -297,7 +302,15 @@ impl Part {
     /// the period nearest the outer loop's centre, so a hole far round a partial face from the
     /// face's first sample still lands inside it.
     pub(super) fn loop_placement(&self, face: usize) -> Option<(usize, Vec<(f64, f64)>)> {
-        let loops = self.uv_loops(face)?;
+        self.place_loops(face, self.measured_boundary(face))
+    }
+
+    pub(super) fn place_loops(
+        &self,
+        face: usize,
+        boundary: Option<&DeclaredBoundary>,
+    ) -> Option<(usize, Vec<(f64, f64)>)> {
+        let loops = self.loops_on(face, boundary)?;
         if loops.is_empty() {
             return None;
         }
@@ -333,13 +346,27 @@ impl Part {
                 b[3] + first[i].1,
             ]
         };
-        let mut outer = 0;
-        for i in 1..loops.len() {
+        // An outer loop cannot enclose a wider contractible loop in the same
+        // chart. Some STEP writers label a small circular hole FACE_OUTER_BOUND.
+        // A winding loop instead delimits one side of a periodic strip.
+        let declared = self.outer_bounds.get(&face).copied();
+        let outer = (0..loops.len()).fold(declared.unwrap_or(0), |outer, i| {
             let (o, c) = (placed(outer), placed(i));
-            if c[0] <= o[0] && c[1] >= o[1] && c[2] <= o[2] && c[3] >= o[3] {
-                outer = i;
+            let encloses = c[0] <= o[0] && c[1] >= o[1] && c[2] <= o[2] && c[3] >= o[3];
+            if outer == i || !encloses {
+                return outer;
             }
-        }
+            if declared == Some(outer)
+                && (loops[outer].winds_u
+                    || loops[outer].winds_v
+                    || loops[i].winds_u
+                    || loops[i].winds_v
+                    || c == o)
+            {
+                return outer;
+            }
+            i
+        });
         let mut anchor = centre(&placed(outer));
         // A seamless torus band can wind round either parameter. Its other coordinate
         // lies on the face's side of the outer loop, which need not be the nearest turn
@@ -465,34 +492,53 @@ impl Part {
             let (u0, u1, v0, v1) = self.uv_bounds(face)?;
             return Some(f.surface.value(0.5 * (u0 + u1), 0.5 * (v0 + v1)));
         };
-        // Green's theorem along each loop's exact edge curves, in plane coordinates; the largest
-        // loop is the outer boundary and the rest are holes in it (loop orientation is not
-        // relied on). Polyline shoelaces would carry the samples' chord error.
-        let mut loops: Vec<(f64, f64, f64)> = f
+        if self.measured_boundary(face).is_some() {
+            return self.face_moments(face).map(|m| m.centroid);
+        }
+        // Green's theorem along the spatial edges in plane coordinates. A file
+        // may declare the outer bound. Otherwise the largest loop encloses the holes.
+        let mut loops: Vec<_> = f
             .loops
             .iter()
-            .filter(|lp| !lp.edges.is_empty())
-            .map(|lp| {
+            .enumerate()
+            .filter(|(_, lp)| !lp.edges.is_empty())
+            .map(|(i, lp)| {
                 let (mut a, mut mx, mut my) = (0.0, 0.0, 0.0);
                 for &(e, forward) in &lp.edges {
                     let (da, dmx, dmy) = self.edge_moments(e, forward, &frame);
                     (a, mx, my) = (a + da, mx + dmx, my + dmy);
                 }
-                (a.abs(), mx / a, my / a)
+                (i, a.abs(), mx / a, my / a)
             })
             .collect();
-        loops.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let outer = self
+            .outer_bounds
+            .get(&face)
+            .and_then(|_| self.outer_loop(face));
+        loops.sort_by(|a, b| {
+            (outer == Some(b.0))
+                .cmp(&(outer == Some(a.0)))
+                .then_with(|| b.1.total_cmp(&a.1))
+        });
         let (outer, holes) = loops.split_first()?;
-        let area = outer.0 - holes.iter().map(|h| h.0).sum::<f64>();
-        let cx = (outer.0 * outer.1 - holes.iter().map(|h| h.0 * h.1).sum::<f64>()) / area;
-        let cy = (outer.0 * outer.2 - holes.iter().map(|h| h.0 * h.2).sum::<f64>()) / area;
+        let area = outer.1 - holes.iter().map(|h| h.1).sum::<f64>();
+        let cx = (outer.1 * outer.2 - holes.iter().map(|h| h.1 * h.2).sum::<f64>()) / area;
+        let cy = (outer.1 * outer.3 - holes.iter().map(|h| h.1 * h.3).sum::<f64>()) / area;
         Some(frame.to_world([cx, cy, 0.0]))
     }
 
     /// The face's trimmed region in parameter space.
     pub fn domain(&self, face: usize) -> Option<&FaceDomain> {
-        self.cache[face]
-            .domain
+        self.domain_on(face, self.measured_boundary(face))
+    }
+
+    pub(super) fn domain_on<'a>(
+        &'a self,
+        face: usize,
+        boundary: Option<&'a DeclaredBoundary>,
+    ) -> Option<&'a FaceDomain> {
+        let cache = boundary.map_or(&self.cache[face].domain, |b| &b.domain);
+        cache
             .get_or_init(|| {
                 let f = &self.faces[face];
                 if self.whole_sphere(face) {
@@ -509,14 +555,14 @@ impl Part {
                         f.surface.periodic(),
                     ));
                 }
-                let loops = self.uv_loops(face)?;
+                let loops = self.loops_on(face, boundary)?;
                 let spans = crate::mass::closed_spans(&f.surface);
                 let Surface::Freeform { surface, .. } = &f.surface else {
                     let (pu, pv) = f.surface.periodic();
                     if pu && pv && loops.iter().any(|lp| lp.winds_u || lp.winds_v) {
                         // Containment and Green's theorem must read the same side of a
                         // seamless band, including one crossing the other parameter's seam.
-                        let (_, shifts) = self.loop_placement(face)?;
+                        let (_, shifts) = self.place_loops(face, boundary)?;
                         let placed: Vec<UvLoop> = loops
                             .iter()
                             .zip(shifts)
@@ -602,16 +648,42 @@ impl Part {
     /// polyline is continuous. A loop around a periodic direction ends one period away from where
     /// it began.
     pub fn uv_loops(&self, face: usize) -> Option<&[UvLoop]> {
-        self.cache[face]
-            .uv_loops
-            .get_or_init(|| self.compute_uv_loops(face))
+        self.loops_on(face, self.measured_boundary(face))
+    }
+
+    pub(super) fn loops_on<'a>(
+        &'a self,
+        face: usize,
+        boundary: Option<&'a DeclaredBoundary>,
+    ) -> Option<&'a [UvLoop]> {
+        let cache = boundary.map_or(&self.cache[face].uv_loops, |b| &b.loops);
+        cache
+            .get_or_init(|| self.compute_uv_loops(face, boundary, false))
             .as_deref()
     }
 
-    fn compute_uv_loops(&self, face: usize) -> Option<Vec<UvLoop>> {
+    pub(crate) fn mesh_uv_loops(&self, face: usize) -> Option<&[UvLoop]> {
+        if !self.has_master_pcurves() {
+            return self.uv_loops(face);
+        }
+        self.cache[face]
+            .mesh_uv_loops
+            .get_or_init(|| self.compute_uv_loops(face, self.measured_boundary(face), true))
+            .as_deref()
+    }
+
+    fn compute_uv_loops(
+        &self,
+        face: usize,
+        boundary: Option<&DeclaredBoundary>,
+        mesh: bool,
+    ) -> Option<Vec<UvLoop>> {
         let f = &self.faces[face];
         let (pu, pv) = f.surface.periodic();
         let mut loops = Vec::new();
+        let mut crossings = boundary
+            .filter(|_| !mesh)
+            .and_then(|b| TrimCrossings::new(&f.surface, b));
         for lp in &f.loops {
             let mut pts: Vec<(f64, f64)> = Vec::new();
             if let Some(apex) = lp.vertex {
@@ -635,7 +707,7 @@ impl Part {
             let mut raw: Vec<(f64, f64)> = Vec::new();
             let mut points: Vec<V3> = Vec::new();
             let mut firsts = Vec::with_capacity(lp.edges.len());
-            let mut origin: Vec<(usize, usize)> = Vec::new();
+            let mut origin: Vec<Option<(usize, usize)>> = Vec::new();
             // A point on a B-spline side collapsed to a point has its parameter along the side
             // wherever its own seed left it: followed on from, it would start the next sample's
             // inversion anywhere along that side, where the surface's derivative along it
@@ -647,15 +719,88 @@ impl Part {
                 let on = |c: Option<f64>, x: f64| c.is_some_and(|c| (x - c).abs() <= 1e-9);
                 on(collapsed.0, q.0) || on(collapsed.1, q.1)
             };
-            let invert = |p: V3, hint: Option<(f64, f64)>| match hint {
-                Some(q) if on_collapsed(q) => beside_collapsed(&f.surface, p, collapsed),
+            // A shared selected sample can reach a closed spline face from its
+            // neighbour. At the seam the previous seed may only find a clamped
+            // endpoint. The mass integrator checks the opposite end of the chart
+            // and keeps the closer point on the same receiving surface.
+            let mesh_spans = (mesh && matches!(&f.surface, Surface::Freeform { .. }))
+                .then(|| crate::mass::closed_spans(&f.surface))
+                .filter(|(u, v)| u.is_finite() || v.is_finite());
+            let invert = |p: V3, hint: Option<(f64, f64)>| match (hint, mesh_spans) {
+                (Some(q), _) if on_collapsed(q) => beside_collapsed(&f.surface, p, collapsed),
+                (_, Some(spans)) => crate::mass::foot(&f.surface, spans, p, hint),
                 _ => f.surface.parameters(p, hint),
             };
             for (place, &(e, forward)) in lp.edges.iter().enumerate() {
                 firsts.push(raw.len());
-                let samples = &self.edges[e].samples;
+                let samples = if mesh {
+                    self.boundary_edge_samples(e)
+                } else {
+                    &self.edges[e].samples
+                };
                 let n = samples.len();
-                origin.extend((0..n).map(|k| (place, if forward { k } else { n - 1 - k })));
+                if let Some(trim) = boundary.and_then(|b| b.edges.get(&e))
+                    && let Some(own) = trim.samples(&f.surface, &self.edges[e])
+                    && (!mesh || std::ptr::eq(samples, own.points.as_slice()))
+                {
+                    let mut nodes = own.ts.clone();
+                    if !forward {
+                        nodes.reverse();
+                    }
+                    for (j, t) in nodes.into_iter().enumerate() {
+                        let (u, v) = trim.surface_uv(&f.surface, t);
+                        // Coedges meet at one STEP vertex. At a regular endpoint
+                        // of a periodic face, independently rounded pcurves may
+                        // straddle a winding ray through the seam. Map the shared
+                        // vertex once per coedge, keeping its branch of the period.
+                        // A singularity still needs the pcurve's own longitude.
+                        let is_end = t == trim.interval.0 || t == trim.interval.1;
+                        let (uv, point) = if (mesh || pu || pv)
+                            && is_end
+                            && !on_collapsed((u, v))
+                            && f.surface.singular_v(v).is_none()
+                        {
+                            let edge = &self.edges[e];
+                            let point = if t == trim.interval.0 {
+                                edge.start
+                            } else {
+                                edge.end
+                            };
+                            let uv = f.surface.parameters(point, Some((u, v)))?;
+                            (
+                                (
+                                    if pu {
+                                        geom::nearest_turn(uv.0, u)
+                                    } else {
+                                        uv.0
+                                    },
+                                    if pv {
+                                        geom::nearest_turn(uv.1, v)
+                                    } else {
+                                        uv.1
+                                    },
+                                ),
+                                point,
+                            )
+                        } else {
+                            ((u, v), f.surface.value(u, v))
+                        };
+                        raw.push(uv);
+                        points.push(point);
+                        let sample = if mesh && j < n {
+                            Some(if forward { j } else { n - 1 - j })
+                        } else if t == trim.interval.0 {
+                            Some(0)
+                        } else if t == trim.interval.1 {
+                            n.checked_sub(1)
+                        } else {
+                            None
+                        };
+                        origin.push(sample.map(|k| (place, k)));
+                    }
+                    continue;
+                }
+                origin.extend((0..n).map(|k| Some((place, if forward { k } else { n - 1 - k }))));
                 let ordered: Box<dyn Iterator<Item = &V3>> = if forward {
                     Box::new(samples.iter())
                 } else {
@@ -666,10 +811,16 @@ impl Part {
                     points.push(*p);
                 }
             }
+            if let Some(check) = &mut crossings {
+                let ends = firsts.iter().copied().skip(1).chain([raw.len()]);
+                for ((&(edge, forward), &start), end) in lp.edges.iter().zip(&firsts).zip(ends) {
+                    check.add_edge(edge, forward, &raw[start..end]);
+                }
+            }
             // The loop's first samples are inverted with nothing to follow; on a closed B-spline
             // surface (not marked periodic) a seam point has two parameter values. Walk the start
             // again following on from the loop's end, until it agrees with the first pass.
-            if !pu && !pv && raw.len() > 2 {
+            if boundary.is_none() && !pu && !pv && raw.len() > 2 {
                 let mut hint = raw[raw.len() - 1];
                 for k in 0..raw.len() - 1 {
                     let again = invert(points[k], Some(hint))?;
@@ -700,6 +851,32 @@ impl Part {
                 }
                 _ => (false, false),
             };
+            if boundary.is_some()
+                && !pu
+                && !pv
+                && let (Some(&first), Some(&last)) = (pts.first(), pts.last())
+                && first != last
+                && let (Some(&(start, start_forward)), Some(&(end, end_forward))) =
+                    (lp.edges.first(), lp.edges.last())
+            {
+                let (a, b) = self.edges[start].vertices;
+                let (c, d) = self.edges[end].vertices;
+                let first_vertex = if start_forward { a } else { b };
+                let last_vertex = if end_forward { d } else { c };
+                let (us, vs) = crate::mass::closed_spans(&f.surface);
+                // An EDGE_LOOP joins its last coedge to the first at the same vertex.
+                // Retain both declared ends; an omitted final chord can invert the
+                // entire winding ray through a roundoff-sized gap. A closed spline
+                // chart can reach the same vertex on different parameter branches.
+                if first_vertex == last_vertex
+                    && (last.0 - first.0).abs() < 0.5 * us
+                    && (last.1 - first.1).abs() < 0.5 * vs
+                    && !on_collapsed(first)
+                    && !on_collapsed(last)
+                {
+                    pts.push(first);
+                }
+            }
             close_through_pole(&f.surface, &mut pts, f.reversed);
             let ends: Vec<usize> = firsts
                 .iter()
@@ -721,7 +898,7 @@ impl Part {
             let mut sources = vec![None; pts.len()];
             for (k, at) in placed.iter().enumerate() {
                 if let Some(i) = *at {
-                    sources[i] = Some(origin[k]);
+                    sources[i] = origin[k];
                 }
             }
             loops.push(UvLoop {
@@ -731,6 +908,12 @@ impl Part {
                 winds_v,
                 sources,
             });
+        }
+        if let (Some(check), Some(boundary)) = (crossings, boundary) {
+            let tolerance = self.file_uncertainty().unwrap_or(0.).max(0.) + geom::COORD_FLOOR;
+            if check.crosses(boundary, self, &f.surface, tolerance) {
+                return None;
+            }
         }
         Some(loops)
     }
@@ -781,7 +964,7 @@ impl Part {
                 }
                 continue;
             }
-            self.widen_by_loop_edges(f, lp, uv, *shift, periodic, &mut range)?;
+            self.widen_by_loop_edges(face, lp, uv, *shift, periodic, &mut range)?;
             // A loop running once round a sphere is closed through a pole, which the face then
             // reaches (`close_through_pole`).
             if matches!(f.surface, Surface::Sphere { .. })
@@ -810,7 +993,15 @@ impl Part {
     /// A plane's range is exactly its edges' extent in plane coordinates.
     fn plane_uv_bounds(&self, face: usize, frame: Frame) -> Option<(f64, f64, f64, f64)> {
         let mut range = NO_RANGE;
+        let boundary = self.measured_boundary(face);
         for e in self.face_edges(face) {
+            if let Some(trim) = boundary.and_then(|b| b.edges.get(&e)) {
+                for t in trim.uv_extrema() {
+                    let p = trim.curve.value(t);
+                    widen(&mut range, (p[0], p[1]));
+                }
+                continue;
+            }
             let ed = &self.edges[e];
             let interval =
                 edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
@@ -832,13 +1023,15 @@ impl Part {
     /// the file gives them, their pcurves. *uv* is the loop unwrapped and *shift* its placement.
     fn widen_by_loop_edges(
         &self,
-        f: &Face,
+        face: usize,
         lp: &Loop,
         uv: &UvLoop,
         shift: (f64, f64),
         periodic: (bool, bool),
         range: &mut [f64; 4],
     ) -> Option<()> {
+        let f = &self.faces[face];
+        let boundary = self.measured_boundary(face);
         // Start this loop where its own unwrapped samples sit, in its placed period.
         let Some(&start) = uv.points.first() else {
             return Some(());
@@ -851,12 +1044,36 @@ impl Part {
         let loop_centre = (0.5 * (lu.0 + lu.1) + shift.0, 0.5 * (lv.0 + lv.1) + shift.1);
         let collapsed = crate::mass::collapsed_sides(&f.surface);
         for &(e, forward) in &lp.edges {
+            if let Some(trim) = boundary.and_then(|b| b.edges.get(&e)) {
+                let mut ts = trim.nodes()?;
+                ts.extend(trim.uv_extrema());
+                let (a, b) = trim.oriented(forward);
+                ts.sort_by(|a0, b0| {
+                    if b >= a {
+                        a0.total_cmp(b0)
+                    } else {
+                        b0.total_cmp(a0)
+                    }
+                });
+                for t in ts {
+                    let q = trim.curve.value(t);
+                    last = near(periodic, (q[0], q[1]), last);
+                    widen(range, last);
+                }
+                continue;
+            }
             // A sphere's pcurves running into a pole turn in u where its 3D edges keep their
             // longitude: they do not size its range.
             let own: Vec<&Pcurve> = f
                 .pcurves
                 .iter()
-                .filter(|(pe, _)| *pe == e && !matches!(f.surface, Surface::Sphere { .. }))
+                .filter(|(pe, _)| {
+                    // Imported edges reaching this branch use the spatial curve.
+                    // An unselected alternative must not enlarge its UV bounds.
+                    self.file_units().is_none()
+                        && *pe == e
+                        && !matches!(f.surface, Surface::Sphere { .. })
+                })
                 .map(|(_, c)| c)
                 .collect();
             let (mut pts, partial) =
@@ -998,14 +1215,23 @@ impl Part {
             if count < 2 {
                 continue;
             }
-            let samples = &self.edges[e].samples;
-            let Some((u0, v0)) = f.surface.parameters(samples[0], None) else {
-                continue;
-            };
-            let mid = samples[samples.len() / 2];
-            let Some((u1, v1)) = f.surface.parameters(mid, None) else {
-                continue;
-            };
+            let ((u0, v0), (u1, v1)) =
+                if let Some(trim) = self.measured_boundary(face).and_then(|b| b.edges.get(&e)) {
+                    let (a, b) = trim.interval;
+                    (
+                        trim.surface_uv(&f.surface, a),
+                        trim.surface_uv(&f.surface, 0.5 * (a + b)),
+                    )
+                } else {
+                    let samples = &self.edges[e].samples;
+                    let Some(first) = f.surface.parameters(samples[0], None) else {
+                        continue;
+                    };
+                    let Some(mid) = f.surface.parameters(samples[samples.len() / 2], None) else {
+                        continue;
+                    };
+                    (first, mid)
+                };
             if (geom::nearest_turn(u1, u0) - u0).abs() < 1e-7 {
                 out.0 = Some(round_seam(u0));
             } else if (geom::nearest_turn(v1, v0) - v0).abs() < 1e-7 {

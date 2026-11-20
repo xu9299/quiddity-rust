@@ -518,7 +518,13 @@ fn tightest_roll(
     let points: Vec<V3> = part
         .edges
         .iter()
-        .flat_map(|e| e.samples.iter().copied().chain([e.start, e.end]))
+        .enumerate()
+        .flat_map(|(i, e)| {
+            part.boundary_edge_samples(i)
+                .iter()
+                .copied()
+                .chain([e.start, e.end])
+        })
         .collect();
     let volume = |c: &PartFrame| envelope_volume(&points, [c.x, c.y, c.z]);
     let mut chosen = (winner, volume(&candidates[winner]));

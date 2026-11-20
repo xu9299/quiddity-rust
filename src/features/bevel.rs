@@ -278,7 +278,10 @@ pub(crate) fn proved_published_corner(
     let mut spring = [(f64::INFINITY, f64::NEG_INFINITY); 2];
     for e in ctx.part.outer_edges(face) {
         let edge = &ctx.part.edges[e];
-        if !matches!(edge.curve, geom::Curve::Line { .. }) {
+        if !matches!(
+            ctx.part.boundary_edge_curve(e),
+            Some(geom::Curve::Line { .. })
+        ) {
             continue;
         }
         let offset = geom::sub(edge.end, edge.start);

@@ -32,10 +32,11 @@ pub(crate) fn evidence(part: &Part, features: &Features) -> BTreeMap<usize, Body
                     | Surface::Cone { .. }
                     | Surface::Sphere { .. }
                     | Surface::Torus { .. }
-            ) || part
-                .face_edges(f)
-                .iter()
-                .any(|&e| !certified_curve(&part.edges[e].curve, bounds, tol))
+            ) || part.face_edges(f).iter().any(|&e| {
+                !part
+                    .boundary_edge_curve(e)
+                    .is_some_and(|c| certified_curve(c, bounds, tol))
+            })
         }) || !part.solid_is_geometrically_valid(solid)
         {
             continue;
@@ -76,7 +77,7 @@ pub(crate) fn evidence(part: &Part, features: &Features) -> BTreeMap<usize, Body
                 let mut corners = Vec::new();
                 for &(e, forward) in &lp.edges {
                     let edge = &part.edges[e];
-                    if !matches!(edge.curve, Curve::Line { .. }) {
+                    if !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })) {
                         return false;
                     }
                     let corner = |p: [f64; 3]| -> Option<usize> {
@@ -450,7 +451,7 @@ fn stock_wall(
                 && part
                     .shared_edges(face, g)
                     .iter()
-                    .any(|&e| matches!(part.edges[e].curve, Curve::Line { .. }))
+                    .any(|&e| matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
         };
         if on_envelope
             && neighbours.iter().any(|&g| {
@@ -482,7 +483,7 @@ fn stock_wall(
                     && part.arc(face, g) == Some(Arc::Convex)
                     && part.shared_edges(face, g).iter().any(|&e| {
                         let edge = &part.edges[e];
-                        matches!(edge.curve, Curve::Line { .. })
+                        matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. }))
                             && (edge.start[span].min(edge.end[span]) - b.min[span]).abs() <= tol
                             && (edge.start[span].max(edge.end[span]) - b.max[span]).abs() <= tol
                     })

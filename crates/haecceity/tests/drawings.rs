@@ -412,3 +412,89 @@ fn ctc05_shaft_outlines_are_visible() {
         assert!(on.iter().all(|p| p.visible), "x = {x}: hidden stretches");
     }
 }
+
+#[test]
+fn selected_quintics_on_a_cylinder_have_exact_projected_stretches() {
+    use haecceity::hlr::{Exact, Plane, View, project, project_section};
+
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("mfcadpp/1000.step")).unwrap();
+    // Midpoints from the six STEP Bézier poles with weights [1,5,10,10,5,1]/32.
+    // Cylinder #797 maps (u,v) to (48.413353239919-r cos u, r sin u, -v).
+    let references = [
+        (
+            2138,
+            2.049646522314,
+            [42.042085568669, 3.3076453659113256, 11.59030086338],
+        ),
+        (
+            2172,
+            4.35715582095,
+            [41.68286307900549, 2.496812327588222, 12.254019782459062],
+        ),
+        (
+            2204,
+            5.0618736284725,
+            [41.668621409562824, 2.458080987667053, 11.365930986625624],
+        ),
+    ];
+    let view = View::new([1., -1., 1.], [0., 0., 1.]).unwrap();
+    let plane = Plane::new([0., 0., 11.7], [0., 0., 1.]).unwrap();
+    let complete = project(&part, &view).unwrap();
+    let section = project_section(&part, &view, &plane).unwrap();
+    drop(part);
+    let mut found = [false; 3];
+    let mut clipped = false;
+    for (pieces, is_section) in [(&complete, false), (&section, true)] {
+        for piece in pieces {
+            let Some(exact @ Exact::SurfaceCurve(curve)) = &piece.exact else {
+                continue;
+            };
+            let (a, b) = exact.range();
+            assert_ne!(a, b);
+            let mid = 0.5 * (a + b);
+            let qm = exact.at(mid);
+            let reversed = exact.subrange(1., 0.).unwrap();
+            assert_eq!(reversed.range(), (b, a));
+            assert_eq!(reversed.at(mid), qm);
+            assert!(exact.subrange(-1., 1.).is_none());
+            let moved = exact.placed(2., [1., 2.], [10., 20.]);
+            let expected = [10. + 2. * (qm[0] - 1.), 20. + 2. * (qm[1] - 2.)];
+            assert!((moved.at(mid)[0] - expected[0]).hypot(moved.at(mid)[1] - expected[1]) < 1e-11);
+            for (t, end) in [(a, piece.points[0]), (b, *piece.points.last().unwrap())] {
+                let p = curve.at(t);
+                assert!((p[0] - end[0]).hypot(p[1] - end[1]) < 3e-4);
+            }
+            #[cfg(feature = "json")]
+            {
+                let data = serde_json::to_value(curve).unwrap();
+                let decoded: haecceity::hlr::ProjectedSurfaceCurve =
+                    serde_json::from_value(data).unwrap();
+                assert_eq!(&decoded, curve);
+                assert_eq!(decoded.at(mid), qm);
+            }
+            if is_section {
+                clipped = true;
+            }
+            for (i, &(entity, t, p)) in references.iter().enumerate() {
+                if (a.min(b)..=a.max(b)).contains(&t) {
+                    let q = exact.at(t);
+                    let reference = view.map(p);
+                    assert!(
+                        (q[0] - reference[0]).hypot(q[1] - reference[1]) < 5e-13,
+                        "STEP edge #{entity}: {q:?} vs {reference:?}"
+                    );
+                    found[i] = true;
+                }
+            }
+        }
+    }
+    assert_eq!(found, [true; 3]);
+    assert!(
+        clipped,
+        "the cut view retains an exact finite surface curve"
+    );
+}

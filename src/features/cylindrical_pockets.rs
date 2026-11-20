@@ -75,7 +75,7 @@ fn floor_corners(part: &Part, floor: usize) -> Option<Vec<V3>> {
         .iter()
         .map(|&(e, forward)| {
             let edge = &part.edges[e];
-            matches!(edge.curve, Curve::Line { .. }).then_some(if forward {
+            matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })).then_some(if forward {
                 edge.start
             } else {
                 edge.end
@@ -124,11 +124,9 @@ fn proofs_or_none(
         .iter()
         .flat_map(|&w| part.shared_edges(floor, w))
         .collect();
-    if part
-        .face_edges(floor)
-        .iter()
-        .any(|e| !matches!(part.edges[*e].curve, Curve::Line { .. }) || !shared.contains(e))
-    {
+    if part.face_edges(floor).iter().any(|e| {
+        !matches!(part.boundary_edge_curve(*e), Some(Curve::Line { .. })) || !shared.contains(e)
+    }) {
         return None;
     }
     let corners = floor_corners(part, floor)?;

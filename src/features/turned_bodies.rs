@@ -316,6 +316,26 @@ pub(crate) fn sort_profile(profile: &mut [ProfileSegment]) {
     });
 }
 
+/// Split the meridian into single-valued radius-versus-station arcs. At a trim
+/// endpoint, evaluating the same torus after STEP read-back can place the
+/// turning angle one ulp inside the interval. Keep the file's endpoint there.
+fn torus_meridian_cuts(v0: f64, v1: f64, minor_radius: f64) -> Vec<f64> {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let roundoff =
+        (8. * f64::EPSILON * v0.abs().max(v1.abs()).max(1.)).min(COORD_FLOOR / minor_radius);
+    let first = ((v0 - FRAC_PI_2) / PI).ceil() as i64;
+    let last = ((v1 - FRAC_PI_2) / PI).floor() as i64;
+    let mut cuts = vec![v0];
+    for k in first..=last {
+        let turn = FRAC_PI_2 + k as f64 * PI;
+        if turn - v0 > roundoff && v1 - turn > roundoff {
+            cuts.push(turn);
+        }
+    }
+    cuts.push(v1);
+    cuts
+}
+
 fn profile(part: &Part, faces: &[usize], origin: V3, d: V3) -> Option<Vec<ProfileSegment>> {
     let mut out = Vec::new();
     let point = |p| [geom::dot(geom::sub(p, origin), d), radial(p, origin, d)];
@@ -359,8 +379,8 @@ fn profile(part: &Part, faces: &[usize], origin: V3, d: V3) -> Option<Vec<Profil
                 let mut radii: Vec<_> = part
                     .face_edges(face)
                     .into_iter()
-                    .filter_map(|e| match part.edges[e].curve {
-                        Curve::Circle { radius, .. } => Some(radius),
+                    .filter_map(|e| match part.boundary_edge_support(e) {
+                        Some(&Curve::Circle { radius, .. }) => Some(radius),
                         _ => None,
                     })
                     .collect();
@@ -402,20 +422,7 @@ fn profile(part: &Part, faces: &[usize], origin: V3, d: V3) -> Option<Vec<Profil
                 major,
                 minor,
             } => {
-                // Split at axial turning points. Each arc is then a single-valued
-                // radius-versus-station branch, including both sides of a full torus.
-                let mut cuts = vec![v0];
-                let pi = std::f64::consts::PI;
-                let half_pi = std::f64::consts::FRAC_PI_2;
-                let first = ((v0 - half_pi) / pi).ceil() as i64;
-                let last = ((v1 - half_pi) / pi).floor() as i64;
-                for k in first..=last {
-                    let v = half_pi + k as f64 * pi;
-                    if v > v0 && v < v1 {
-                        cuts.push(v);
-                    }
-                }
-                cuts.push(v1);
+                let cuts = torus_meridian_cuts(v0, v1, minor);
                 for w in cuts.windows(2) {
                     let mut arc = seg.clone();
                     arc.start = point(f.surface.value(u, w[0]));
@@ -574,6 +581,21 @@ pub(super) fn suppress_od_bosses(part: &Part, f: &mut Features) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_torus_profile_retains_its_endpoints_at_an_axial_turn() {
+        let turn = 3. * std::f64::consts::FRAC_PI_2;
+        let lo = turn - 1.;
+        let hi = turn.next_up();
+        assert_eq!(torus_meridian_cuts(lo, hi, 2.), [lo, hi]);
+        assert_eq!(
+            torus_meridian_cuts(turn.next_down(), hi, 2.),
+            [turn.next_down(), hi]
+        );
+        let beyond = turn + 1e-7;
+        assert_eq!(torus_meridian_cuts(lo, beyond, 2.), [lo, turn, beyond]);
+        assert_eq!(torus_meridian_cuts(lo, hi, 1e12), [lo, turn, hi]);
+    }
+
     #[test]
     fn bore_splits_union_overlaps_without_filling_an_axial_air_gap() {
         let b = |diameter, lo, hi| Bore {

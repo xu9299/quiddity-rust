@@ -56,7 +56,7 @@ struct Slab<'a> {
 const PERPENDICULAR: f64 = 1e-9;
 
 fn line(part: &Part, edge: usize) -> bool {
-    matches!(part.edges[edge].curve, Curve::Line { .. })
+    matches!(part.boundary_edge_curve(edge), Some(Curve::Line { .. }))
 }
 
 impl Slab<'_> {
@@ -276,7 +276,7 @@ fn from_bottom(
     {
         return None;
     }
-    let mid = |e: usize| part.edges[e].midpoint();
+    let mid = |e: usize| part.edge_midpoint(e);
     let mut axis = [0.; 3];
     axis[slab.axis] = 1.;
     Some(Occurrence {

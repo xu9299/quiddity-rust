@@ -200,7 +200,7 @@ fn shared_segment(part: &Part, floor: usize, wall: usize, axis: usize) -> Option
         .into_iter()
         .filter_map(|e| {
             let edge = &part.edges[e];
-            (matches!(edge.curve, Curve::Line { .. }) && !edge.is_closed())
+            (matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })) && !edge.is_closed())
                 .then(|| (across(edge.start), across(edge.end)))
         })
         .collect();

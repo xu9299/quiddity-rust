@@ -287,24 +287,34 @@ fn sample_wire(
 ) -> Option<Vec<CurveEvidence>> {
     wire.iter()
         .map(|&(e, forward)| {
-            let edge = &part.edges[e];
-            let measure = ArcLength::new(edge)?;
+            let selected = part.declared_edge_length(e);
+            let legacy = if selected.is_none() {
+                Some(ArcLength::new(&part.edges[e])?)
+            } else {
+                None
+            };
+            let length = selected.or_else(|| legacy.as_ref().map(|m| m.total))?;
             let points = (0..SAMPLES_PER_CURVE)
                 .map(|i| {
                     let s = i as f64 / (SAMPLES_PER_CURVE - 1) as f64;
-                    let p = measure.point(if forward { s } else { 1.0 - s });
-                    (p[plane_axes[0]], p[plane_axes[1]])
+                    let fraction = if forward { s } else { 1. - s };
+                    let p = match &legacy {
+                        Some(m) => m.point(fraction),
+                        None => part.declared_edge_at_length(e, fraction)?.0,
+                    };
+                    Some((p[plane_axes[0]], p[plane_axes[1]]))
                 })
-                .collect();
-            let kind = match edge.curve {
-                Curve::Line { .. } => "LINE",
-                Curve::Circle { .. } => "CIRCLE",
-                Curve::Ellipse { .. } => "ELLIPSE",
-                Curve::Nurbs(_) => "BSPLINE",
+                .collect::<Option<_>>()?;
+            let kind = match part.boundary_edge_support(e) {
+                Some(Curve::Line { .. }) => "LINE",
+                Some(Curve::Circle { .. }) => "CIRCLE",
+                Some(Curve::Ellipse { .. }) => "ELLIPSE",
+                Some(Curve::Nurbs(_)) => "BSPLINE",
+                None => "SURFACE_CURVE",
             };
             Some(CurveEvidence {
                 kind,
-                length: measure.total,
+                length,
                 points,
             })
         })
@@ -465,6 +475,14 @@ fn gauss_length(curve: &Curve, a: f64, b: f64) -> f64 {
 fn wire_bounds(part: &Part, wire: &[(usize, bool)]) -> Bounds {
     let mut b = Bounds::empty();
     for &(e, _) in wire {
+        if let Some(points) =
+            part.declared_edge_extrema(e, &[[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+        {
+            for p in points {
+                b.add(p);
+            }
+            continue;
+        }
         let edge = &part.edges[e];
         let interval = edge_interval(
             &edge.curve,
@@ -493,8 +511,8 @@ fn common_circle_centre(
 ) -> Option<(f64, f64)> {
     let centres: Vec<(f64, f64)> = wire
         .iter()
-        .filter_map(|&(e, _)| match &part.edges[e].curve {
-            Curve::Circle { frame, .. } => {
+        .filter_map(|&(e, _)| match part.boundary_edge_support(e) {
+            Some(Curve::Circle { frame, .. }) => {
                 Some((frame.origin[plane_axes[0]], frame.origin[plane_axes[1]]))
             }
             _ => None,

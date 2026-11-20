@@ -119,9 +119,9 @@ fn loops_in(part: &Part, face: usize, surface: &Surface) -> Vec<Vec<(f64, f64)>>
     for lp in &part.faces[face].loops {
         let mut points: Vec<V3> = Vec::new();
         for &(e, forward) in &lp.edges {
-            let samples = &part.edges[e].samples;
+            let samples = part.boundary_edge_samples(e);
             let ordered: Vec<V3> = if forward {
-                samples.clone()
+                samples.to_vec()
             } else {
                 samples.iter().rev().copied().collect()
             };

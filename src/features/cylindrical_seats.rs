@@ -16,12 +16,12 @@ use super::entry_treatments::material_fraction;
 use super::evidence::common_valid_solid;
 use super::graph::{face_vertices, is_planar, normal, shared_occurrences};
 use super::policy::length_tol;
-use super::regions::edge_length;
+use super::regions::{edge_length, edge_support_points};
 use super::sections::{LocalFrame, SectionVertex};
 use super::support_patches::{covered_patch, ruled_prism};
 use crate::kernel::brep::{Arc, Edge, Face, Loop, Part};
 use crate::kernel::geom::{self, Curve, Frame, Surface, V3};
-use crate::kernel::sampling::{edge_interval, sample_edge};
+use crate::kernel::sampling::sample_edge;
 use crate::kernel::sweep::extrude_face;
 
 /// A proved seat (`CylindricalSeatProof`): its wall faces, the planar faces around them, the
@@ -57,19 +57,6 @@ impl SeatCylinder {
             && geom::norm(geom::cross(self.axis, other.axis)) <= 1e-8
             && geom::norm(across) <= tolerance
     }
-}
-
-/// The edge's points at the start, middle and end of its parameter range (`position_at(0)`,
-/// `(0.5)`, `(1)`: by arc length, which for lines and circles is by parameter).
-fn samples(edge: &Edge) -> [V3; 3] {
-    let (a, b) = edge_interval(
-        &edge.curve,
-        edge.start,
-        edge.end,
-        edge.same_sense,
-        edge.is_closed(),
-    );
-    [a, 0.5 * (a + b), b].map(|t| edge.curve.value(t))
 }
 
 /// The circle through three points, as `(centre, radius, normal)` with the walk start → middle
@@ -201,10 +188,9 @@ pub fn prove(
             }
             let normal = normal(part, node)?;
             for e in shared_occurrences(part, wall, node) {
-                let edge = &part.edges[e];
-                let points = samples(edge);
-                match edge.curve {
-                    Curve::Circle { .. } => {
+                let points = edge_support_points(part, e)?;
+                match part.boundary_edge_support(e) {
+                    Some(&Curve::Circle { .. }) => {
                         let middle = geom::dot(points[1], axis);
                         let end_index = usize::from((middle - low).abs() >= (middle - high).abs());
                         let (at, sign) = if end_index == 0 {
@@ -221,7 +207,7 @@ pub fn prove(
                         }
                         rims[end_index].insert(e);
                     }
-                    Curve::Line { dir, .. } => {
+                    Some(&Curve::Line { dir, .. }) => {
                         // Native seams may leave arbitrarily short lip fragments. Prove
                         // direction from the line, independent of fragment length; the complete
                         // axial span has its own minimum above.
@@ -277,7 +263,7 @@ pub fn prove(
     }
     let mouth_at = geom::dot(start, opening_normal);
     if lips.iter().any(|&e| {
-        (geom::dot(samples(&part.edges[e])[1], opening_normal) - mouth_at).abs() > tolerance
+        (geom::dot(part.edge_midpoint(e), opening_normal) - mouth_at).abs() > tolerance
     }) {
         return None;
     }

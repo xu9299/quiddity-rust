@@ -173,16 +173,16 @@ impl<'a> RayCaster<'a> {
 
     fn with_geometry(part: &'a Part, faces: Vec<usize>, face_boxes: FaceBoxes<'a>) -> Self {
         let edges = part.ray_edges.get_or_init(|| RayEdges {
-            boxes: part
-                .edges
-                .iter()
+            boxes: (0..part.edges.len())
                 .map(|e| {
                     let mut b = Bounds::empty();
-                    e.samples.iter().for_each(|p| b.add(*p));
+                    part.boundary_edge_samples(e).iter().for_each(|p| b.add(*p));
                     b
                 })
                 .collect(),
-            runs: part.edges.iter().map(|e| runs(&e.samples)).collect(),
+            runs: (0..part.edges.len())
+                .map(|e| runs(part.boundary_edge_samples(e)))
+                .collect(),
             cracks: (0..part.edges.len())
                 .map(|_| std::sync::OnceLock::new())
                 .collect(),
@@ -521,7 +521,7 @@ impl<'a> RayCaster<'a> {
             let band = COORD_FLOOR + deviation;
             deviation > COORD_FLOOR
                 && self.edge_boxes[e].contains(q, OVERSHOOT_BANDS * band)
-                && geom::dist(nearest_on_edge(&part.edges[e], q).0, q) <= OVERSHOOT_BANDS * band
+                && geom::dist(part.nearest_boundary_point(e, q).0, q) <= OVERSHOOT_BANDS * band
                 && self.past_neighbour(i, e, band, q)
         })
     }
@@ -542,7 +542,7 @@ impl<'a> RayCaster<'a> {
                 .parameters(p, None)
                 .map(|(u, v)| surface.value(u, v))
         };
-        let Some(foot) = onto(nearest_on_edge(&part.edges[e], q).0) else {
+        let Some(foot) = onto(part.nearest_boundary_point(e, q).0) else {
             return false;
         };
         let Some(away) = geom::unit(geom::sub(q, foot)) else {
@@ -579,8 +579,13 @@ impl<'a> RayCaster<'a> {
     /// Whether edge *e*'s polyline passes within *reach* of *q*: `polyline_distance(q, samples)
     /// <= reach`, the same distances compared.
     fn polyline_within(&self, e: usize, q: V3, reach: f64) -> bool {
-        segments_near(&self.part.edges[e].samples, &self.edge_runs[e], q, reach)
-            .any(|w| point_segment_distance(q, w[0], w[1]) <= reach)
+        segments_near(
+            self.part.boundary_edge_samples(e),
+            &self.edge_runs[e],
+            q,
+            reach,
+        )
+        .any(|w| point_segment_distance(q, w[0], w[1]) <= reach)
     }
 
     /// Whether a point on face *i*'s surface lies on the face: inside its trim, on its boundary
@@ -670,7 +675,7 @@ impl<'a> RayCaster<'a> {
             }
             // The polyline only finds the edges near; the distance that decides is the curve's,
             // at the tolerance OpenCascade's intersector is loaded with.
-            let (c, between_ends) = nearest_on_edge(edge, q);
+            let (c, between_ends) = part.nearest_boundary_point(e, q);
             let d = geom::dist(c, q);
             on_edge |= d <= COORD_FLOOR;
             if in_band.is_none() {
@@ -695,15 +700,17 @@ impl<'a> RayCaster<'a> {
         }
         if let Some(uv) = uv {
             for &(e, c, reach) in &near {
-                if misplaces(
-                    surface,
-                    q,
-                    uv,
-                    &part.edges[e].samples,
-                    &self.edge_runs[e],
-                    c,
-                    reach,
-                ) {
+                // The domain was constructed from this face's accepted trim. Its
+                // chords can differ from the physical edge's mesh, particularly
+                // when only one neighbour accepted the declared boundary.
+                let shared = part.boundary_edge_samples(e);
+                let samples = part
+                    .measured_boundary(i)
+                    .and_then(|b| b.edges.get(&e))
+                    .and_then(|trim| trim.samples(surface, &part.edges[e]))
+                    .map_or(part.edges[e].samples.as_slice(), |s| s.points.as_slice());
+                let runs = std::ptr::eq(samples, shared).then_some(self.edge_runs[e].as_slice());
+                if misplaces(surface, q, uv, samples, runs, c, reach) {
                     inside = !inside;
                 }
             }
@@ -886,7 +893,7 @@ fn misplaces(
     q: V3,
     uv: (f64, f64),
     samples: &[V3],
-    runs: &[Bounds],
+    runs: Option<&[Bounds]>,
     c: V3,
     beyond: f64,
 ) -> bool {
@@ -911,26 +918,29 @@ fn misplaces(
     let way = (e2.0 - uv.0, e2.1 - uv.1);
     let side = |p: (f64, f64)| way.0 * (p.1 - uv.1) - way.1 * (p.0 - uv.0);
     let along = |p: (f64, f64)| way.0 * (p.0 - uv.0) + way.1 * (p.1 - uv.1);
-    let mut crossings = 0;
-    for w in segments_near(samples, runs, q, d + beyond) {
+    let crosses = |w: &&[V3]| {
         if point_segment_distance(q, w[0], w[1]) > d + beyond {
-            continue;
+            return false;
         }
         let (Some(a), Some(b)) = (at(w[0]), at(w[1])) else {
-            continue;
+            return false;
         };
         let (sa, sb) = (side(a), side(b));
         if (sa > 0.0) == (sb > 0.0) {
-            continue;
+            return false;
         }
         // Where the segment meets the line of the way, as a fraction of it.
         let k = sa / (sa - sb);
         let x = (a.0 + k * (b.0 - a.0), a.1 + k * (b.1 - a.1));
         let s = along(x) / (way.0 * way.0 + way.1 * way.1);
-        if s > 0.0 && s < 1.0 {
-            crossings += 1;
-        }
-    }
+        s > 0.0 && s < 1.0
+    };
+    let crossings = match runs {
+        Some(runs) => segments_near(samples, runs, q, d + beyond)
+            .filter(crosses)
+            .count(),
+        None => samples.windows(2).filter(crosses).count(),
+    };
     crossings % 2 == 0
 }
 
@@ -986,6 +996,13 @@ pub(super) fn polyline_distance(p: V3, samples: &[V3]) -> f64 {
 }
 
 impl Part {
+    /// The nearest point on the selected finite edge and whether it lies in its interior.
+    pub fn nearest_boundary_point(&self, e: usize, q: V3) -> (V3, bool) {
+        self.spatial_trim(e)
+            .and_then(|(s, c)| c.nearest(s, &self.edges[e], q))
+            .unwrap_or_else(|| nearest_on_edge(&self.edges[e], q))
+    }
+
     /// Each of the face's edges with the furthest its samples lie from the face's surface.
     pub fn edge_deviation(&self, face: usize) -> &[(usize, f64)] {
         self.cache[face].edge_deviation.get_or_init(|| {
@@ -994,13 +1011,16 @@ impl Part {
                 .into_iter()
                 .map(|e| {
                     let mut hint = None;
-                    let worst = self.edges[e].samples.iter().fold(0.0f64, |worst, &p| {
-                        let Some(uv) = surface.parameters(p, hint) else {
-                            return worst;
-                        };
-                        hint = Some(uv);
-                        worst.max(geom::dist(surface.value(uv.0, uv.1), p))
-                    });
+                    let worst = self
+                        .boundary_edge_samples(e)
+                        .iter()
+                        .fold(0.0f64, |worst, &p| {
+                            let Some(uv) = surface.parameters(p, hint) else {
+                                return worst;
+                            };
+                            hint = Some(uv);
+                            worst.max(geom::dist(surface.value(uv.0, uv.1), p))
+                        });
                     (e, worst)
                 })
                 .collect()
@@ -1182,8 +1202,7 @@ mod tests {
             let span = bounds.diagonal() + 1.0;
             for solid in 0..part.solids.len() {
                 let shared = crate::classify::Classifier::for_solid(&part, solid);
-                let independent =
-                    Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone());
+                let independent = crate::read_step_file(&dir.join(name)).unwrap();
                 let fresh = crate::classify::Classifier::for_solid(&independent, solid);
                 for point in [bounds.centre(), bounds.min, bounds.max, [0.0; 3]] {
                     assert_eq!(shared.classify(point), fresh.classify(point), "{name}");
@@ -1241,7 +1260,8 @@ mod tests {
         part.record_inverted_shell_repair(0, true);
         assert!(part.ray_face_boxes.get().is_none());
         assert!(part.ray_edges.get().is_none());
-        let independent = Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone());
+        let mut independent = crate::read_step_file(&path).unwrap();
+        independent.record_inverted_shell_repair(0, true);
         let repaired = RayCaster::for_solid(&part, 0);
         let fresh = RayCaster::for_solid(&independent, 0);
         assert_eq!(repaired.face_boxes, fresh.face_boxes);
@@ -1249,10 +1269,23 @@ mod tests {
         assert_eq!(repaired.edge_runs, fresh.edge_runs);
         drop(repaired);
         let flipped = part.solids[0].faces[0];
-        part.record_mixed_normal_repair(0, &[flipped]);
+        let original_sense = part.faces[flipped].reversed;
+        let repair_count = part.input_repairs().len();
+        part.try_mixed_normal_repair(0, &[flipped], |trial| {
+            assert_ne!(trial.faces[flipped].reversed, original_sense);
+            let _ = RayCaster::for_solid(trial, 0);
+            false
+        });
+        assert_eq!(part.faces[flipped].reversed, original_sense);
+        assert_eq!(part.input_repairs().len(), repair_count);
         assert!(part.ray_face_boxes.get().is_none());
         assert!(part.ray_edges.get().is_none());
-        let independent = Part::new(part.faces.clone(), part.edges.clone(), part.solids.clone());
+        part.try_mixed_normal_repair(0, &[flipped], |_| true);
+        assert!(part.ray_face_boxes.get().is_none());
+        assert!(part.ray_edges.get().is_none());
+        let mut independent = crate::read_step_file(&path).unwrap();
+        independent.record_inverted_shell_repair(0, true);
+        independent.try_mixed_normal_repair(0, &[flipped], |_| true);
         let repaired = RayCaster::for_solid(&part, 0);
         let fresh = RayCaster::for_solid(&independent, 0);
         assert_eq!(repaired.face_boxes, fresh.face_boxes);
@@ -1388,12 +1421,13 @@ mod tests {
         // to the box's size: the runs give the answer the whole polyline does.
         let (part, centre, ..) = bore_rim();
         let rays = RayCaster::for_solid(&part, 0);
-        for (e, edge) in part.edges.iter().enumerate() {
-            let probes = edge.samples.iter().flat_map(|&p| {
+        for e in 0..part.edges.len() {
+            let samples = part.boundary_edge_samples(e);
+            let probes = samples.iter().flat_map(|&p| {
                 [0.0, 1e-7, 0.3, 2.0].map(|k| geom::add(p, geom::scale(geom::sub(p, centre), k)))
             });
             for q in probes.chain([centre, [20.0, -3.0, 4.0]]) {
-                let d = polyline_distance(q, &edge.samples);
+                let d = polyline_distance(q, samples);
                 for reach in [1e-12, 1e-7, 0.01, 0.5, 3.0, 50.0, d, d * (1.0 - 1e-15)] {
                     assert_eq!(
                         rays.polyline_within(e, q, reach),

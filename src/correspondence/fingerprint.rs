@@ -1983,7 +1983,7 @@ fn arc_label(part: &Part, a: usize, b: usize) -> &'static str {
     let arc = part.arc(a, b);
     let (mut tangent, mut folded, mut other) = (0, 0, 0);
     for e in part.shared_edges(a, b) {
-        let p = part.edges[e].midpoint();
+        let p = part.edge_midpoint(e);
         let normal = |f: usize| {
             let (u, v) = part.faces[f].surface.parameters(p, None)?;
             part.face_normal(f, u, v)
@@ -2061,7 +2061,7 @@ fn face(part: &Part, i: usize, measured: Option<FaceMeasure>) -> FaceFingerprint
     let centroid = moments.map(|m| m.centroid).unwrap_or_else(|| {
         let (mut sum, mut n) = ([0.0; 3], 0usize);
         for e in part.face_edges(i) {
-            for p in &part.edges[e].samples {
+            for p in part.boundary_edge_samples(e) {
                 sum = geom::add(sum, *p);
                 n += 1;
             }

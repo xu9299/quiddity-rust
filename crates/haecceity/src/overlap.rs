@@ -15,9 +15,8 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 
-use crate::brep::{Edge, Part};
+use crate::brep::Part;
 use crate::geom::{self, Curve, Surface, V3};
-use crate::sampling::edge_interval;
 use crate::step::{IDENTITY, Placement};
 
 /// How far a chord of a circular boundary may stray from its arc, as a fraction of the radius:
@@ -124,7 +123,7 @@ fn loops(part: &Part, face: usize) -> Result<Vec<Vec<V3>>, OverlapRefusal> {
                     "loop {k} of face {face} runs along edge {e}, whose curve did not resolve"
                 ));
             }
-            let mut run = edge_points(&part.edges[e]);
+            let mut run = edge_points(part, e);
             if !forward {
                 run.reverse();
             }
@@ -160,22 +159,18 @@ fn loops(part: &Part, face: usize) -> Result<Vec<Vec<V3>>, OverlapRefusal> {
 
 /// Points along `edge`, start to end: a circular arc sampled afresh from its exact curve (chords
 /// within [`ARC_SAGITTA`] of its radius), any other edge its samples.
-fn edge_points(edge: &Edge) -> Vec<V3> {
-    let Curve::Circle { .. } = edge.curve else {
-        return edge.samples.clone();
+fn edge_points(part: &Part, e: usize) -> Vec<V3> {
+    let (Some(curve @ Curve::Circle { .. }), Some((t0, t1))) =
+        (part.boundary_edge_curve(e), part.boundary_edge_interval(e))
+    else {
+        return part.boundary_edge_samples(e).to_vec();
     };
-    let (t0, t1) = edge_interval(
-        &edge.curve,
-        edge.start,
-        edge.end,
-        edge.same_sense,
-        edge.is_closed(),
-    );
+    let edge = &part.edges[e];
     // A chord over angle θ strays r·(1 − cos(θ/2)) ≈ r·θ²/8 from its arc.
     let step = (8.0 * ARC_SAGITTA).sqrt();
     let n = (((t1 - t0).abs() / step).ceil() as usize).max(1);
     let mut points: Vec<V3> = (0..=n)
-        .map(|i| edge.curve.value(t0 + (t1 - t0) * i as f64 / n as f64))
+        .map(|i| curve.value(t0 + (t1 - t0) * i as f64 / n as f64))
         .collect();
     // The ends are the edge's own vertices, so loops join exactly.
     points[0] = edge.start;

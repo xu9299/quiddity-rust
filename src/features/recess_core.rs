@@ -643,8 +643,8 @@ fn rectangular_boundary(scan: &Scan<'_, '_>, p: &Proposal<Pocket>) -> bool {
     if boundary.edges.len() != 4
         || boundary.edges.iter().any(|&(edge, _)| {
             !matches!(
-                part.edges[edge].curve,
-                crate::kernel::geom::Curve::Line { .. }
+                part.boundary_edge_curve(edge),
+                Some(crate::kernel::geom::Curve::Line { .. })
             )
         })
     {
@@ -902,8 +902,8 @@ fn attach_intact_floor_walls(
             if boundary.edges.len() != 4
                 || boundary.edges.iter().any(|&(edge, _)| {
                     !matches!(
-                        part.edges[edge].curve,
-                        crate::kernel::geom::Curve::Line { .. }
+                        part.boundary_edge_curve(edge),
+                        Some(crate::kernel::geom::Curve::Line { .. })
                     )
                 })
             {

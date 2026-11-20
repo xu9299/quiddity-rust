@@ -23,7 +23,7 @@ impl Part {
     pub fn face_cloud(&self, face: usize, deflection: f64) -> Vec<V3> {
         let mut out = Vec::new();
         for e in self.face_edges(face) {
-            thin(&self.edges[e].samples, deflection, &mut out);
+            thin(self.boundary_edge_samples(e), deflection, &mut out);
         }
         let surface = &self.faces[face].surface;
         if matches!(surface, Surface::Plane { .. }) {
@@ -93,6 +93,15 @@ impl<'a> FaceProbe<'a> {
         const PER_EDGE: usize = 64;
         let (mut points, mut edge_at) = (Vec::new(), Vec::new());
         for e in part.face_edges(face) {
+            if let Some((surface, trim)) = part.spatial_trim(e) {
+                let (a, b) = trim.interval;
+                for k in 0..=PER_EDGE {
+                    let t = a + (b - a) * k as f64 / PER_EDGE as f64;
+                    points.push(trim.point(surface, t));
+                    edge_at.push((e, t));
+                }
+                continue;
+            }
             let ed = &part.edges[e];
             let (t0, t1) =
                 edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
@@ -154,6 +163,11 @@ impl Part {
     /// from parameter *t*.
     pub fn edge_distance(&self, edge: usize, q: V3, mut t: f64) -> f64 {
         let ed = &self.edges[edge];
+        if let Some((s, c)) = self.spatial_trim(edge)
+            && let Some((p, _)) = c.nearest(s, ed, q)
+        {
+            return geom::dist(p, q);
+        }
         let (t0, t1) = edge_interval(&ed.curve, ed.start, ed.end, ed.same_sense, ed.is_closed());
         let (lo, hi) = (t0.min(t1), t0.max(t1));
         for _ in 0..20 {

@@ -6,6 +6,16 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+Pending version: 0.6.0
+
+### Breaking (Rust API)
+
+- `haecceity::hlr::Exact` adds `SurfaceCurve` for a STEP pcurve projected from
+  its carrier. Exhaustive matches on the three previous variants need another
+  arm. Use `at` and `range` for evaluation, `placed` for page layout and
+  `subrange` for clipping. The new curve owns its geometry and supports serde
+  with the `json` feature. The public `Projected::points` polyline is also available.
+
 ### Added
 
 - An edge break on the rim of a conical body (the base of a cone, either end of a frustum) is
@@ -39,6 +49,25 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Face moments on small STEP-selected spline trims can resolve their centroid
+  and second moments far from the origin by evaluating the control net in
+  local coordinates at the existing integration tolerance. Rounded endpoints on
+  a finite spline carrier retain their selected trim under rigid placement.
+  STEP read-back at the axial turning point of a toroidal face preserves the
+  number of finite arcs in its turning profile.
+- Face bounds that mark a contained hole as the outer contour retain their
+  enclosing boundary for measurement, drawing and tessellation. This restores
+  the area and volume of NIST STC-06 with its original STEP labels.
+
+- Honour each STEP edge's master representation and explicit outer bound on
+  trimmed faces. Area, moments, containment, sections, drawings, meshing and
+  feature measurements use the selected finite curves, including pcurves on
+  adjacent surfaces. When both representations enclose a measurable area, the
+  selected one determines the result. A missing or unusable trim retains the
+  existing whole-face projection. STEP export preserves the selections.
+  Shared meshes coalesce unresolved samples at the STEP vertex and follow
+  selected edges across the seam of an adjoining closed spline.
+
 - A planar chamfer is no longer read from the flats of a polygonal section. A bevel between two
   principal-plane walls was published whenever it stood between them, so the flats of a hexagonal
   or irregular polygonal prism whose neighbours happened to lie on principal planes became
@@ -63,6 +92,7 @@ in [docs/alpha1.md](docs/alpha1.md).
   refused (`unmeasured-face`) because the volume needs every face, so such a part is
   recognised in file coordinates. specify-core must stop refusing the whole part on this
   face (`describe_faces`). For #303.
+
 - Reading a STEP file no longer sizes per-solid work by every face in the file: the import's
   outward-shell proof and the ray casters keep their face boxes and membership for the
   solid's own faces, the unresolved-face and unresolved-edge lookups search a sorted list, and

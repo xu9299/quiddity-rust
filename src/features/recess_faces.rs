@@ -35,16 +35,31 @@ pub struct Face {
     pub node: usize,
 }
 
+/// A linear wall boundary to the positional precision of recess geometry.
+/// The finite error bound also applies where a rounded STEP parameter
+/// direction makes a cylinder generator a very shallow helix.
+pub(crate) fn wall_edge_is_straight(part: &Part, edge: usize) -> bool {
+    match part.boundary_edge_support(edge) {
+        Some(Curve::Line { .. }) => true,
+        None => part
+            .declared_cylinder_chord_error(edge)
+            .is_some_and(|error| error <= crate::kernel::geom::COORD_FLOOR),
+        _ => false,
+    }
+}
+
 /// Bounded only by straight and circular edges, with at least one straight edge and at most
 /// one arc (`_is_wall`): a turned groove's annulus has two concentric arcs and never qualifies.
 fn is_wall(part: &Part, face: usize) -> bool {
     let edges = part.face_edges(face);
     let (mut lines, mut circles) = (0, 0);
-    for e in &edges {
-        match part.edges[*e].curve {
-            Curve::Line { .. } => lines += 1,
-            Curve::Circle { .. } => circles += 1,
-            _ => return false,
+    for &e in &edges {
+        if matches!(part.boundary_edge_support(e), Some(Curve::Circle { .. })) {
+            circles += 1;
+        } else if wall_edge_is_straight(part, e) {
+            lines += 1;
+        } else {
+            return false;
         }
     }
     !edges.is_empty() && lines >= 1 && circles <= 1

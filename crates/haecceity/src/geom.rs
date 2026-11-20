@@ -128,6 +128,7 @@ pub fn default_x_axis(z: V3) -> V3 {
 }
 
 /// A right-handed placement: origin plus three unit axes.
+#[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frame {
     pub origin: V3,
@@ -167,7 +168,7 @@ impl Frame {
 
 /// The analytic surface kinds the recognisers read. Anything else is carried by name so a
 /// caller can refuse it explicitly rather than mistake it for a supported surface.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Surface {
     Plane {
         frame: Frame,
@@ -213,6 +214,45 @@ pub enum SurfaceType {
 }
 
 impl Surface {
+    /// Place an independent pcurve carrier using the rigid placement of its edge.
+    pub(crate) fn placed(&self, at: &crate::step::Placement) -> Self {
+        let mut result = self.clone();
+        if *at == crate::step::IDENTITY {
+            return result;
+        }
+        let dir = |p: V3| at.map(|r| r[0] * p[0] + r[1] * p[1] + r[2] * p[2]);
+        let point = |p| add(dir(p), at.map(|r| r[3]));
+        match &mut result {
+            Self::Plane { frame }
+            | Self::Cylinder { frame, .. }
+            | Self::Cone { frame, .. }
+            | Self::Sphere { frame, .. }
+            | Self::Torus { frame, .. } => {
+                let sign = if frame.direct() { 1. } else { -1. };
+                frame.origin = point(frame.origin);
+                frame.x = dir(frame.x);
+                frame.z = dir(frame.z);
+                frame.y = scale(cross(frame.z, frame.x), sign);
+            }
+            Self::Freeform { surface, .. } => surface.transform_points(point),
+            Self::Other { .. } => {}
+        }
+        result
+    }
+    /// Scale a STEP pcurve's coordinates to this surface's parameters.
+    pub(crate) fn file_parameter_scales(&self, (length, angle): (f64, f64)) -> Option<(f64, f64)> {
+        Some(match self {
+            Self::Plane { .. } => (length, length),
+            Self::Cylinder { .. } => (angle, length),
+            Self::Cone { semi_angle, .. } => (angle, length / semi_angle.cos()),
+            Self::Sphere { .. } | Self::Torus { .. } => (angle, angle),
+            Self::Freeform {
+                kind: "BSPLINE" | "BEZIER",
+                ..
+            } => (1., 1.),
+            _ => return None,
+        })
+    }
     pub fn kind(&self) -> SurfaceType {
         match self {
             Surface::Plane { .. } => SurfaceType::Plane,
@@ -669,6 +709,7 @@ impl Conic {
 }
 
 /// The curve under an edge.
+#[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Curve {
     Line {

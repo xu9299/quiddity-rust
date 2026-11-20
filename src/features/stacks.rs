@@ -40,7 +40,7 @@ fn ranked_end_partners(part: &Part, seg: &Segment, s_end: f64) -> Vec<(f64, usiz
     for &face in &seg.faces {
         for edge in part.face_edges(face) {
             let e = &part.edges[edge];
-            let distance = std::iter::once(e.midpoint())
+            let distance = std::iter::once(part.edge_midpoint(edge))
                 .chain(e.vertex_points())
                 .map(|p| (geom::dot(p, d) - s_end).abs())
                 .fold(f64::NEG_INFINITY, f64::max);

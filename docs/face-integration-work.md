@@ -1,4 +1,4 @@
-# Reducing work without changing face-integral decisions
+# Face integration and boundary selection
 
 This change retains the integration densities, quadrature nodes, operation order,
 initial cuts, error criteria, depth limit and kink budget. It does not infer failure
@@ -50,9 +50,9 @@ Thus either a later evaluation fails (the original returns `None`), or refinemen
 finishes with excess still greater than `F` (the original also returns `None`).
 No continuation can produce a successful face result. The optimized walk may return
 that rejected prefix; the boundary propagates it immediately, and the unchanged
-caller applies the same rejection. In particular, the canonical mass-refinement
-caller records the canonical legacy refusal before considering an explicitly
-selected master trim. No rejected prefix is published.
+caller applies the same rejection. In particular, projected mass refinement
+keeps a known refusal when the master trim was unavailable. No rejected prefix
+is published.
 
 This does not reject a parent that can still be subdivided. With ordinary finite
 values, an accepted leaf that fails both the relative criterion and `F` was accepted
@@ -62,71 +62,228 @@ ordered `E > F` guard cannot trigger. Once it does trigger, Rust's `f64::max` ca
 reduce the non-NaN `E`, even if a later estimate is NaN. Evaluation failures remain
 failures; no new numerical answer is invented.
 
-## Recovery from an explicit master trim
+## STEP face boundaries
 
-A refused 3D projection may retry one complete, explicit STEP master-pcurve loop
-on a native, nonperiodic, noncollapsed B-spline or Bézier surface. Successful legacy
-integrals retain their operation order and values. Near parallel surface tangents
-can make Gauss–Newton oscillate even with small position residuals; using the file's
-selected trim supplies positions and derivatives without that ill-conditioned solve.
-Recovered faces measure the region bounded by the **file's master pcurves**. This
-can differ from a 3D-edge answer by the file's own representation disagreement.
+A STEP surface curve has a spatial curve and up to two associated geometric
+representations. Its master flag selects the 3D curve or one of those slots.
+The pcurve's two coordinates belong to its named carrier. For a different
+incident face, the evaluator lifts it on its carrier and locates that spatial
+point on the receiving face. A pcurve outside its carrier's finite knot domain
+has no valid lift. Clamping it to the edge of that patch changes both the
+geometry and the tangent. An elementary surface or a native spline carrier can stand alone
+without a topological face. A spatial master goes through the existing
+projection. Both choices may appear in the same loop. An explicit
+`FACE_OUTER_BOUND` supplies the outer contour. Where the file gives only
+ordinary face bounds, loop placement infers which one encloses the others.
+If another contractible loop encloses the marked loop's bounding box and
+extends beyond it, the mark cannot describe the enclosing boundary. The
+larger enclosing loop supplies the area and hole roles. NIST STC-06 has
+this inverted mark on 23 planar faces. Winding strips keep the declared
+side, and STEP export preserves the original mark.
 
-Each edge needs exactly one master pcurve, finite controls within the surface
-domain, and matching endpoints within the file's stated precision plus the kernel
-coordinate floor. Recovery additionally samples `|S(pc(t)) - C3d(t)|` at 33 equally
-spaced parameters (including endpoints) on **every span in the union of the 2D and
-3D curves' knot breaks**. Nonfinite distances or a sampled maximum greater than
-`0.001 * L` refuse recovery. Here `L` is the diagonal of this trimmed face's
-`Part::face_bounds` axis-aligned box, in millimetres, with no unit-size floor. This
-is the bounding-box length normalization used for GVP centroid evidence; tensor
-comparisons separately normalize by the reference inertia trace. The interior
-check bounds sampled disagreement, not an unsampled mathematical supremum. It
-uses the existing GVP band, not STEP's usually much tighter declared precision.
-Endpoint and small-gap connectivity checks retain their original precision band.
+Analytic elementary surfaces and native B-spline and Bézier patches retain
+their own parameter units. For a converted swept patch the mapping accounts
+for the extrusion vector's magnitude or the rational quadratic parametrisation
+of each quarter revolution. Edge vertices delimit each pcurve in its own
+parameter. Periodic seams can shift a parameter by a whole turn, and a
+collapsed side can have several parameter values for one physical point.
 
-Recovery also requires `maximum_deviation * P / A <= 0.001`, using that **same
-sampled maximum**, the physical length `P` of the master trim on the surface
-(including the short UV closing segments), and its integrated area `A`. This
-rejects long thin strips whose disagreement is small against the diagonal but
-large against their width. Length uses bounded adaptive Gauss–Kronrod with a
-face-relative error budget; its summed estimated length error is added to `P`.
-The area already passes the recovery integrator's numerical criteria before
-this guard runs, and neither mass nor moments are published before it passes.
+The kernel first certifies the declared region. The specialised integrator for
+one open spline patch remains available. Other evaluable regions use the
+general boundary integral, including holes and loops that wind around a
+periodic direction. Its density and orientation are those of the receiving
+surface. The same accepted region supplies area, flux, moments, containment,
+trim bounds and edge queries. Solid volume consumes the face flux. A whole
+sphere with a vertex loop uses its analytic formula.
 
-A known recall limit is that a NURBS pcurve's **whole knot domain must equal the
-edge interval**: a valid subinterval trim is still ineligible. Unsupported,
-missing, ambiguous or unresolved master trims remain unavailable.
+Endpoint matches and closing paths are checked against the file's length
+uncertainty plus the coordinate floor. A foreign master is evaluated on its
+named carrier and its transfer must lie within that physical tolerance of the
+receiving face. The selected parameter interval must remain on the carrier.
+A decimal STEP pcurve endpoint can lie a few ulps beyond a finite knot. The
+endpoint is evaluated at that knot only within the inverse solver’s parameter
+precision and the kernel’s physical coordinate floor. This keeps the same
+selected trim under rigid placement. A proper intersection of two selected trims in the same chart invalidates the
+loop. Candidate chord intersections are checked on the STEP curves and away
+from their common vertices before refusing the boundary.
+A discrepancy with a subordinate 3D curve alone does not change the chosen
+boundary. The specialised spline-patch formulation retains its original
+sufficient conditions. If these do not hold, the general integrator still
+tries the declared region before falling back to the projected boundary.
+The mass cache publishes the chosen method along with its result so
+the first query for a centroid cannot choose another boundary.
 
-The outer rule retains its coarse `F = 1e-11 * magnitude`, `1e-9` local criterion,
-`MAX_DEPTH = 12`, and kink budget. Inner adaptive primitives sum their error
-estimates, use the same depth bound, and receive half of F through a conservative
-pcurve variation bound. Their explicitly node-paired weighted errors enter each
-outer panel's estimate. Unresolved integrals still refuse. These are numerical
-error estimates, as in the legacy walk, rather than rigorous true-error bounds.
+A master on an adjacent surface reaches its target through the same constrained
+foot-point calculation as a spatial edge. An inversion stalled at a closed
+spline seam is retried from the other side. On the line-profile revolution
+shaft, the outer rim of the far-side annulus is declared on its neighbouring
+cylinder. Its quadrant is bounded by 15 mm and 10 mm radii and has area
+(15² − 10²)π/4. Selecting each edge by its STEP declaration reproduces
+this area, its signed flux and the shaft's analytic volume. A mixed-normal
+repair also tries its new senses on the original part with these trims and
+restores the previous senses if the material-side proof fails.
 
-Canonical mass and boundary choice are published under one once-cell before any
-moments escape, including concurrent first queries. An unresolved canonical legacy
-quadrature retries only the eligible master boundary, without repeating legacy mass.
-A completed but invalid canonical sum stays refused, as in a standalone mass query.
-A failure evaluating additional moment fields before canonical mass was determined
-still needs an independent canonical query; it cannot poison a valid mass cache.
-### Export of source master flags
+Two public faces separate the declared and alternate answers. The cylindrical
+face #13471 in cgb217 uses edge #12691. Its first pcurve is a line on spline
+surface #12488. OpenCascade evaluation of those raw STEP entities puts the
+maximum axial coordinate at 24.518993418091 mm. The second pcurve, on
+the cylinder itself, fixes that coordinate at 24.5 mm. Selecting that pcurve instead changes the declared bound to 24.5 mm
+even when the alternate spatial spline still bows. Selecting the 3D curve
+itself gives the projected bound of 24.51868961048 mm.
 
-STEP export preserves the source `PCURVE_S1`/`PCURVE_S2` flag on raw master slots
-of native B-spline and Bézier faces, even when no mass query or recovery has taken
-place. A source `CURVE_3D` designation stays `CURVE_3D`. This deliberately changes
-1,126 faces across the 11 flagged corpus files relative to the previous writer
-on main, which always emitted `CURVE_3D` for them. Export copies retained source
-metadata without integrating or consulting query-populated caches, preserving
-identical bytes with and without prior mass queries.
+In the sheet-metal hanger, the planar spline selected by surface curve #6011
+lies within 1.34 × 10⁻¹² mm of its radius-5 mm circular support over all three
+rational quadratic spans. Flattening that rim with the general display chords
+changed one overlap by 5.86 × 10⁻⁵ mm². The independent blank check evaluates
+the selected spline at equal physical arc lengths. Its error band includes the
+circular sagitta, the certified curve-to-circle error and STEP vertex pinning.
 
-The synthetic regression uses polynomial normal-offset edges on
-`S(u,v)=(w*u+v, epsilon*v, v²)`, with independent one-dimensional references for
-area, flux, centroid and central moments. The original narrow cases are rejected by the representation guards; a broad
-patch retains a localized ill-conditioned projection near its boundary while
-satisfying both bands. Endpoint-matching interior bulges also refuse. Neither reference bands
-nor quadrature tolerances are enlarged (ADR 0008).
+On cgb242 face #84456, the lower boundary lifts from a line on plane #31961.
+The upper boundary lifts pcurve #44970 on cylinder #32222 onto the receiving
+spline. Its remaining side is at u = 0, and u = 1 collapses to a point.
+Directly integrating the spline Jacobian from v = 0 to the upper curve gives
+18.22922444 and 18.22922442 mm² at 1,024 and 4,096 trim intervals. Projecting
+the spatial edges gives 18.22923018 mm². Both definitions are checked under
+the same rigid motion and at the original error bounds.
+
+On planar floor #2005 in `mfcadpp_holdout/419.step`, two concentric cylinders
+bound material between radii 1.350424756018 and 2.071143801424 mm. The two
+ends of the inner boundary share one STEP vertex, but evaluating its selected
+pcurve at the two finite parameters leaves a gap of 4.62 × 10⁻¹³ mm.
+Every pair of consecutive coedges already supplies a segment between their
+endpoints. The last and first coedges need the same closing segment on a
+regular, nonperiodic parameter chart. A ray through this gap must see the
+central hole, the material and the exterior in their geometric order.
+Both incident faces then classify each floor rim as concave.
+
+On `cgb245` edge #28519, a knot sample lies 4.4 × 10⁻¹¹ mm from its
+STEP end vertex. Assigning both a mesh identity gives a plane and a
+cylinder four uses of the same triangle edge. Their shared edge plan
+coalesces consecutive samples at an endpoint only when the samples agree
+with both the actual pcurve endpoint and the STEP vertex within a millionth
+of the chordal budget, capped at the coordinate floor.
+
+In `gramel/string_post.step`, edge #634 selects pcurve #797 on cylinder #125.
+Spline face #1668 uses the same spatial samples on its closed v chart. At a
+sample just beyond the seam, inverting from the preceding point can stop at
+v = 0. The opposite chart end reaches the selected point at v = 5.34755713.
+The mesh uses the same closest-point comparison as integration when it maps
+shared points onto a closed spline. The resulting solid uses every directed
+triangle edge once in each direction.
+
+Before accepting a declared domain, the loop builder tests candidate crossings
+between its finite coedges in the receiving surface's parameters. It reuses the
+samples for that domain to locate candidates, follows the appropriate periodic
+branch and refines on the selected curves. A transverse interior intersection
+at a regular surface point invalidates the domain. The same check includes a
+spatial coedge projected onto the face and a pcurve lifted from another carrier.
+
+For the independent moment controls on `cgb242` and `cgb243`, the spatial
+reference changes only the affected master selectors. With the original selectors,
+the corresponding sphere, cylinder and plane references integrate the Cartesian
+densities 1, x and x xᵀ on the receiving surface. A Green primitive integrates
+in v between a fixed ordinate and the selected pcurve, followed by Gauss
+quadrature along each smooth finite edge span. Cylinder and plane densities
+are polynomial in v. The spherical density includes r² cos(v). On a STEP
+cone the file's v measures axial distance, so the corresponding generator
+distance in OpenCascade is v/cos(semi-angle). Both sets of controls use the
+original area, centroid and tensor tolerances.
+
+The bowed edge in `master-trim-square.step` has height
+`y = 2 h x (1 − x)` for `0 ≤ x ≤ 1`. Its 3D approximation is straight.
+The two areas are 1 and `1 − h/3` mm². For `h = 0.0004` the file selects
+0.9998666667 mm². Regression cases use the same construction on a plane,
+a trimmed patch with a hole, a seam-crossing cylinder and swept surfaces.
+STEP export retains selected raw pcurves and the explicit outer bound without
+requiring an area calculation.
+
+A spatial query on a topological edge first resolves the selected carrier. A
+plane lifts its parameter curves to lines, conics or NURBS in space, and
+straight isoparameters of elementary quadrics can lift to lines or circles.
+Section outlines, hidden lines, closest points, overlap sampling and feature
+measurements use this geometry. A general surface curve is evaluated on its
+carrier; a chord only locates the interval for a closest-point search. Mesh
+coedges share the STEP vertex at their regular endpoints. The mass integral
+still uses the actual trim and its checked closing segment.
+
+Turned chamfers and countersinks use a cone's finite rims. A linear pcurve
+with a small generator component on a cylinder or cone stays within half
+its generator excursion of its middle parallel. For a planar rational
+quadratic, the cone supplies a candidate circle at the edge's axial station.
+On each quadratic Bézier span the degree-four Bernstein coefficients bound
+the squared radial residual, and the control points bound the axial residual.
+A resolved arc that stays within coordinate precision can supply a circular
+rim for recognition. Its spline is still used for measurement.
+
+On a plane, position is affine in both parameters and the normal is constant.
+Consequently every area, flux and first- or second-moment density is at most
+quadratic along the inner integration line. The two-point Gauss rule is exact
+there. This avoids a spurious refusal on a short, fast-parameterised curve
+when a translated world coordinate loses precision in the embedded error
+estimate. The outer boundary integral retains its error test.
+
+The STEP fixture `parabola_cut_cone.step` gives two independently approximated
+degree-seven Bézier pcurves and selects `PCURVE_S1` on its six surface curves.
+Integrating the two Bernstein curves on the cone and the cutting plane, and
+adding the analytic caps, gives 723.863727303646 mm². The same file with its
+six selections set to `CURVE_3D` has the analytic spatial-parabola area
+723.863727338942 mm². The regression exercises both representations under
+translation and rotation at the original absolute tolerance.
+
+Feature proofs that require a straight or circular boundary query the selected
+primitive and its finite parameter interval. Length, points at a fraction of arc
+length and nearest-point queries also evaluate a general curve on its carrier.
+A cylinder or cone incident on the selected edge supplies a candidate centre
+and radius for a circular rim. For positive-weight rational quadratic Bézier
+spans, Bernstein coefficients bound radial and axial departure over every span.
+The angular derivative must keep its sign through at most one turn. This lets
+a double-D bore, a turned chamfer or a recess use a rim written as a spline.
+Points, tangents and arc length still come from the original parameterisation.
+
+A planar extrusion copies the selected spatial curve into both caps. A selected
+planar rational spline is first restricted to the interval between its STEP
+vertices, including a segment that crosses the knot seam. Homogeneous de Boor
+evaluation gives the Bézier poles and weights on each retained knot span.
+Translating those poles produces an exact tensor-product side wall. For a
+quarter-circle cut, the other three quarters of its generating circle must
+not seed the wall's ray intersections. For a planar
+recess wall adjacent to a cylinder, a straight UV line with a small angular
+component defines a helix. Its maximum distance from the segment joining the
+STEP vertices is bounded by the larger endpoint mismatch plus `r Δu²/8`.
+The wall classifier and the adjoining slot end-wall proof accept it as straight at the kernel coordinate floor
+when this bound fits. Area, length and proximity still evaluate the helix.
+
+A visible or hidden drawing stretch may cross the last knot of a closed
+selected spline. The projection supplies the finite homogeneous spans covering
+that unwrapped interval, so its 2D endpoints and intervening points use the
+knot vector returned to the drawing consumer.
+
+The two rims of a swept closed spline can start and end at the same knot
+value despite traversing a full period. Summing successive parameter changes
+on the nearest branch gives the winding used by the boundary integral. A
+short trim that crosses the seam and returns has zero net winding. On
+`mfcadpp/10155.step` the hole in face #2387 sweeps to a full band:
+the side area is its rim length times the sweep height, and independent
+OpenCascade extrusion gives a volume of 1987.3563215954 mm³ with zero
+intersection with the original solid.
+
+In a periodic face domain, regular ends of selected coedges use their shared
+STEP vertex in the parameter branch of each coedge. A winding ray exactly on
+a cylindrical seam must see the same finite cut as the two neighbouring
+generators. For `mfcadpp/10096.step` face #1989 the file's two planes put
+the lower end at −14.83003931168 mm at zero longitude and −19.24211871677 mm
+at half a turn. The wall contains −17 mm only on the latter generator.
+
+In `cadgenbench_inputs/cgb243.step.gz`, spherical face `#55337` has radius
+2.5 mm. Its three surface curves select `PCURVE_S1`. One is on the sphere and
+two are on rational B-spline patches. An independent calculation evaluates
+their two-dimensional splines and the two rational tensor products, maps the
+lifted points to sphere longitude and latitude, and integrates the Cartesian
+moment densities with the spherical Jacobian. Gauss integration with 24 and 48
+nodes per span gives 3.541993373916 mm² to twelve decimal places. Selecting
+`CURVE_3D` on just those three edges reproduces the independently pinned
+spatial area of 3.541992339312 mm². The regression checks both centroids and
+all six independent central second moments at their original tolerances.
 
 ## Settled volume queries
 
@@ -155,3 +312,24 @@ The existing quadrature and kink-budget tests retain exhaustive mode.
 Independent face-area/moment references, placements, existing recognition snapshots,
 inventory floors and tolerances remain unchanged. Repeated-moment speedups measure
 cache reuse; they are not claims about cold integrations or whole-part recognition.
+
+
+The drawing keeps the original edge's sample positions through section clipping
+and visibility splits. For a general selected pcurve a split point is inverted
+only on its known finite parameter span. The exact curve is the orthographic
+projection of the selected pcurve evaluated on its declared carrier. Three
+quintic pcurves on cylinder #797 in `mfcadpp/1000.step` lift slightly outside
+the planes of their alternate ellipses. The HLR test evaluates their projected
+midpoints independently from the six STEP Bézier controls on each edge.
+
+A small trim on a distant spline can have an accurately measurable area while
+subtracting the moment origin from a world-space surface point loses the
+precision needed by adaptive quadrature. If that moment integral fails, the
+same finite pcurves are integrated in the same parameter chart after translating
+the spline control net to a boundary vertex. On face #17 of
+`cadgenbench/threaded_connector_109.step`, the two isoparametric edges and
+the linear spline selected by the file form a triangle with vertices
+(5, 0), (5.000105592299, 0) and (5, 0.000009668174198149).
+Tensor Gauss integration of the source surface over this triangle gives
+3.307124882796035 × 10⁻⁸ mm² and a centroid at
+(51.559984959625815, 0.04771000100467721, 367.61422777543277) mm.

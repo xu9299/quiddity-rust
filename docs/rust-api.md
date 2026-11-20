@@ -182,3 +182,20 @@ empty sections do not qualify; tool failures always fail. See CONTRIBUTING.
 The `f3d` conversion dependency is
 excluded from this check to keep its cost bounded; its API changes remain subject
 to the same release rule. CI separately audits Cargo.lock with cargo-audit 0.22.2.
+
+
+### Drawing a STEP pcurve
+
+A selected pcurve on a cylinder or a spline surface can project to a
+non-conic, non-rational plane curve. In 0.6, `hlr::Exact::SurfaceCurve`
+owns the pcurve, its carrier and its orthographic projection. A drawing
+can outlive the `Part`. `Exact::at(t)` and `range()` evaluate every variant.
+Use `placed(scale, centre, at)` for page coordinates and
+`subrange(first_fraction, last_fraction)` for a finite or reversed stretch.
+The latter returns `None` for fractions outside the input range.
+
+For consumers that match variants exhaustively, handle `Exact::SurfaceCurve(c)`.
+A native geometry cache can store `ProjectedSurfaceCurve` with serde under the
+`json` feature. A writer restricted to lines or polynomial paths can evaluate
+the curve to its output tolerance, including its endpoints. The evaluated
+carrier parameters include the STEP unit and swept-surface conversions.

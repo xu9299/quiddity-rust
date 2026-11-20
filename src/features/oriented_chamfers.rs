@@ -97,7 +97,7 @@ fn edge_info(part: &Part, bevel: usize, neighbour: usize) -> Option<(usize, V3)>
     };
     let edges = part.shared_edges(bevel, neighbour);
     let [edge] = edges[..] else { return None };
-    let Curve::Line { .. } = part.edges[edge].curve else {
+    let Some(&Curve::Line { .. }) = part.boundary_edge_curve(edge) else {
         return None;
     };
     Some((edge, unit_plane_normal(part, neighbour)?))

@@ -148,7 +148,7 @@ fn lateral_planes(part: &Part, face: usize, run: V3) -> Vec<usize> {
             part.shared_edges(face, n).into_iter().any(|e| {
                 let edge = &part.edges[e];
                 let span = geom::sub(edge.end, edge.start);
-                matches!(edge.curve, geom::Curve::Line { .. })
+                matches!(part.boundary_edge_curve(e), Some(geom::Curve::Line { .. }))
                     && geom::norm(geom::cross(span, run)) <= 1e-6 * geom::norm(span)
             })
         })
@@ -417,12 +417,12 @@ fn cone_body_rim(part: &Part, face: usize, tol: f64, max_leg: f64) -> Option<Occ
     let axial = |p: V3| geom::dot(geom::sub(p, band.origin), d);
     // Radius and axial position of the circle two faces share.
     let rim_with = |other: usize| {
-        part.shared_edges(face, other)
-            .into_iter()
-            .find_map(|e| match part.edges[e].curve {
-                geom::Curve::Circle { frame, radius } => Some((radius, axial(frame.origin))),
+        part.shared_edges(face, other).into_iter().find_map(|e| {
+            match part.boundary_edge_support(e)? {
+                geom::Curve::Circle { frame, radius } => Some((*radius, axial(frame.origin))),
                 _ => None,
-            })
+            }
+        })
     };
     let slope = |frame: crate::kernel::geom::Frame, angle: f64| angle.tan() * geom::dot(frame.z, d);
     let mut plane = None;

@@ -121,7 +121,7 @@ fn polygon(part: &Part, face: usize) -> Option<Vec<V3>> {
         || part
             .outer_edges(face)
             .iter()
-            .any(|&e| !matches!(part.edges[e].curve, Curve::Line { .. }))
+            .any(|&e| !matches!(part.boundary_edge_curve(e), Some(Curve::Line { .. })))
     {
         return None;
     }
