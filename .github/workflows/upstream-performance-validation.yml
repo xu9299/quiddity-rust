@@ -1,0 +1,81 @@
+name: Quiddity upstream candidate validation
+
+on:
+  push:
+    branches: ['validation/upstream-spline-cuts-20261120']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quiddity-upstream-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUSTUP_TOOLCHAIN: '1.99.1'
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  CARGO_TERM_COLOR: never
+  QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: '7f6dca56ce3629d82fafeb75acd84ddbf7efa195'
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+          persist-credentials: false
+      - name: Verify source, corpus and environment
+        run: |
+          mkdir -p ../evidence/verified
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; git -C ../quiddity-corpus rev-parse HEAD; sw_vers; uname -m; rustc -vV; cargo -V; } | tee ../evidence/environment.log
+          test "$(git rev-parse HEAD)" = '7f6dca56ce3629d82fafeb75acd84ddbf7efa195'
+          test "$(git rev-parse HEAD^{tree})" = 'cb915d984424758301a471760f3c2780632a06da'
+          test "$(git -C ../quiddity-corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          test "$(uname -m)" = arm64
+          git diff --exit-code 'f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0' HEAD -- Cargo.lock tests/fixtures
+          git diff --stat 'f2e09cd40ab7f285d4db88e1bb215e4dcb94a4a0' HEAD | tee ../evidence/scope.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: quiddity-upstream-perf-main-031
+      - name: Formatting and lint
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../evidence/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../evidence/clippy.log
+      - name: Complete workspace and public corpus
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/evidence/verified
+        run: cargo test --workspace --release --locked 2>&1 | tee ../evidence/workspace.log
+      - name: Snapshot coverage and provenance
+        run: cargo run -p snapshot-tool --release --locked -- --check --coverage-only --verify-dir ../evidence/verified 2>&1 | tee ../evidence/coverage.log
+      - name: Strict snapshot reproduction
+        if: ${{ !cancelled() }}
+        run: |
+          test "$(git rev-parse HEAD)" = '7f6dca56ce3629d82fafeb75acd84ddbf7efa195'
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: verification-evidence
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 30
