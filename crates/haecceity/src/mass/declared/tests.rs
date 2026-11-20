@@ -55,6 +55,21 @@ fn implicit_knot_families_keep_their_parameter_curve() {
 }
 
 #[test]
+fn a_rounded_pcurve_endpoint_must_be_within_the_physical_coordinate_floor() {
+    let outside = -3.7e-14;
+    for (width, expected) in [(1., Some((0., 0.5))), (1e9, None)] {
+        let text = entity(SQUARE, 101, &format!("CARTESIAN_POINT('',({width},0.,0.))"));
+        let text = entity(&text, 102, &format!("CARTESIAN_POINT('',({width},1.,0.))"));
+        let part = crate::step::read_step(text.as_bytes()).unwrap();
+        let surface = &part.faces[0].surface;
+        assert_eq!(
+            on_carrier(surface, closed_spans(surface), [outside, 0.5, 0.]),
+            expected
+        );
+    }
+}
+
+#[test]
 fn a_foreign_pcurve_cannot_be_clamped_to_its_carriers_boundary() {
     let text = SQUARE
         .replace("(0.5,0.0004)", "(0.5,-0.0004)")

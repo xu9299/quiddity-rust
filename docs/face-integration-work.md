@@ -95,7 +95,10 @@ Endpoint matches and closing paths are checked against the file's length
 uncertainty plus the coordinate floor. A foreign master is evaluated on its
 named carrier and its transfer must lie within that physical tolerance of the
 receiving face. The selected parameter interval must remain on the carrier.
-A proper intersection of two selected trims in the same chart invalidates the
+A decimal STEP pcurve endpoint can lie a few ulps beyond a finite knot. The
+endpoint is evaluated at that knot only within the inverse solver’s parameter
+precision and the kernel’s physical coordinate floor. This keeps the same
+selected trim under rigid placement. A proper intersection of two selected trims in the same chart invalidates the
 loop. Candidate chord intersections are checked on the STEP curves and away
 from their common vertices before refusing the boundary.
 A discrepancy with a subordinate 3D curve alone does not change the chosen

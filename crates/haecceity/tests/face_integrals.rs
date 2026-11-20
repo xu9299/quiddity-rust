@@ -35,6 +35,34 @@ fn tensor(q: [[f64; 3]; 3], m: &Placement) -> [[f64; 3]; 3] {
     })
 }
 
+/// Green integration of the four STEP-selected pcurves on their own carriers
+/// gives the same area at 12, 24 and 48 Gauss nodes per knot span. One endpoint
+/// on the adjacent rational spline has v = -3.67598317687e-14 at its lower knot.
+#[test]
+fn a_rounded_foreign_spline_endpoint_keeps_the_cylinder_trim_under_motion() {
+    let Some(corpus) = common::corpus_dir() else {
+        return;
+    };
+    let path = corpus.join("cadgenbench_inputs/cgb202.step.gz");
+    let area = 25.67657558531589;
+    let centre = [112.71217493348577, -159.73551391711212, -94.228115143539];
+    for m in [IDENTITY, motion(false), motion(true)] {
+        let part = read_step_file_placed(&path, &m).unwrap();
+        let f = 684;
+        assert_eq!(part.face_source(f).unwrap().entity, 104_265);
+        let got = part.face_moments(f).unwrap();
+        let placed = geom::add(rotate(centre, &m), m.map(|row| row[3]));
+        assert!((got.area - area).abs() < 1e-9);
+        assert!((part.face_mass(f).unwrap()[0] - area).abs() < 1e-9);
+        assert!(geom::dist(got.centroid, placed) < 1e-8);
+    }
+    let spatial = common::with_spatial_edges(
+        &path,
+        &[26, 104_128, 104_271, 104_293].into_iter().collect(),
+    );
+    assert!((spatial.face_mass(684).unwrap()[0] - 25.67737528249655).abs() < 1e-9);
+}
+
 #[test]
 fn hemisphere_and_disk_have_analytic_central_moments() {
     let text = std::fs::read(common::fixtures().join("hemisphere_one_edge.step")).unwrap();

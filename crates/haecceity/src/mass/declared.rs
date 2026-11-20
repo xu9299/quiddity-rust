@@ -100,11 +100,26 @@ fn on_carrier(surface: &Surface, spans: (f64, f64), q: V3) -> Option<(f64, f64)>
     let (u, v) = wrap_closed(surface, spans, (q[0], q[1]));
     if let Surface::Freeform { surface, .. } = surface {
         let (u0, u1, v0, v1) = surface.domain();
-        let bounded = |x: f64, lo: f64, hi: f64| {
-            let roundoff = 64. * f64::EPSILON * lo.abs().max(hi.abs()).max(hi - lo);
-            (x >= lo - roundoff && x <= hi + roundoff).then(|| x.clamp(lo, hi))
-        };
-        return Some((bounded(u, u0, u1)?, bounded(v, v0, v1)?));
+        let (uc, vc) = (u.clamp(u0, u1), v.clamp(v0, v1));
+        if (uc, vc) != (u, v) {
+            // STEP can round a pcurve endpoint just beyond a finite knot.
+            // Use the inverse's boundary precision over each parameter range
+            // and bound the displacement in millimetres on this surface.
+            let near = |x: f64, edge: f64, lo: f64, hi: f64| {
+                let precision =
+                    (1e-12 * (hi - lo)).max(64. * f64::EPSILON * lo.abs().max(hi.abs()));
+                (x - edge).abs() <= precision
+            };
+            if !near(u, uc, u0, u1) || !near(v, vc, v0, v1) {
+                return None;
+            }
+            let (_, su, sv) = surface.value_and_partials(uc, vc);
+            let distance = (u - uc).abs() * geom::norm(su) + (v - vc).abs() * geom::norm(sv);
+            if !distance.is_finite() || distance > geom::COORD_FLOOR {
+                return None;
+            }
+        }
+        return Some((uc, vc));
     }
     Some((u, v))
 }
