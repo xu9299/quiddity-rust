@@ -1,7 +1,7 @@
 name: STEP declared boundary survey and ARM regression
 on:
   push:
-    branches: [validation/step-declared-boundaries-on-304]
+    branches: [validation/step-declared-boundaries-on-309]
 permissions:
   contents: read
 concurrency:
@@ -15,8 +15,8 @@ env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
   QUIDDITY_CORPUS_REQUIRED: "1"
   QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
-  BASE: 9a9709835d385528be5e49369d381bf3589bf051
-  SOURCE: b327322590a626a5593f712570a1309fb94e11f7
+  BASE: dadea7189f83b50002ce337934aeef87c5e19b88
+  SOURCE: d4cbdf6ea3e9307fafb6ce983521047288997059
   TREE: be98fd54393101bba9c28d2db419c0d0204865a0
 jobs:
   verify:
