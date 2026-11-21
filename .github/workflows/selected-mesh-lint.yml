@@ -1,0 +1,48 @@
+name: STEP mesh workspace lint
+on:
+  push:
+    branches: [validation/step-selected-mesh-lint]
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  SOURCE: 59e7617cd8fc5cc8cefe2c2b780a8bdb4bfcc29b
+  TREE: 2c8ff8a94f9fd33b4f1b710dfa58b5dd6bc20298
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          persist-credentials: false
+      - name: Identify the checked source and compiler
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          mkdir -p ../evidence
+          { git rev-parse HEAD HEAD^{tree}; uname -a; rustc -vV; } > ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source
+          shared-key: selected-mesh-lint
+      - name: Check formatting
+        run: cargo fmt --all --check 2>&1 | tee ../evidence/fmt.log
+      - name: Lint every workspace target
+        run: cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../evidence/clippy.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-workspace-lint
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
