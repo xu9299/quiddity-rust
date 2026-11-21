@@ -143,6 +143,27 @@ fn unpaired_edges(faces: &[usize], meshes: &[Result<FaceMesh, MeshRefusal>]) -> 
 }
 
 #[test]
+fn square_mesh_distinguishes_a_selected_trim_from_the_spatial_fallback() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/master-trim-square.step");
+    let selected = read_step_file(&path).unwrap();
+    let spatial = common::with_spatial_edges(&path, &[118, 130, 142, 154].into_iter().collect());
+    let invalid = std::fs::read_to_string(path)
+        .unwrap()
+        .replace(".PCURVE_S1.", ".PCURVE_S2.");
+    let fallback = haecceity::read_step(invalid.as_bytes()).unwrap();
+
+    let area = selected.triangulate(0, 1e-5, ANGULAR).unwrap().area();
+    assert!((area - 0.999_866_666_7).abs() < 1e-5, "{area}");
+    let spatial_mesh = spatial.triangulate(0, 1e-5, ANGULAR).unwrap();
+    assert!((spatial_mesh.area() - 1.0).abs() < 1e-12);
+    assert_eq!(
+        fallback.triangulate(0, 1e-5, ANGULAR).unwrap(),
+        spatial_mesh
+    );
+}
+
+#[test]
 fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
     let Some(dir) = common::corpus_dir() else {
         assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());

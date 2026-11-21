@@ -148,12 +148,9 @@ impl Part {
         angular: f64,
     ) -> Result<FaceMesh, MeshRefusal> {
         let mut mesher = PartMesher::new(self, deflection, angular)?;
-        let mut result = Err(CROSSES.to_owned());
-        for level in 0..BOUNDARY_LEVELS.len() {
-            result = mesher.face(face, &|_| level);
-            if !matches!(&result, Err(why) if why == CROSSES) {
-                break;
-            }
+        let mut result = mesher.triangulate(face);
+        if result.is_err() && mesher.use_spatial_edges([face]) {
+            result = mesher.triangulate(face);
         }
         result.map_err(|reason| MeshRefusal { reason })
     }
@@ -163,19 +160,47 @@ impl Part {
     /// faces share their edges' points, so the mesh of a closed shell whose faces all
     /// triangulate is watertight.
     pub fn mesh(&self, deflection: f64, angular: f64) -> Vec<Result<FaceMesh, MeshRefusal>> {
-        let n = self.faces.len();
         let mut mesher = match PartMesher::new(self, deflection, angular) {
             Ok(m) => m,
-            Err(refusal) => return vec![Err(refusal); n],
+            Err(refusal) => return vec![Err(refusal); self.faces.len()],
         };
-        let mut level = vec![0usize; self.edges.len()];
+        let mut meshes = mesher.mesh();
+        // Retry unresolved selected loops with spatial edges. The same edge
+        // switches for every face that uses it, including successful neighbours.
+        let refused = meshes
+            .iter()
+            .enumerate()
+            .filter_map(|(face, mesh)| mesh.is_err().then_some(face));
+        if mesher.use_spatial_edges(refused) {
+            meshes = mesher.mesh();
+        }
+        meshes
+    }
+}
+
+impl PartMesher<'_> {
+    fn triangulate(&mut self, face: usize) -> Result<FaceMesh, String> {
+        let mut result = Err(CROSSES.to_owned());
+        for level in 0..BOUNDARY_LEVELS.len() {
+            result = self.face(face, &|_| level);
+            if !matches!(&result, Err(why) if why == CROSSES) {
+                break;
+            }
+        }
+        result
+    }
+
+    fn mesh(&mut self) -> Vec<Result<FaceMesh, MeshRefusal>> {
+        let part = self.part;
+        let n = part.faces.len();
+        let mut level = vec![0usize; part.edges.len()];
         let mut out: Vec<Option<Result<FaceMesh, String>>> = vec![None; n];
         let mut dirty = vec![true; n];
-        let edge_faces = self.edge_faces();
+        let edge_faces = part.edge_faces();
         loop {
             for f in 0..n {
                 if dirty[f] {
-                    out[f] = Some(mesher.face(f, &|e| level[e]));
+                    out[f] = Some(self.face(f, &|e| level[e]));
                     dirty[f] = false;
                 }
             }
@@ -186,7 +211,7 @@ impl Part {
                 if !matches!(result, Some(Err(why)) if why == CROSSES) {
                     continue;
                 }
-                let edges = self.face_edges(f);
+                let edges = part.face_edges(f);
                 let Some(least) = edges.iter().map(|&e| level[e]).min() else {
                     continue;
                 };
@@ -436,6 +461,23 @@ impl<'a> PartMesher<'a> {
                         })
                 })
         })
+    }
+
+    fn use_spatial_edges(&mut self, faces: impl IntoIterator<Item = usize>) -> bool {
+        let mut changed = false;
+        for face in faces {
+            for edge in self.part.face_edges(face) {
+                if self.selected_edge(edge).is_some() {
+                    self.selected[edge] = std::cell::OnceCell::from(None);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.setups.iter_mut().for_each(|setup| *setup = None);
+            self.plans.clear();
+        }
+        changed
     }
 
     fn edge_samples(&self, edge: usize) -> &'a [V3] {

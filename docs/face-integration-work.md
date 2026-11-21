@@ -85,6 +85,9 @@ then checks the other incident faces for that same selection. An edge with
 no accepted, sampleable trim uses its existing spatial samples. The faces
 map those common points to their own parameter charts. On a closed spline,
 an inverse stopped at the seam also tries the other end of the chart.
+If a selected loop still refuses triangulation after the usual thinning
+retries, the mesher retries with spatial edges for that loop's face. Every
+incident face uses the same replacement samples on those edges.
 
 The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
 run of samples next to both the STEP vertex and the selected curve's true end

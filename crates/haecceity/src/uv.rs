@@ -665,6 +665,7 @@ impl Part {
         let (pu, pv) = f.surface.periodic();
         let mut loops = Vec::new();
         let mut crossings = boundary.and_then(|b| TrimCrossings::new(&f.surface, b));
+        let mesh_boundary = mesh.and_then(|_| self.declared_boundary(face));
         // A seed beside a closed spline's seam can clamp at the wrong end of
         // the chart. Check the opposite end when mapping shared mesh points.
         let mesh_spans = mesh
@@ -712,6 +713,13 @@ impl Part {
                 _ => f.surface.parameters(p, hint),
             };
             let selected = |edge| mesh.and_then(|mesh| mesh(edge));
+            let in_chart = |e, edge: crate::mesh::MeshEdge<'a>| {
+                if edge.face == face {
+                    return Some(edge.trim);
+                }
+                let receiving = mesh_boundary?.edges.get(&e)?;
+                (receiving.interval == edge.trim.interval).then_some(receiving)
+            };
             for (place, &(e, forward)) in lp.edges.iter().enumerate() {
                 firsts.push(raw.len());
                 let shared = selected(e);
@@ -719,9 +727,7 @@ impl Part {
                     edge.samples.points.as_slice()
                 });
                 let n = samples.len();
-                let local = shared
-                    .filter(|edge| edge.face == face)
-                    .map(|edge| (edge.trim, edge.samples));
+                let local = shared.and_then(|edge| Some((in_chart(e, edge)?, edge.samples)));
                 let trim = match (local, boundary.and_then(|b| b.edges.get(&e))) {
                     (Some(local), _) => Some(local),
                     (_, Some(trim)) => Some((trim, trim.samples(&f.surface, &self.edges[e])?)),
@@ -810,10 +816,10 @@ impl Part {
             if boundary.is_none() && !pu && !pv && raw.len() > 2 {
                 let mut hint = raw[raw.len() - 1];
                 for k in 0..raw.len() - 1 {
-                    if origin[k]
-                        .and_then(|(place, _)| selected(lp.edges[place].0))
-                        .is_some_and(|edge| edge.face == face)
-                    {
+                    if origin[k].is_some_and(|(place, _)| {
+                        let edge = lp.edges[place].0;
+                        selected(edge).and_then(|s| in_chart(edge, s)).is_some()
+                    }) {
                         break;
                     }
                     let again = invert(points[k], Some(hint))?;
