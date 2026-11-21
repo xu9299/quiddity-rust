@@ -81,10 +81,12 @@ edges. Mass and moments share the accepted choice across query orders.
 
 The mesher samples each topological edge once for all its incident faces. It
 prefers a selected trim accepted by face integration on the carrier face,
-then checks the other incident faces for that same selection. An edge with
-no accepted, sampleable trim uses its existing spatial samples. The faces
-map those common points to their own parameter charts. On a closed spline,
-an inverse stopped at the seam also tries the other end of the chart.
+then checks the other incident faces for that same selection. Every receiving
+face must be able to resolve the selected trim on its own surface. An edge
+without compatible receiving trims or an accepted, sampleable selection uses
+its existing spatial samples. The faces map those common points to their own
+parameter charts. On a closed spline, an inverse stopped at the seam also
+tries the other end of the chart.
 If a selected loop still refuses triangulation after the usual thinning
 retries, the mesher retries with spatial edges for that loop's face. Every
 incident face uses the same replacement samples on those edges.

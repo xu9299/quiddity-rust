@@ -432,6 +432,17 @@ impl<'a> PartMesher<'a> {
             use crate::brep::TrimCarrier;
             let part = self.part;
             let (carrier, _) = part.measure_trims.get(&edge)?.as_ref()?;
+            let incident = &part.edge_faces()[edge];
+            // A shared trim must be valid in every receiving chart. A
+            // selected curve well off its neighbour would make a folded strip.
+            if incident.iter().any(|&f| {
+                !matches!(part.faces[f].surface, Surface::Other { .. })
+                    && part
+                        .declared_boundary(f)
+                        .is_none_or(|b| !b.edges.contains_key(&edge))
+            }) {
+                return None;
+            }
             let owners = match carrier {
                 TrimCarrier::Faces(owners) => owners.as_slice(),
                 TrimCarrier::Detached(_) => &[],
@@ -440,11 +451,7 @@ impl<'a> PartMesher<'a> {
             // incident face can still provide the same selected spatial curve.
             owners
                 .iter()
-                .chain(
-                    part.edge_faces()[edge]
-                        .iter()
-                        .filter(|f| !owners.contains(f)),
-                )
+                .chain(incident.iter().filter(|f| !owners.contains(f)))
                 .copied()
                 .find_map(|face| {
                     let trim = part.measured_boundary(face)?.edges.get(&edge)?;
