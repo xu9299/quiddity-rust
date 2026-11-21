@@ -39,6 +39,9 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Face triangulation follows STEP-selected parametric edge curves accepted by
+  face integration, with one spatial sampling plan shared by incident faces.
+
 - Face area, moments and volume flux now use the finite boundary selected by
   STEP's `PCURVE_S1` or `PCURVE_S2` when it can be integrated, including when
   projecting the 3D edge would also give an area. A `CURVE_3D` edge still uses

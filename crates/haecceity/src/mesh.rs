@@ -304,6 +304,7 @@ impl<'a> Sheet<'a> {
 /// unwrapped, each edge sample's parameters, and the parameter scale its triangulation uses.
 struct Setup<'a> {
     sheet: Sheet<'a>,
+    raw: std::borrow::Cow<'a, [UvLoop]>,
     /// Per loop, its points unwrapped across a closed freeform surface's seam too.
     loops: Vec<Vec<(f64, f64)>>,
     /// (edge, sample index) → the sample's parameters in this face (its first use).
@@ -345,12 +346,21 @@ struct BNode {
     key: Option<Key>,
 }
 
+/// The selected spatial discretisation of a topological edge, in STEP vertex order.
+#[derive(Clone, Copy)]
+pub(super) struct MeshEdge<'a> {
+    pub(super) face: usize,
+    pub(super) trim: &'a crate::mass::EdgeTrim,
+    pub(super) samples: &'a crate::mass::TrimSamples,
+}
+
 struct PartMesher<'a> {
     part: &'a Part,
     deflection: f64,
     /// The boundary's angular deflection: half the triangles'.
     angular: f64,
     setups: Vec<Option<Result<Setup<'a>, String>>>,
+    selected: Vec<std::cell::OnceCell<Option<MeshEdge<'a>>>>,
     plans: BTreeMap<(usize, usize), Plan>,
     /// Per vertex of the part, the first vertex at the same point: two loops touching at a
     /// point each with its own vertex there meet at one mesh vertex.
@@ -378,6 +388,9 @@ impl<'a> PartMesher<'a> {
             // held to the whole of it.
             angular: 0.5 * angular,
             setups: (0..part.faces.len()).map(|_| None).collect(),
+            selected: (0..part.edges.len())
+                .map(|_| std::cell::OnceCell::new())
+                .collect(),
             plans: BTreeMap::new(),
             alias: vertex_alias(part),
         })
@@ -389,6 +402,47 @@ impl<'a> PartMesher<'a> {
         }
     }
 
+    fn selected_edge(&self, edge: usize) -> Option<MeshEdge<'a>> {
+        *self.selected[edge].get_or_init(|| {
+            use crate::brep::TrimCarrier;
+            let part = self.part;
+            let (carrier, _) = part.measure_trims.get(&edge)?.as_ref()?;
+            let owners = match carrier {
+                TrimCarrier::Faces(owners) => owners.as_slice(),
+                TrimCarrier::Detached(_) => &[],
+            };
+            // Prefer sampling on the carrier itself. If its face fell back, another
+            // incident face can still provide the same selected spatial curve.
+            owners
+                .iter()
+                .chain(
+                    part.edge_faces()[edge]
+                        .iter()
+                        .filter(|f| !owners.contains(f)),
+                )
+                .copied()
+                .find_map(|face| {
+                    let trim = part.measured_boundary(face)?.edges.get(&edge)?;
+                    let samples = trim.samples(&part.faces[face].surface, &part.edges[edge])?;
+                    samples
+                        .points
+                        .iter()
+                        .flatten()
+                        .all(|v| v.is_finite())
+                        .then_some(MeshEdge {
+                            face,
+                            trim,
+                            samples,
+                        })
+                })
+        })
+    }
+
+    fn edge_samples(&self, edge: usize) -> &'a [V3] {
+        self.selected_edge(edge)
+            .map_or(&self.part.edges[edge].samples, |e| &e.samples.points)
+    }
+
     fn make_setup(&self, face: usize) -> Result<Setup<'a>, String> {
         let part = self.part;
         let f = &part.faces[face];
@@ -396,9 +450,19 @@ impl<'a> PartMesher<'a> {
             return Err(format!("its surface ({kind}) did not resolve"));
         }
         let sheet = Sheet::new(&f.surface);
-        let raw = part
-            .uv_loops(face)
-            .ok_or("its boundary has no parameter-space loops")?;
+        let selected = |edge| self.selected_edge(edge);
+        let raw = if f
+            .loops
+            .iter()
+            .flat_map(|lp| &lp.edges)
+            .any(|&(e, _)| selected(e).is_some())
+        {
+            part.mesh_uv_loops(face, &selected)
+                .map(std::borrow::Cow::Owned)
+        } else {
+            part.uv_loops(face).map(std::borrow::Cow::Borrowed)
+        }
+        .ok_or("its boundary has no parameter-space loops")?;
         let mut loops = Vec::with_capacity(raw.len());
         let mut uv = BTreeMap::new();
         let mut winding_u = 0;
@@ -423,7 +487,7 @@ impl<'a> PartMesher<'a> {
             {
                 winding_u += 1;
             }
-            for (e, sample) in straying(part, face, li, &sheet, lp, &points, self.deflection) {
+            for (e, sample) in straying(self, face, li, &sheet, lp, &points) {
                 uv.remove(&(e, sample));
             }
             box_points.extend(&points);
@@ -440,6 +504,7 @@ impl<'a> PartMesher<'a> {
         let scale = parameter_scale(&sheet, &box_points, self.deflection, self.angular)?;
         Ok(Setup {
             sheet,
+            raw,
             loops,
             uv,
             scale,
@@ -460,7 +525,8 @@ impl<'a> PartMesher<'a> {
     /// Edge `edge`'s points at thinning level `level` (see [`BOUNDARY_LEVELS`]).
     fn make_plan(&self, edge: usize, level: usize) -> Plan {
         let part = self.part;
-        let samples = &part.edges[edge].samples;
+        let geom = &part.edges[edge];
+        let samples = self.edge_samples(edge);
         let n = samples.len();
         let boundary = BOUNDARY_LEVELS[level] * self.deflection;
         // The faces' views of the samples.
@@ -570,6 +636,26 @@ impl<'a> PartMesher<'a> {
                 }
             }
         }
+        if let Some(e) = self.selected_edge(edge) {
+            // A knot just inside an endpoint can yield a second mesh key at
+            // the same vertex. Remove only the unresolved run at either end.
+            let surface = &part.faces[e.face].surface;
+            let (a, b) = e.trim.interval;
+            let (start, end) = (e.trim.point(surface, a), e.trim.point(surface, b));
+            let resolution = (1e-6 * boundary).min(geom::COORD_FLOOR);
+            let distinct = |p, vertex, curve_end| {
+                geom::dist(p, vertex) > resolution || geom::dist(p, curve_end) > resolution
+            };
+            let first = at.iter().find(|(_, p)| distinct(**p, geom.start, start));
+            let last = at.iter().rev().find(|(_, p)| distinct(**p, geom.end, end));
+            if let (Some((&first, _)), Some((&last, _))) = (first, last)
+                && first <= last
+            {
+                at.retain(|&key, _| {
+                    key == (0, 0) || key == (n - 1, 0) || (first..=last).contains(&key)
+                });
+            }
+        }
         let mut plan = Plan {
             points: Vec::with_capacity(at.len()),
             at_sample: vec![None; n],
@@ -632,15 +718,14 @@ impl<'a> PartMesher<'a> {
 /// they lie within the deflection of the line, and of the face. A stray farther off is kept,
 /// and the face is then refused if its boundary crosses.
 fn straying(
-    part: &Part,
+    mesher: &PartMesher<'_>,
     face: usize,
     li: usize,
     sheet: &Sheet<'_>,
     lp: &UvLoop,
     points: &[(f64, f64)],
-    deflection: f64,
 ) -> Vec<(usize, usize)> {
-    let f = &part.faces[face];
+    let f = &mesher.part.faces[face];
     let edges = &f.loops[li].edges;
     let n = edges.len();
     // Per edge of the loop, its points' indices in loop order.
@@ -691,8 +776,8 @@ fn straying(
                         break;
                     };
                     let e = edges[place].0;
-                    let off = geom::dist(sheet.value(on.0, on.1), part.edges[e].samples[sample]);
-                    if off > deflection {
+                    let off = geom::dist(sheet.value(on.0, on.1), mesher.edge_samples(e)[sample]);
+                    if off > mesher.deflection {
                         inside = Some(d.signum());
                         break;
                     }
@@ -749,9 +834,7 @@ fn triangulate_face(
     let sheet = setup.sheet;
     let surface = sheet.surface;
     let period = sheet.period;
-    let raw = part
-        .uv_loops(face)
-        .ok_or("its boundary has no parameter-space loops")?;
+    let raw = &setup.raw;
     let poles = Poles::new(part, face, &sheet, plans, alias, deflection);
 
     // Each loop as polygon points, sorted into closed loops and loops that run once round.

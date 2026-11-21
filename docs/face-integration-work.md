@@ -77,6 +77,19 @@ finite carrier domains, intersection and integration checks govern acceptance.
 If the assembled loop fails, measurement retries the whole face using the 3D
 edges. Mass and moments share the accepted choice across query orders.
 
+## Following the selected boundary in the mesh
+
+The mesher samples each topological edge once for all its incident faces. It
+prefers a selected trim accepted by face integration on the carrier face,
+then checks the other incident faces for that same selection. An edge with
+no accepted, sampleable trim uses its existing spatial samples. The faces
+map those common points to their own parameter charts. On a closed spline,
+an inverse stopped at the seam also tries the other end of the chart.
+
+The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
+run of samples next to both the STEP vertex and the selected curve's true end
+does not add a second boundary key there.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
