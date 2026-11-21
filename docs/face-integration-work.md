@@ -95,6 +95,14 @@ The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
 run of samples next to both the STEP vertex and the selected curve's true end
 does not add a second boundary key there.
 
+A selected spherical cap can also be triangulated in a central projection.
+All its boundary points must lie well inside one hemisphere and its measured
+area must fit in a hemisphere. In that chart, the signed planar area of a
+triangle has the same sign as the determinant of the three spatial directions
+from the sphere centre. Refinement places points back on the same sphere.
+The mesh still reports the surface's usual parameters and original shared
+boundary positions.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.

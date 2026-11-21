@@ -1047,7 +1047,17 @@ fn triangulate_face(
     }
 
     let refine = !matches!(surface, Surface::Plane { .. });
-    let mut mesher = Mesher::new(sheet, setup.scale, &polygons, deflection)?;
+    let sphere = matches!(&setup.raw, std::borrow::Cow::Owned(_))
+        .then(|| SphereChart::new(part, face, &polygons))
+        .flatten();
+    let mut mesher =
+        Mesher::new(sheet, setup.scale, &polygons, deflection, sphere).or_else(|why| {
+            if sphere.is_some() {
+                Mesher::new(sheet, setup.scale, &polygons, deflection, None)
+            } else {
+                Err(why)
+            }
+        })?;
     let converged = if refine {
         mesher.refine(deflection, 2.0 * angular)
     } else {
@@ -1859,9 +1869,65 @@ impl HasPosition for Node {
     }
 }
 
+/// A central projection of a spherical cap. The signed area of a projected
+/// triangle has the same sign as its spatial orientation about the sphere.
+/// This keeps narrow triangles along a curved trim from folding in UV.
+#[derive(Clone, Copy)]
+struct SphereChart {
+    frame: geom::Frame,
+    radius: f64,
+}
+
+impl SphereChart {
+    fn new(part: &Part, face: usize, polygons: &[Vec<BNode>]) -> Option<Self> {
+        let Surface::Sphere { frame, radius } = part.faces[face].surface else {
+            return None;
+        };
+        // The same boundary can enclose the complementary region of a sphere.
+        if part.face_mass(face)?[0] >= TAU * radius * radius {
+            return None;
+        }
+        let points = || polygons.iter().flatten();
+        if points().any(|n| matches!(n.key, Some(Key::Cut(_) | Key::Side(_)))) {
+            return None;
+        }
+        let radial = |n: &BNode| geom::sub(n.point, frame.origin);
+        let z = geom::unit(points().map(radial).fold([0.; 3], geom::add))?;
+        if points().any(|n| geom::dot(radial(n), z) <= 0.25 * radius) {
+            return None;
+        }
+        let across = if z[0].abs() < 0.9 {
+            [1., 0., 0.]
+        } else {
+            [0., 1., 0.]
+        };
+        let x = geom::unit(geom::cross(across, z))?;
+        let y = if frame.direct() {
+            geom::cross(z, x)
+        } else {
+            geom::cross(x, z)
+        };
+        Some(Self {
+            frame: geom::Frame {
+                origin: frame.origin,
+                x,
+                y,
+                z,
+            },
+            radius,
+        })
+    }
+
+    fn project(self, point: V3) -> Point2<f64> {
+        let [x, y, z] = self.frame.to_local(point);
+        Point2::new(self.radius * x / z, self.radius * y / z)
+    }
+}
+
 struct Mesher<'a> {
     surface: Sheet<'a>,
     scale: (f64, f64),
+    sphere: Option<SphereChart>,
     cdt: ConstrainedDelaunayTriangulation<Node>,
 }
 
@@ -1874,20 +1940,25 @@ impl<'a> Mesher<'a> {
         scale: (f64, f64),
         polygons: &[Vec<BNode>],
         deflection: f64,
+        sphere: Option<SphereChart>,
     ) -> Result<Self, String> {
         let mut mesher = Mesher {
             surface,
             scale,
+            sphere,
             cdt: ConstrainedDelaunayTriangulation::new(),
         };
         for polygon in polygons {
             let mut handles = Vec::with_capacity(polygon.len());
             for b in polygon {
-                let node = Node {
+                let mut node = Node {
                     point: b.point,
                     key: b.key,
                     ..mesher.node(b.uv)
                 };
+                if let Some(sphere) = sphere {
+                    node.position = sphere.project(b.point);
+                }
                 if let Some(existing) = mesher.cdt.locate_vertex(node.position) {
                     let data = existing.data();
                     // Two loops touching at a point (each with its own vertex there) meet at
@@ -1924,13 +1995,35 @@ impl<'a> Mesher<'a> {
     fn node(&self, uv: (f64, f64)) -> Node {
         // spade refuses coordinates nearer zero than about 1e-38 (but not zero itself).
         let flush = |x: f64| if x.abs() < 1e-30 { 0.0 } else { x };
+        let point = self.surface.value(uv.0, uv.1);
+        let position = self.sphere.map_or_else(
+            || Point2::new(uv.0 * self.scale.0, uv.1 * self.scale.1),
+            |s| s.project(point),
+        );
         Node {
-            position: Point2::new(flush(uv.0 * self.scale.0), flush(uv.1 * self.scale.1)),
+            position: Point2::new(flush(position.x), flush(position.y)),
             uv,
-            point: self.surface.value(uv.0, uv.1),
+            point,
             normal: self.surface.normal(uv.0, uv.1),
             key: None,
         }
+    }
+
+    fn mean_uv(&self, nodes: &[Node]) -> (f64, f64) {
+        let n = nodes.len() as f64;
+        let hint = (
+            nodes.iter().map(|p| p.uv.0).sum::<f64>() / n,
+            nodes.iter().map(|p| p.uv.1).sum::<f64>() / n,
+        );
+        self.sphere
+            .and_then(|s| {
+                let x = nodes.iter().map(|p| p.position.x).sum::<f64>() / n;
+                let y = nodes.iter().map(|p| p.position.y).sum::<f64>() / n;
+                let p = s.frame.to_world([x, y, s.radius]);
+                let (u, v) = self.surface.surface.parameters(p, None)?;
+                Some((geom::nearest_turn(u, hint.0), v))
+            })
+            .unwrap_or(hint)
     }
 
     /// Whether each face (by index) lies inside the polygons: flooded from the convex hull,
@@ -1989,7 +2082,7 @@ impl<'a> Mesher<'a> {
             let mut want_edge = |index: usize, a: &Node, b: &Node, wanted: &mut Vec<(f64, f64)>| {
                 if !seen[index] {
                     seen[index] = true;
-                    wanted.push(((a.uv.0 + b.uv.0) / 2.0, (a.uv.1 + b.uv.1) / 2.0));
+                    wanted.push(self.mean_uv(&[*a, *b]));
                 }
             };
             for face in self.cdt.inner_faces() {
@@ -2010,7 +2103,7 @@ impl<'a> Mesher<'a> {
                     if longest.is_none_or(|l| length > l.0) {
                         longest = Some((length, index, a, b));
                     }
-                    let mid = ((a.uv.0 + b.uv.0) / 2.0, (a.uv.1 + b.uv.1) / 2.0);
+                    let mid = self.mean_uv(&[a, b]);
                     let bent = match (a.normal, b.normal) {
                         (Some(na), Some(nb)) => angle(na, nb) > angular && length > deflection,
                         _ => false,
@@ -2030,10 +2123,7 @@ impl<'a> Mesher<'a> {
                 if parameter_sliver(&a, &b, &c) {
                     continue;
                 }
-                let uv = (
-                    (a.uv.0 + b.uv.0 + c.uv.0) / 3.0,
-                    (a.uv.1 + b.uv.1 + c.uv.1) / 3.0,
-                );
+                let uv = self.mean_uv(&[a, b, c]);
                 let off =
                     triangle_distance(self.surface.value(uv.0, uv.1), a.point, b.point, c.point);
                 let size = geom::dist(a.point, b.point)
