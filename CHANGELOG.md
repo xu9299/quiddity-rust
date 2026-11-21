@@ -42,7 +42,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 - Face triangulation follows STEP-selected parametric edge curves accepted by
   face integration, with one spatial sampling plan shared by incident faces.
   Compatible spherical caps use a central projection to preserve triangle
-  orientation along narrow selected trims.
+  orientation along narrow selected trims. Selecting accepted trims can compute
+  face integrals during the first mesh query.
 
 - Face area, moments and volume flux now use the finite boundary selected by
   STEP's `PCURVE_S1` or `PCURVE_S2` when it can be integrated, including when

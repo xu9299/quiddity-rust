@@ -91,6 +91,10 @@ If a selected loop still refuses triangulation after the usual thinning
 retries, the mesher retries with spatial edges for that loop's face. Every
 incident face uses the same replacement samples on those edges.
 
+Resolving an accepted trim can populate the carrier face's mass cache during
+the first mesh query. Repeated mesh queries reuse those mass decisions, while
+each mesh call constructs its own shared edge plans and parameter charts.
+
 The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
 run of samples next to both the STEP vertex and the selected curve's true end
 does not add a second boundary key there.
