@@ -1,0 +1,69 @@
+name: STEP selected mesh remaining feature checks
+on:
+  push:
+    branches: [validation/step-selected-mesh-features-20261122]
+permissions:
+  contents: read
+concurrency:
+  group: selected-mesh-features-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  SOURCE: 5ff5564222b54ed6a93d07afd8c5151fcd3cbefb
+  TREE: 431369a8132efcc5c0c3d34af06868bf67e4969b
+jobs:
+  remaining-features:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - name: Identify source and required inputs
+        run: |
+          mkdir -p ../evidence
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(git -C ../corpus rev-parse HEAD)" = 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; rustc -vV; } | tee ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: selected-mesh-cost-lint
+          cache-on-failure: true
+      - name: Run only failed or unfinished checks
+        run: |
+          failed=0
+          for case in nist_ap203_upgrade_repairs specify_intents_written_onto_the_original_files written_files_are_the_writers_current_output; do
+            cargo test -p haecceity --release --locked --no-default-features --test pmi_write "$case" -- --exact 2>&1 | tee "../evidence/pmi-$case.log" || failed=1
+          done
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../evidence/presentation-feature-off.log || failed=1
+          cargo test -p haecceity --release --locked --features json-import --test pmi_json_roundtrip nist_roundtrip -- --exact 2>&1 | tee ../evidence/nist-json-roundtrip.log || failed=1
+          exit "$failed"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-feature-followup-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
