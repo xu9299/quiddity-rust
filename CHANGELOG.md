@@ -21,6 +21,16 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Mesh preparation reuses selected curves, sample evaluations and analytic
+  node operands, rebuilds only dependent charts and edge plans after boundary
+  retries, avoids redundant constraint conflict collection for existing edges,
+  and refines
+  interiors once those boundaries settle. Bounded analytic fast paths retain
+  endpoint, receiving-carrier and nonfinite fallbacks.
+- NURBS curves reuse closure checks and batch low-degree inverse seed tables.
+  Within one part, selected trims share identical curve operands and compatible
+  inversion coefficients; their intervals and receiving-face checks stay separate.
+
 - Edge fillets are reported at any radius. The absolute 0.6 mm floor is gone: boxes and prisms
   with every edge rounded at about 0.3 to 0.55 mm, which gave no fillet record at all, now
   report all twelve rounds, and small rounds elsewhere (R0.2 to 0.55 on CAD parts, root
@@ -39,11 +49,10 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
-- Face triangulation follows STEP-selected parametric edge curves accepted by
-  face integration, with one spatial sampling plan shared by incident faces.
-  Compatible spherical caps use a central projection to preserve triangle
-  orientation along narrow selected trims. Selecting accepted trims can compute
-  face integrals during the first mesh query.
+- Face triangulation follows usable STEP-selected parametric edge curves, with
+  one spatial sampling plan shared by incident faces. Geometric trim checks are
+  independent of face integration. Folded spherical caps retry a compatible
+  central projection to preserve orientation along narrow selected trims.
 
 - Face area, moments and volume flux now use the finite boundary selected by
   STEP's `PCURVE_S1` or `PCURVE_S2` when it can be integrated, including when

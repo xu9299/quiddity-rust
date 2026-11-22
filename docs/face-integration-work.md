@@ -79,33 +79,38 @@ edges. Mass and moments share the accepted choice across query orders.
 
 ## Following the selected boundary in the mesh
 
-The mesher samples each topological edge once for all its incident faces. It
-prefers a selected trim accepted by face integration on the carrier face,
-then checks the other incident faces for that same selection. Every receiving
-face must be able to resolve the selected trim on its own surface. An edge
-without compatible receiving trims or an accepted, sampleable selection uses
-its existing spatial samples. The faces map those common points to their own
-parameter charts. On a closed spline, an inverse stopped at the seam also
-tries the other end of the chart.
+The mesher resolves a STEP-selected trim from its finite parameter interval
+and geometric checks on each resolved receiving face. This preparation is
+independent of face integration: selecting the ordinary shared boundary does
+not require area or moment integration. The selected curve is sampled once
+for all incident faces, preferably on its native carrier. An edge without
+compatible receiving trims or a sampleable selection retains its existing
+spatial samples. Each face maps the common points into its own parameter chart.
+On a closed spline, an inverse stopped at the seam also tries the other end
+of the chart.
+
 If a selected loop still refuses triangulation after the usual thinning
-retries, the mesher retries with spatial edges for that loop's face. Every
-incident face uses the same replacement samples on those edges.
+retries, the mesher retries that face with spatial edges. All incident faces
+use the same replacements. Only dependent charts, shared edge plans and
+prepared triangles are rebuilt; interior refinement starts after the boundary
+choices have settled. Mesh boundary preparation has its own lazy caches and
+does not populate the face-integration decision cache.
 
-Resolving an accepted trim can populate the carrier face's mass cache during
-the first mesh query. Repeated mesh queries reuse those mass decisions, while
-each mesh call constructs its own shared edge plans and parameter charts.
+The shared STEP vertices remain the endpoints of an edge. An unresolved run
+next to both the STEP vertex and the selected curve's true end does not add
+a second boundary key there. On the sample owner's analytic carrier, an
+interior sample can reuse the parameters that produced its spatial point,
+provided those parameter bits have not changed. Pinned endpoints, other
+carriers and changed chart coordinates keep their actual residual checks.
 
-The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
-run of samples next to both the STEP vertex and the selected curve's true end
-does not add a second boundary key there.
-
-A selected spherical cap can also be triangulated in a central projection.
+A folded spherical cap can retry triangulation in a central projection.
 All its boundary points must lie well inside one hemisphere and its measured
-area must fit in a hemisphere. In that chart, the signed planar area of a
-triangle has the same sign as the determinant of the three spatial directions
-from the sphere centre. Refinement places points back on the same sphere.
-The mesh still reports the surface's usual parameters and original shared
-boundary positions.
+area must fit in a hemisphere. This local compatibility check can query the
+face's area; it does not gate ordinary shared-boundary preparation. In that
+chart, signed planar triangle area has the sign of the determinant of the
+three spatial directions from the sphere centre. Refinement places points
+back on the same sphere. The mesh still reports the usual surface parameters
+and original shared boundary positions.
 
 ## The native spline integration rule introduced in #281
 
