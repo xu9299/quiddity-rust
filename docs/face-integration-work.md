@@ -206,6 +206,29 @@ storage and synchronization during initialization. This changes preparation
 work rather than the integration rule. Peak memory has not been measured.
 Incremental timings and the scope of reused validation are reported with the PR.
 
+## Reusing mesh evaluation and triangulation work
+
+Mesh node evaluation reuses surface basis operands while preserving the point
+and partial-derivative accumulation orders. Analytic witnesses and sufficient
+plane/parameter-strip bounds can avoid repeated projection work; inconclusive
+or nonfinite cases keep the original checks. Shared plans use ordered storage
+and reserve their known capacity. An already constrained adjacent CDT edge does
+not need another insertion request.
+
+These changes retain deflection, winding and finite-domain guards. Focused
+tests compare scalar arithmetic, extreme operands and fallback behavior. The
+integration-decoupling regression from the correctness change is retained.
+Production code and all pre-existing tests match the previously validated
+implementation; the retained regression is checked separately on Windows and
+ARM macOS. Reused full-workspace and strict-snapshot results are identified as
+such, rather than reported as a fresh run of this commit.
+
+This adds cached operands, specialized bounds and mesh-local state. Peak memory
+has not been measured. The adjacent-constraint shortcut alone had no confirmed
+gain in its earlier paired experiment (ratio 1.002748, 95% interval
+[0.975411, 1.029609]); the PR's incremental timing measures the whole change and
+cannot assign its improvement to that shortcut.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.

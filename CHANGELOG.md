@@ -21,6 +21,11 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Meshing reuses surface basis operands, analytic witnesses and ordered edge
+  plans, and avoids redundant constraint insertion. Arithmetic-order and
+  conservative fallback checks accompany the fast paths; this adds mesh-local
+  state without changing deflection or geometry tolerances.
+
 - Selected-boundary preparation reuses immutable curve operands, bounded curve
   checks, inverse seeds and receiving-surface evaluations within one part.
   Mesh parameter loops have a separate cache from integration decisions;
