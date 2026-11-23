@@ -177,6 +177,25 @@ The dependency state belongs to one meshing call. Retrying a boundary can still
 change the triangulation and its refinement cost. This does not change the
 general geometry, NURBS evaluators, integration rules or recognition policy.
 
+## Reusing selected-boundary preparation
+
+Mesh qualification and UV loops have separate lazy caches from integration.
+Loop keys retain selected topological-edge identities. Identical immutable curve
+operands share ordinary inversion tables within each Part; parameter units and
+every stored scalar bit participate in the key. Intervals, receiving surfaces
+and transfers retain their own checks. Curve closure is refreshed after control
+point transformations.
+
+Receiving-surface inversions reuse basis operands and nearby parameter hints,
+with the existing residual and finite-domain checks. Analytic midpoint bounds
+and grouped crossing exclusions keep the original checks for unresolved cases.
+The existing recognition boundary policy, metered deviation checks, combined
+point/tangent evaluation and carried integral boundaries are preserved. Mesh
+and integration interval selection share one resolver, with mesh hints optional.
+
+There is no cross-curve coefficient pool or separate native finite-value
+certificate. The integration rule and geometry tolerances are unchanged.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.

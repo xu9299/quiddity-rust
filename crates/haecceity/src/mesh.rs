@@ -342,6 +342,7 @@ impl<'a> Sheet<'a> {
 struct Setup<'a> {
     sheet: Sheet<'a>,
     raw: std::borrow::Cow<'a, [UvLoop]>,
+    selected: bool,
     /// Per loop, its points unwrapped across a closed freeform surface's seam too.
     loops: Vec<Vec<(f64, f64)>>,
     /// (edge, sample index) → the sample's parameters in this face (its first use).
@@ -450,7 +451,7 @@ impl<'a> PartMesher<'a> {
             if incident.iter().any(|&f| {
                 !matches!(part.faces[f].surface, Surface::Other { .. })
                     && part
-                        .declared_boundary(f)
+                        .mesh_declared_boundary(f)
                         .is_none_or(|b| !b.edges.contains_key(&edge))
             }) {
                 return None;
@@ -468,7 +469,7 @@ impl<'a> PartMesher<'a> {
                 .find_map(|face| {
                     // Boundary selection needs geometric qualification, not the
                     // successful completion of area and flux integration.
-                    let trim = part.declared_boundary(face)?.edges.get(&edge)?;
+                    let trim = part.mesh_declared_boundary(face)?.edges.get(&edge)?;
                     let samples = trim.samples(&part.faces[face].surface, &part.edges[edge])?;
                     samples
                         .points
@@ -529,14 +530,13 @@ impl<'a> PartMesher<'a> {
         }
         let sheet = Sheet::new(&f.surface);
         let selected = |edge| self.selected_edge(edge);
-        let raw = if f
+        let has_selected = f
             .loops
             .iter()
             .flat_map(|lp| &lp.edges)
-            .any(|&(e, _)| selected(e).is_some())
-        {
+            .any(|&(e, _)| selected(e).is_some());
+        let raw = if has_selected {
             part.mesh_uv_loops(face, &selected)
-                .map(std::borrow::Cow::Owned)
         } else {
             part.uv_loops(face).map(std::borrow::Cow::Borrowed)
         }
@@ -583,6 +583,7 @@ impl<'a> PartMesher<'a> {
         Ok(Setup {
             sheet,
             raw,
+            selected: has_selected,
             loops,
             uv,
             scale,
@@ -1087,7 +1088,7 @@ fn prepare_face<'a>(
     Ok(PreparedFace {
         mesher,
         polygons,
-        lazy_sphere: matches!(&setup.raw, std::borrow::Cow::Owned(_)),
+        lazy_sphere: setup.selected,
     })
 }
 
