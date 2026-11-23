@@ -181,6 +181,31 @@ in its smaller sample: [1.078057, 1.122161]. String_post had no confirmed gain.
 These results concern the three flow changes together; they do not attribute
 the gain or regression to an individual change or establish a universal speedup.
 
+## Reusing selected-boundary preparation
+
+Mesh qualification has its own lazy boundary and parameter-loop caches. The
+loop key records the selected topological edges; a different selection rebuilds
+the loops. Integration keeps its own accepted-boundary decision. Topological
+identities, trim intervals, carrier placements and receiving-face checks are
+never replaced by shared curve identities.
+
+Within a Part, identical NURBS operands can share immutable storage and inverse
+seed preparation. Keys include the stored scalar bits and parameter units.
+Closure is cached and refreshed after transformed control points. Low-degree
+inverse tables retain each scalar evaluation's arithmetic order, with the
+existing path for unsupported degrees and nonfinite inputs.
+
+Receiving-surface evaluation reuses basis operands while keeping point and
+derivative accumulation orders separate. Native analytic trims can use a
+sufficient floating-point finite-value certificate or bounded intersection
+checks; unresolved certificates fall back to the original evaluations. These
+shortcuts do not widen geometry or quadrature tolerances.
+
+The tradeoff is additional Part-local cache state, shared immutable curve
+storage and synchronization during initialization. This changes preparation
+work rather than the integration rule. Peak memory has not been measured.
+Incremental timings and the scope of reused validation are reported with the PR.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
