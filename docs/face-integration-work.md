@@ -194,6 +194,44 @@ in its smaller sample: [1.078057, 1.122161]. String_post had no confirmed gain.
 These results concern the three flow changes together; they do not attribute
 the gain or regression to an individual change or establish a universal speedup.
 
+## Reusing selected-boundary preparation
+
+Mesh qualification has its own lazy boundary and parameter-loop caches. The
+loop key records the selected topological edges; a different selection rebuilds
+the loops. Integration keeps its own accepted-boundary decision. Topological
+identities, trim intervals, carrier placements and receiving-face checks are
+never replaced by shared curve identities.
+
+Within a Part, identical NURBS operands can share immutable storage and inverse
+seed preparation. Keys include the stored scalar bits and parameter units.
+Closure is cached and refreshed after transformed control points. Low-degree
+inverse tables retain each scalar evaluation's arithmetic order, with the
+existing path for unsupported degrees and nonfinite inputs.
+
+Receiving-surface evaluation reuses basis operands while keeping point and
+derivative accumulation orders separate. Native analytic trims can use a
+sufficient floating-point finite-value certificate or bounded intersection
+checks; unresolved certificates fall back to the original evaluations. These
+shortcuts do not widen geometry or quadrature tolerances.
+
+The tradeoff is additional Part-local cache state, shared immutable curve
+storage and synchronization during initialization. This changes preparation
+work rather than the integration rule.
+
+A separate memory comparison used eight inputs, five fresh processes per version/input and ten sequential mesh calls, releasing each mesh before the next. Relative to the preceding stage, median peak private commit changed by -26.3% to +4.1% across those inputs; cgb243 changed from 216.41 to 192.43 MiB. Its additional live Rust allocations after releasing the mesh changed from 47.32 to 36.87 MiB. Live allocated bytes after mesh release stayed constant across all ten calls. Process peaks include import and meshing; Rust allocation counts exclude allocator overhead.
+
+| Input | Peak private commit: preceding / current (MiB) | Retained Rust allocation: preceding / current (MiB) |
+| --- | ---: | ---: |
+| cgb245 | 62.430 / 46.039 | 17.1467 / 9.1528 |
+| string | 13.879 / 12.012 | 2.2142 / 1.3363 |
+| cgb243 | 216.414 / 192.430 | 47.3222 / 36.8683 |
+| cgb202 | 445.504 / 399.867 | 73.0586 / 54.8946 |
+| cgb203 | 83.035 / 86.469 | 5.3690 / 6.9628 |
+| cgb207 | 70.969 / 62.820 | 12.7392 / 9.3709 |
+| cgb217 | 107.473 / 92.578 | 20.7797 / 13.5999 |
+| cgb242 | 187.605 / 162.359 | 42.5282 / 30.1568 |
+Incremental timings and the scope of reused validation are reported with the PR.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.

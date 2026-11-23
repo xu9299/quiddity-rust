@@ -21,6 +21,11 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Selected-boundary preparation reuses immutable curve operands, bounded curve
+  checks, inverse seeds and receiving-surface evaluations within one part.
+  Mesh parameter loops have a separate cache from integration decisions;
+  finite-domain, endpoint and nonfinite fallbacks remain in place.
+
 - Mesh boundary retries rebuild only dependent faces and shared plans; interior
   refinement waits until boundary choices settle. Spherical-cap projection is
   attempted after a folded parameter-space triangulation, avoiding unused area
