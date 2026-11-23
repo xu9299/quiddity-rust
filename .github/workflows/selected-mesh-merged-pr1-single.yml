@@ -1,0 +1,130 @@
+name: Selected mesh pr1 consolidated ARM validation
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: selected-mesh-merged-pr1-single-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  SOURCE: 20eae01e61adcf093e83bfa89a0ed225ffffe3b8
+  TREE: e645e04502203a990e48e08c03173c3e200b70cc
+jobs:
+  reuse-passed-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - name: Verify and preserve completed checks
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p reused
+        gh run view 45180104601 -R xu9299/quiddity-rust --json headSha,jobs,status,conclusion > reused/prior-run.json
+        gh run download 45180104601 -R xu9299/quiddity-rust --name mesh-workspace-lint-evidence --dir mesh-workspace-lint-evidence
+        gh run download 45180104601 -R xu9299/quiddity-rust --name mesh-compatibility --dir mesh-compatibility
+        gh run download 45180104601 -R xu9299/quiddity-rust --name mesh-arm-doc --dir mesh-arm-doc
+        gh run download 45180104601 -R xu9299/quiddity-rust --name mesh-strict-evidence --dir arm-spherical/strict-evidence
+        if ! command -v uv >/dev/null; then pipx install uv; export PATH="$HOME/.local/bin:$PATH"; fi
+        uv run --no-project --python 3.13 python - <<'PY'
+        import hashlib,json,os,pathlib
+        run=json.loads(pathlib.Path('reused/prior-run.json').read_text())
+        assert run['headSha']=='999e9d956cc2f4d284c473327abc7376c738084c'
+        jobs={j['name']:j for j in run['jobs']}
+        assert all(jobs[name]['conclusion']=='success' for name in ('lint','compatibility','strict','build-tests'))
+        expected={"arm-spherical/strict-evidence/environment.log": "9e82fe4fe45fc137f5662514a059c2e881e043438037dd55f216b710cc227263", "arm-spherical/strict-evidence/strict.log": "75c2355c186f249ea4e582c3c8cc2417cd2e0b148f99f332d08264ad32fa4e2d", "mesh-arm-doc/doc.log": "58972f8538906e36e976bb0fb2c479c5ee5be325f336738324cdf7ca64170b2a", "mesh-arm-doc/environment.log": "6683558956b8cf257a5bd79d1f1e9a85f8f2110a22e7b85cfa8d1a1551c0d48d", "mesh-compatibility/environment.log": "0b73f3606d9caaa1c8f7e04db948240e1711baaf7c616d58377682877a0a6fad", "mesh-compatibility/semver.log": "6854d345f26ad356b3add4cfe44bd5d081c949fe82b7bab9e9d1efaf746949ba", "mesh-compatibility/wasm-haecceity.log": "ba08165827147332caf90a775b711f2adad24d2de0e9d8834db94b3f462e34da", "mesh-compatibility/wasm-quiddity.log": "316277ed85a63cc5012e9abba62e1c7b50d80184af6f1f1e27baf717b51688e3", "mesh-workspace-lint-evidence/clippy.log": "c603ff2ffc41caf5fc0504ddf739cea235339c104e3b4b17313dd8e0d1084b62", "mesh-workspace-lint-evidence/environment.log": "18703f02b14463d4f19389fa0e6933ebe149a72e364a92d52be357b15d0fc9c8", "mesh-workspace-lint-evidence/f3d.log": "da871ae3a0429a2f5dfb05f58eb44c8b7bbaa63b4ca0844dd68745be5a5d9a9b", "mesh-workspace-lint-evidence/fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "mesh-workspace-lint-evidence/mfcadpp-score-tests.log": "baf49b59538192f3e136ca0404cac516ecb8dd2fe5ba1416604056f3080fa49c", "mesh-workspace-lint-evidence/nist-json-roundtrip.log": "117671f3bc51964a38a6d09b83d689ced9f966b473b20aeddfef20228700fb25", "mesh-workspace-lint-evidence/pmi-write-feature-off.log": "75d2e65b91da8fb8c193b6011be649796a2fb5536360f8a2dfdf7b378b12a265", "mesh-workspace-lint-evidence/presentation-feature-off.log": "c2254f28db6ff130946c94f6291e582eb6ebb1096b853e359c2c64df4fdb2ec3", "mesh-workspace-lint-evidence/score-tests.log": "9fe2729a6b710b31527f2f4120b3bd5e274ff35fb66be391e5675b917c3092ea", "mesh-workspace-lint-evidence/workflow-tests.log": "5e3f3b6f7097c9238aff51373ab02251b5297ec19280ae2e36a3295d09741fd3"}
+        for name,digest in expected.items():
+            assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==digest,name
+        for folder in ('mesh-workspace-lint-evidence','mesh-compatibility','mesh-arm-doc','arm-spherical/strict-evidence'):
+            assert pathlib.Path(folder,'environment.log').read_text().splitlines()[:2]==[os.environ['SOURCE'],os.environ['TREE']]
+        pathlib.Path('reused/reuse.json').write_text(json.dumps({'source':os.environ['SOURCE'],'tree':os.environ['TREE'],'run':'https://github.com/xu9299/quiddity-rust/actions/runs/45180104601','reused_jobs':['lint','compatibility','strict','build-tests'],'files_sha256':expected},indent=2)+chr(10))
+        PY
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: mesh-workspace-lint-evidence
+        path: mesh-workspace-lint-evidence/
+        if-no-files-found: error
+        retention-days: 30
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: mesh-compatibility
+        path: mesh-compatibility/
+        if-no-files-found: error
+        retention-days: 30
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: mesh-reused-evidence
+        path: reused/
+        if-no-files-found: error
+        retention-days: 30
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: mesh-arm-doc
+        path: mesh-arm-doc/
+        if-no-files-found: error
+        retention-days: 30
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: mesh-strict-evidence
+        path: arm-spherical/strict-evidence/
+        if-no-files-found: error
+        retention-days: 30
+  workspace-all:
+    runs-on: macos-26
+    timeout-minutes: 355
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        ref: ${{ env.SOURCE }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: pzfreo/quiddity-corpus
+        ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+        path: corpus
+        persist-credentials: false
+    - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+      with:
+        tool: nextest@0.9.146
+    - name: Restore the validated test archive
+      run: |
+        rustup toolchain install 1.99.1 --profile minimal
+        test "$(gh api repos/xu9299/quiddity-rust/actions/artifacts/14823567579 --jq .digest)" = "sha256:87ab56fd960a2ce55d063cfc758c8b7b159ca04a08d71f670a392f29d9a1620c"
+        gh run download 45180104601 -R xu9299/quiddity-rust --name mesh-test-binaries --dir ..
+    - name: Run every workspace case
+      run: |
+        mkdir -p ../evidence
+        test "$(uname -m)" = arm64
+        test "$(git rev-parse HEAD)" = "$SOURCE"
+        test "$(git rev-parse HEAD^{tree})" = "$TREE"
+        echo "$(git rev-parse HEAD) $(git -C ../corpus rev-parse HEAD)" > ../evidence/source.txt
+        { uname -a; sw_vers; rustc -vV; } > ../evidence/runner.log
+        archive=(--archive-file ../tests.tar.zst --extract-to "$PWD" --extract-overwrite --workspace-remap "$PWD")
+        cargo-nextest nextest list "${archive[@]}" --profile ci --message-format json > ../evidence/tests.json
+        cargo-nextest nextest run --no-fail-fast --profile ci "${archive[@]}" 2>&1 | tee ../evidence/workspace.log
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: mesh-workspace-all
+        path: evidence/
+        if-no-files-found: warn
+        retention-days: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+'on':
+  push:
+    branches:
+    - validation/selected-mesh-merged-pr1-single-20261123
