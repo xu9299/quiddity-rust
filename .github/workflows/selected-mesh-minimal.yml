@@ -1,0 +1,227 @@
+name: STEP selected boundary minimal regression
+on:
+  push:
+    branches: [validation/step-selected-mesh-minimal-20261123]
+permissions:
+  contents: read
+concurrency:
+  group: step-selected-mesh-minimal-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "6"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: "1"
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  SOURCE: 92ed0cbd0bc3340e466333053bcdf9e612ad2d1e
+  TREE: 627941720952633ff900dfa1c8925f0907289f25
+jobs:
+  strict:
+    runs-on: macos-26
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - name: Identify source, corpus, OS and compiler
+        run: |
+          mkdir -p ../evidence
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } | tee ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-xcode-27
+      - name: Reproduce the committed snapshots
+        run: cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-strict-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  build-tests:
+    runs-on: macos-26
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/source/target
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - run: |
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.99.1 --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source
+          shared-key: declared-nextest-macos
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - run: cargo nextest archive --workspace --release --locked --archive-file ../tests.tar.zst
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mesh-test-binaries
+          path: tests.tar.zst
+          retention-days: 3
+      - name: Select a Python installation with a linkable macOS library
+        run: |
+          if ! command -v uv >/dev/null; then brew install uv; fi
+          uv python install 3.13
+          interpreter="$(uv python find --managed-python 3.13)"
+          libdir="$(uv run --no-project --python "$interpreter" python -c 'import pathlib, sys; print(next(p.parent for p in pathlib.Path(sys.base_prefix).rglob("libpython3.13.dylib") if p.is_file()))')"
+          test -f "$libdir/libpython3.13.dylib"
+          echo "PYO3_PYTHON=$interpreter" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+      - run: |
+          mkdir -p ../arm-doc
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } > ../arm-doc/environment.log
+          cargo test --doc --workspace --release --locked 2>&1 | tee ../arm-doc/doc.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-arm-doc
+          path: arm-doc/
+          retention-days: 30
+
+  workspace-shard:
+    needs: build-tests
+    runs-on: macos-26
+    timeout-minutes: 355
+    strategy:
+      max-parallel: 4
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: mesh-test-binaries
+      - name: Test the assigned workspace cases
+        run: |
+          mkdir -p ../evidence
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          if ! command -v uv >/dev/null; then if [ "$(uname -s)" = Darwin ]; then brew install uv; else pipx install uv; export PATH="$HOME/.local/bin:$PATH"; fi; fi
+          echo "$(git rev-parse HEAD) $(git -C ../corpus rev-parse HEAD)" > ../evidence/source.txt
+          archive=(--archive-file ../tests.tar.zst --extract-to "$PWD" --extract-overwrite --workspace-remap "$PWD")
+          cargo-nextest nextest list "${archive[@]}" --profile ci --message-format json > ../evidence/tests.json
+          uv run --no-project --python 3.13 .github/shards.py ../evidence/tests.json .config/test-times.json macOS ${{ matrix.shard }} 4 > ../evidence/shard.filter
+          cargo-nextest nextest run --no-fail-fast --profile ci "${archive[@]}" -E "$(cat ../evidence/shard.filter)" 2>&1 | tee ../evidence/workspace.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-workspace-${{ matrix.shard }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - name: Identify source and compiler
+        run: |
+          mkdir -p ../evidence
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; rustc -vV; } | tee ../evidence/environment.log
+          if ! command -v uv >/dev/null; then pipx install uv; echo "$HOME/.local/bin" >> "$GITHUB_PATH"; fi
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: selected-mesh-cost-lint
+      - name: Check workflow helper tests
+        run: |
+          uv run --no-project --python 3.13 python -m unittest discover -s .github -p 'test_*.py' 2>&1 | tee ../evidence/workflow-tests.log
+          uv run --no-project --python 3.13 python -I tools/as_compare/test_score.py 2>&1 | tee ../evidence/score-tests.log
+          uv run --no-project --python 3.13 python -I tools/as_compare/test_score_mfcadpp.py 2>&1 | tee ../evidence/mfcadpp-score-tests.log
+      - name: Check formatting and workspace Clippy
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../evidence/fmt.log
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../evidence/clippy.log
+      - name: Check supported feature configurations
+        run: |
+          cargo check --workspace --all-targets --release --locked --features f3d 2>&1 | tee ../evidence/f3d.log
+          cargo test -p haecceity --release --locked --no-default-features --test pmi_write 2>&1 | tee ../evidence/pmi-write-feature-off.log
+          cargo check -p quiddity --release --locked --no-default-features --features presentation 2>&1 | tee ../evidence/presentation-feature-off.log
+          cargo test -p haecceity --release --locked --features json-import --test pmi_json_roundtrip nist_roundtrip -- --exact 2>&1 | tee ../evidence/nist-json-roundtrip.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-workspace-lint-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
