@@ -21,6 +21,12 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Changed
 
+- Mesh boundary retries rebuild only dependent faces and shared plans; interior
+  refinement waits until boundary choices settle. Spherical-cap projection is
+  attempted after a folded parameter-space triangulation, avoiding unused area
+  checks while retaining the existing projection guards. This can change the
+  triangulation and does not improve every repeated-mesh workload.
+
 - Edge fillets are reported at any radius. The absolute 0.6 mm floor is gone: boxes and prisms
   with every edge rounded at about 0.3 to 0.55 mm, which gave no fillet record at all, now
   report all twelve rounds, and small rounds elsewhere (R0.2 to 0.55 on CAD parts, root

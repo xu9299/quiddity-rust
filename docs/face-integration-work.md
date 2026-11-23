@@ -144,6 +144,43 @@ after a boundary fallback. They have not been established as unavoidable costs
 of using the selected boundary. Local retries, deferred refinement and broader
 geometry or NURBS optimizations are outside this correction.
 
+## Reusing mesh preparation after boundary changes
+
+A spatial-edge retry now invalidates the charts, shared edge plans and prepared
+faces that depend on a changed edge. If a previously tightened boundary level
+is reset, all receivers of that edge are prepared again as well. Interior
+refinement waits until these choices have settled, so a later boundary retry
+does not discard completed refinement for unaffected faces.
+
+Selected spherical caps first use their parameter chart. A folded result can
+retry the existing central projection, including its hemisphere and area
+guards. This changes some triangulations: it is not a bit-identical replacement
+for the correction's eager projection. It adds preparation state and dependency
+invalidation; peak memory has not been measured.
+
+The direct Windows comparison used the correction and this implementation in
+the same balanced three-way rounds, alongside #317. Each version read a fresh
+Part and made two mesh calls. Import, deflection setup and result checking were
+outside the timed calls. There was no warm-up or discarded round. The environment
+was i7-11800H, Rust 1.99.1/MSVC, release with x86-64-v3, one pinned CPU and High
+process priority. The three primary inputs had 18 rounds each; five additional
+inputs had six each. Ratios below are paired geometric means, not quotients of
+the median times.
+
+| Input | First call / correction | Second call / correction |
+| --- | ---: | ---: |
+| cgb245 | 0.918 | 0.990 |
+| string_post | 1.000 | 1.023 |
+| cgb243 | 0.659 | 0.479 |
+| cgb202 (supplementary) | 0.570 | 1.099 |
+
+For cgb243, the paired 95% bootstrap intervals were [0.651995, 0.667208]
+and [0.473097, 0.484717]. Its first and second calls remain 5.147 and 2.165
+times #317 respectively. The cgb202 repeated-call regression was also observed
+in its smaller sample: [1.078057, 1.122161]. String_post had no confirmed gain.
+These results concern the three flow changes together; they do not attribute
+the gain or regression to an individual change or establish a universal speedup.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
