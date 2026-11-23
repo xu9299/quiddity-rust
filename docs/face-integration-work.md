@@ -165,6 +165,18 @@ from the sphere centre. Refinement places points back on the same sphere.
 The mesh still reports the surface's usual parameters and original shared
 boundary positions.
 
+## Rebuilding affected mesh preparation
+
+A boundary retry invalidates only the faces and shared-edge plans that depend
+on that boundary. Interior refinement waits until the shared boundary plans
+settle, so a refused selected chart does not discard completed refinement of
+every face. A spherical projection is attempted only after the ordinary
+parameter chart folds, with the same area and orientation guards.
+
+The dependency state belongs to one meshing call. Retrying a boundary can still
+change the triangulation and its refinement cost. This does not change the
+general geometry, NURBS evaluators, integration rules or recognition policy.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
