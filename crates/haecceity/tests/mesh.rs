@@ -142,6 +142,110 @@ fn unpaired_edges(faces: &[usize], meshes: &[Result<FaceMesh, MeshRefusal>]) -> 
         .count()
 }
 
+#[test]
+fn square_mesh_distinguishes_a_selected_trim_from_the_spatial_fallback() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/master-trim-square.step");
+    let selected = read_step_file(&path).unwrap();
+    let spatial = common::with_spatial_edges(&path, &[118, 130, 142, 154].into_iter().collect());
+    let invalid = std::fs::read_to_string(path)
+        .unwrap()
+        .replace(".PCURVE_S1.", ".PCURVE_S2.");
+    let fallback = haecceity::read_step(invalid.as_bytes()).unwrap();
+
+    let area = selected.triangulate(0, 1e-5, ANGULAR).unwrap().area();
+    assert!((area - 0.999_866_666_7).abs() < 1e-5, "{area}");
+    let spatial_mesh = spatial.triangulate(0, 1e-5, ANGULAR).unwrap();
+    assert!((spatial_mesh.area() - 1.0).abs() < 1e-12);
+    assert_eq!(
+        fallback.triangulate(0, 1e-5, ANGULAR).unwrap(),
+        spatial_mesh
+    );
+}
+
+#[test]
+fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("cadgenbench_inputs/cgb243.step.gz")).unwrap();
+    let face = 543;
+    assert_eq!(part.face_source(face).unwrap().entity, 60_132);
+    let reference = 0.481_554_764_2;
+    let exact = part.face_moments(face).unwrap().area;
+    assert!((exact - reference).abs() < 1e-9);
+    let deflection = deflection(&part);
+    let single = part.triangulate(face, deflection, ANGULAR).unwrap();
+    let all = part.mesh(deflection, ANGULAR);
+    for mesh in [&single, all[face].as_ref().unwrap()] {
+        let area = mesh.area();
+        eprintln!(
+            "#60132: {} triangles, {area:.12} mm², {:.6}% difference",
+            mesh.triangles.len(),
+            100.0 * (area / exact - 1.0).abs()
+        );
+        assert!((area / exact - 1.0).abs() <= 0.01);
+    }
+}
+
+#[test]
+fn a_selected_knot_near_a_step_vertex_has_one_shared_mesh_endpoint() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("cadgenbench_inputs/cgb245.step")).unwrap();
+    // A selected spline sample near the end of STEP edge #28519 must not
+    // introduce a second vertex at the cylinder and plane's shared endpoint.
+    let faces = &part.solids[0].faces;
+    assert!(closed_shell(&part, faces));
+    let meshes = part.mesh(deflection(&part), ANGULAR);
+    assert_eq!(unpaired_edges(faces, &meshes), 0);
+}
+
+#[test]
+fn a_selected_curve_crossing_a_closed_spline_chart_keeps_the_shell_watertight() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("gramel/string_post.step")).unwrap();
+    // Edge #634 selects the cylinder pcurve. Its samples also bound the
+    // adjoining closed spline #1020, whose inverse crosses the chart seam.
+    let edge = (0..part.edges.len())
+        .find(|&e| part.edge_source(e).is_some_and(|s| s.entity == 634))
+        .unwrap();
+    let spline = (0..part.faces.len())
+        .find(|&f| part.face_source(f).is_some_and(|s| s.entity == 1668))
+        .unwrap();
+    let incident = &part.edge_faces()[edge];
+    assert_eq!(incident.len(), 2);
+    assert!(incident.contains(&spline));
+    let faces = &part.solids[0].faces;
+    assert!(closed_shell(&part, faces));
+    let meshes = part.mesh(deflection(&part), ANGULAR);
+    assert_eq!(unpaired_edges(faces, &meshes), 0);
+    // Boundary IDs alone could miss a crack if each face placed its own point.
+    let mut shared = BTreeMap::new();
+    for &face in faces {
+        let mesh = meshes[face].as_ref().unwrap();
+        if incident.contains(&face) {
+            assert!(
+                mesh.boundary.iter().any(
+                    |key| matches!(key, Some(BoundaryPoint::Edge { edge: e, .. }) if *e == edge)
+                )
+            );
+        }
+        for (&key, &point) in mesh.boundary.iter().zip(&mesh.points) {
+            if let Some(key) = key {
+                let point = point.map(f64::to_bits);
+                assert_eq!(*shared.entry(key).or_insert(point), point);
+            }
+        }
+    }
+}
+
 fn mean(points: &[V3]) -> V3 {
     let sum = points.iter().fold([0.0; 3], |s, p| geom::add(s, *p));
     geom::scale(sum, 1.0 / points.len() as f64)

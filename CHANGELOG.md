@@ -39,6 +39,15 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Face triangulation follows geometrically qualified STEP-selected parametric
+  edge curves, with one spatial sampling plan shared by incident faces.
+  Compatible spherical caps use a central projection to preserve triangle
+  orientation along narrow selected trims. Ordinary boundary selection does not
+  require area or flux integration; the spherical-cap compatibility check still
+  consults that face's area. Unusable selections or selected loops that still
+  refuse triangulation use shared spatial edges instead. Preparing selected
+  boundaries can increase both first and repeated mesh-call times.
+
 - Face area, moments and volume flux now use the finite boundary selected by
   STEP's `PCURVE_S1` or `PCURVE_S2` when it can be integrated, including when
   projecting the 3D edge would also give an area. A `CURVE_3D` edge still uses

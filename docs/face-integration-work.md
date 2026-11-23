@@ -77,6 +77,73 @@ finite carrier domains, intersection and integration checks govern acceptance.
 If the assembled loop fails, measurement retries the whole face using the 3D
 edges. Mass and moments share the accepted choice across query orders.
 
+## Following the selected boundary in the mesh
+
+The mesher samples each topological edge once for all its incident faces. It
+prefers a geometrically qualified selected trim on the carrier face,
+then checks the other incident faces for that same selection. Every receiving
+face must be able to resolve the selected trim on its own surface. An edge
+without compatible receiving trims or a sampleable selection uses
+its existing spatial samples. The faces map those common points to their own
+parameter charts. On a closed spline, an inverse stopped at the seam also
+tries the other end of the chart.
+If a selected loop still refuses triangulation after the usual thinning
+retries, the mesher retries with spatial edges for that loop's face. Every
+incident face uses the same replacement samples on those edges.
+This is one compatibility retry, not proof that the selected geometry was
+invalid: a qualified selected loop may also exceed the mesher's capabilities.
+Its replacement can differ from the boundary used by the face integral. The
+mesher does not recompute or change the accepted mass boundary. If the retry
+also fails, the existing `MeshRefusal` is returned.
+
+Ordinary boundary selection reads the existing geometric boundary cache without
+requesting a face integral or changing the accepted mass-boundary decision.
+Each mesh call constructs its own shared edge plans and parameter charts. A
+boundary fallback rebuilds all charts and plans; this version deliberately
+keeps the original retry and interior-refinement order. Further work reuse and
+specialised evaluators are separate performance changes.
+
+The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
+run of samples next to both the STEP vertex and the selected curve's true end
+does not add a second boundary key there.
+
+A selected spherical cap can also be triangulated in a central projection.
+All its boundary points must lie well inside one hemisphere and its measured
+area must fit in a hemisphere. In that chart, the signed planar area of a
+triangle has the same sign as the determinant of the three spatial directions
+from the sphere centre. Refinement places points back on the same sphere.
+The mesh still reports the surface's usual parameters and original shared
+boundary positions.
+
+### Measured cost of the limited mesh correction
+
+A Windows i7-11800H comparison used Rust 1.99.1, release builds with
+`-Ctarget-cpu=x86-64-v3`, and the same locked dependencies and corpus inputs.
+The baseline was #317 at `b9706a0e`. The measured implementation was
+`f8bb8bff`; this correction has the same Rust source, tests and build inputs.
+Each pair loaded a fresh `Part` for each version, alternated the version order,
+and timed its first and second `mesh` calls. Import, bounds and deflection setup
+were outside mesh timing. The process used one fixed logical CPU; there were
+no warmup or discarded pairs. These are mesh-call measurements, not end-to-end
+application timings.
+
+| Input | Pairs | First call, baseline → correction (ms) | Second call, baseline → correction (ms) |
+| --- | ---: | ---: | ---: |
+| `cgb245` | 31 | 40.483 → 111.650 | 39.965 → 55.605 |
+| `gramel/string_post.step` | 31 | 20.106 → 42.216 | 19.721 → 24.859 |
+| `cgb243` | 31 | 597.589 → 4668.400 | 591.022 → 2644.036 |
+
+Times are medians. The geometric means of paired correction/baseline ratios
+for first calls were 2.746, 2.124 and 7.895, respectively; second-call ratios
+were 1.381, 1.259 and 4.507. Five further affected inputs had nine pairs each;
+their first-call ratio estimates ranged from 1.117 to 2.879. This sample does
+not establish a corpus-wide cost or a worst-case bound.
+
+These regressions include implementation overhead, such as rebuilding charts
+after a boundary fallback. They have not been established as unavoidable costs
+of using the selected boundary. Local retries, deferred refinement and broader
+geometry or NURBS optimizations are outside this correction.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
