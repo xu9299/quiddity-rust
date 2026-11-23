@@ -1,0 +1,55 @@
+name: Selected mesh retained regression
+on:
+  push:
+    branches: [validation/selected-mesh-evaluation-20261123]
+permissions:
+  contents: read
+concurrency:
+  group: selected-mesh-evaluation-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: "6"
+  RUST_TEST_THREADS: "1"
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  SOURCE: af895a732102da9ffe03587c98274b8f9d5a8162
+  TREE: bed280c053b7a562bbed3a19e7d32fc9a68b86c0
+jobs:
+  retained-regression:
+    runs-on: macos-26
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Identify the pinned source and ARM toolchain
+        run: |
+          mkdir -p ../evidence
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt
+          { git rev-parse HEAD HEAD^{tree}; uname -a; sw_vers; rustc -vV; } > ../evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source
+          shared-key: declared-nextest-macos
+      - name: Check formatting and the retained integration-decoupling test
+        run: |
+          cargo fmt --all --check 2>&1 | tee ../evidence/format.log
+          cargo test --release --locked -p haecceity --lib mesh::tests::selected_mesh_boundary_does_not_require_mass_integration -- --exact --nocapture 2>&1 | tee ../evidence/unit.log
+          grep -F 'test result: ok. 1 passed; 0 failed;' ../evidence/unit.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-retained-regression
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
