@@ -127,9 +127,43 @@ Where the moment group cannot be integrated against world coordinates (a small s
 trim far from the origin), it is integrated once more against the B-spline net
 translated to the face's moment origin, over the same boundary and error test.
 
-The mesher still triangulates the projected 3D edges; until it follows the selected
-boundary a face whose two boundaries differ meshes the other region (cgb243 face 543,
-13%; `tests/mesh.rs` lists it with an independent reference).
+## Following the selected boundary in the mesh
+
+The mesher samples each topological edge once for all its incident faces. It
+prefers a geometrically qualified selected trim on the carrier face,
+then checks the other incident faces for that same selection. Every receiving
+face must be able to resolve the selected trim on its own surface. An edge
+without compatible receiving trims or a sampleable selection uses
+its existing spatial samples. The faces map those common points to their own
+parameter charts. On a closed spline, an inverse stopped at the seam also
+tries the other end of the chart.
+If a selected loop still refuses triangulation after the usual thinning
+retries, the mesher retries with spatial edges for that loop's face. Every
+incident face uses the same replacement samples on those edges.
+This is one compatibility retry, not proof that the selected geometry was
+invalid: a qualified selected loop may also exceed the mesher's capabilities.
+Its replacement can differ from the boundary used by the face integral. The
+mesher does not recompute or change the accepted mass boundary. If the retry
+also fails, the existing `MeshRefusal` is returned.
+
+Ordinary boundary selection reads the existing geometric boundary cache without
+requesting a face integral or changing the accepted mass-boundary decision.
+Each mesh call constructs its own shared edge plans and parameter charts. A
+boundary fallback rebuilds all charts and plans; this version deliberately
+keeps the original retry and interior-refinement order. Further work reuse and
+specialised evaluators are separate performance changes.
+
+The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
+run of samples next to both the STEP vertex and the selected curve's true end
+does not add a second boundary key there.
+
+A selected spherical cap can also be triangulated in a central projection.
+All its boundary points must lie well inside one hemisphere and its measured
+area must fit in a hemisphere. In that chart, the signed planar area of a
+triangle has the same sign as the determinant of the three spatial directions
+from the sphere centre. Refinement places points back on the same sphere.
+The mesh still reports the surface's usual parameters and original shared
+boundary positions.
 
 ## The native spline integration rule introduced in #281
 
