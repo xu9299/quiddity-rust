@@ -5,9 +5,6 @@
 
 use super::geom::{self, COORD_FLOOR, V3};
 
-mod curve_seed;
-pub(crate) use curve_seed::CurveInversionPool;
-
 fn find_span(knots: &[f64], degree: usize, n: usize, t: f64) -> usize {
     // n = number of control points; valid spans are degree..n-1: the last whose knot is <= t.
     degree + knots[degree + 1..n.max(degree + 1)].partition_point(|&k| k <= t)
@@ -395,15 +392,6 @@ impl NurbsCurve {
         let last = t(512);
         table.push((last, self.value(last)));
         table
-    }
-
-    /// Prepare the same table with a part-local coefficient pool when requested
-    /// by a selected trim. Ordinary public inversions keep their existing path.
-    pub(crate) fn prepare_inversion(&self, pool: &CurveInversionPool, units: [u64; 2]) {
-        self.table.get_or_init(|| {
-            pool.samples(self, units)
-                .unwrap_or_else(|| self.inversion_samples())
-        });
     }
 
     /// The parameter of the curve point nearest *p*: the closest of a dense sampling, refined
@@ -1458,7 +1446,6 @@ mod tests {
     #[test]
     fn curve_seed_table_preserves_scalar_samples() {
         let mut count = 0;
-        let pool = CurveInversionPool::default();
         for degree in [0, 1, 2, 3, 4, 7, 8, 25] {
             for scale in [1e-301, 1e-300, 1e-299, 1e-100, 1., 1e100, 1e300] {
                 for offset in [0., -0.3 * scale] {
@@ -1489,9 +1476,6 @@ mod tests {
                             };
                             let (lo, hi) = curve.domain();
                             let actual = curve.inversion_samples();
-                            let first = curve.clone();
-                            first.prepare_inversion(&pool, [1_f64.to_bits(); 2]);
-                            curve.prepare_inversion(&pool, [1_f64.to_bits(); 2]);
                             assert_eq!(actual.len(), 513);
                             for (i, &(t, p)) in actual.iter().enumerate() {
                                 let expected_t = lo + (hi - lo) * i as f64 / 512_f64;
@@ -1501,11 +1485,6 @@ mod tests {
                                     curve.value(expected_t).map(f64::to_bits),
                                     "degree {degree}, scale {scale}, weight {special}, index {i}"
                                 );
-                                for pooled in [&first, &curve] {
-                                    let (pooled_t, pooled_p) = pooled.table.get().unwrap()[i];
-                                    assert_eq!(pooled_t.to_bits(), t.to_bits());
-                                    assert_eq!(pooled_p.map(f64::to_bits), p.map(f64::to_bits));
-                                }
                             }
                             count += 1;
                         }

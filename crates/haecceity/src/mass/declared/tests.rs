@@ -405,7 +405,6 @@ fn mesh_keeps_curvature_between_a_cylinders_matching_endpoints() {
             }),
             axes: [Axis::ID; 2],
             transfer: None,
-            inversion_pool: None,
         };
         let spatial = edge_interval(
             &edge.curve,
@@ -474,7 +473,6 @@ fn mesh_rejects_a_foreign_circle_touching_the_receiver_only_at_its_ends() {
             face_spans: (f64::INFINITY, f64::INFINITY),
             face_collapsed: (None, None),
         })),
-        inversion_pool: None,
     };
     let witness = ParamCurve {
         source: Arc::new(Curve::Line {
@@ -483,7 +481,6 @@ fn mesh_rejects_a_foreign_circle_touching_the_receiver_only_at_its_ends() {
         }),
         axes: [Axis::ID; 2],
         transfer: None,
-        inversion_pool: None,
     };
     let spatial = edge_interval(
         &edge.curve,
@@ -607,7 +604,6 @@ fn analytic_midpoint_bounds_preserve_adaptive_samples() {
                                         face_collapsed: (None, None),
                                     })
                                 }),
-                                inversion_pool: None,
                             };
                             assert!(EdgeTrim::midpoint_bound(&curve, surface, interval).is_some());
                             if EdgeTrim::affine_spatial_size(&curve, surface, interval).is_some() {
@@ -694,7 +690,6 @@ fn analytic_midpoint_bounds_decline_unresolved_or_unbounded_inputs() {
         }),
         axes: [Axis::ID; 2],
         transfer: None,
-        inversion_pool: None,
     };
     for interval in [(f64::NAN, 1.), (0., f64::INFINITY), (0., 1e200)] {
         assert!(EdgeTrim::midpoint_bound(&curve, &surface, interval).is_none());

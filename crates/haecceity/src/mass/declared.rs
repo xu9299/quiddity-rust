@@ -3,8 +3,7 @@
 use super::*;
 use crate::brep::{MeasurementPcurve, TrimCarrier};
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
-mod finite;
+use std::sync::Arc;
 mod intersections;
 pub(crate) use intersections::TrimCrossings;
 mod parameters;
@@ -15,7 +14,6 @@ pub(crate) struct ParamCurve {
     source: Arc<Curve>,
     axes: [Axis; 2],
     transfer: Option<Box<Transfer>>,
-    inversion_pool: Option<(Arc<crate::nurbs::CurveInversionPool>, [u64; 2])>,
 }
 
 /// A selected pcurve in one pair of parameter units. Incident faces can
@@ -32,7 +30,6 @@ pub(crate) struct SelectedCurve {
 #[derive(Debug, Default)]
 pub(crate) struct SelectedCurvePool(
     std::sync::Mutex<std::collections::HashMap<Vec<u64>, Arc<Curve>>>,
-    OnceLock<Arc<crate::nurbs::CurveInversionPool>>,
 );
 
 impl SelectedCurvePool {
@@ -197,9 +194,6 @@ impl ParamCurve {
         } else {
             q
         };
-        if let (Curve::Nurbs(curve), Some((pool, units))) = (&*self.source, &self.inversion_pool) {
-            curve.prepare_inversion(pool, *units);
-        }
         self.source
             .parameter([self.axes[0].inverse(q[0]), self.axes[1].inverse(q[1]), 0.])
     }
@@ -725,19 +719,10 @@ impl Part {
             } else {
                 source()
             }?;
-            let inversion_pool =
-                (mesh && edge.is_some() && matches!(&*source, Curve::Nurbs(c) if c.degree() <= 3))
-                    .then(|| {
-                        (
-                            self.selected_curve_pool.1.get_or_init(Arc::default).clone(),
-                            [scales.0.to_bits(), scales.1.to_bits()],
-                        )
-                    });
             Some(ParamCurve {
                 source,
                 axes,
                 transfer: None,
-                inversion_pool,
             })
         };
         let tolerance = self.file_uncertainty().unwrap_or(0.).max(0.) + geom::COORD_FLOOR;
@@ -1040,9 +1025,6 @@ fn resolve(
         _ => Vec::new(),
     };
     let validation_spans = cuts(a, b, 1, &knots)?;
-    if mesh && finite::native(&trim.curve, surface, interval) {
-        return Some(trim);
-    }
     let mut hint = if mesh { hints[0] } else { None };
     let inverse = super::SurfaceInversion::new(surface, mesh);
     let surface_value = super::SurfaceValue::new(surface, mesh);
