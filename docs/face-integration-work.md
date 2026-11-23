@@ -214,6 +214,20 @@ with a separate floating-point certificate. This reduces synchronization and
 specialized proof machinery while retaining the main preparation reuse.
 Performance and memory comparisons are reported with the contribution.
 
+## Reusing mesh evaluation and triangulation work
+
+Freeform node evaluation reuses basis operands while retaining separate point
+and partial-derivative accumulation orders. Native witnesses and conservative
+plane/parameter-strip bounds avoid repeated projection when sufficient; all
+unresolved cases retain the existing checks. Shared plans use ordered storage,
+and fixed planar boundary points reuse their common normal.
+
+Analytic surfaces use the existing geometry evaluators. Every nontrivial CDT
+constraint uses the same conflict-checking insertion path. There is no second
+analytic evaluator or adjacent-edge insertion shortcut to keep synchronized.
+Deflection, winding, endpoint and finite-domain guards remain unchanged.
+Performance and memory comparisons are reported with the contribution.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
