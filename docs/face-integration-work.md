@@ -192,6 +192,20 @@ constructing another loop solely for qualification. Per-edge endpoint,
 finite-domain and receiving-surface checks remain. Mesh preparation is
 independent of selective retry rebuilding and deferred refinement.
 
+## Reusing mesh evaluation and triangulation work
+
+Freeform node evaluation reuses basis operands while preserving the separate
+point and partial-derivative accumulation orders. Native witnesses and
+conservative plane/parameter-strip bounds avoid repeated projection when the
+bound is sufficient; unresolved cases retain the existing checks. Shared-edge
+plans use ordered storage, fixed planar points reuse their common normal, and
+triangulation reuses vertex lookups.
+
+Analytic surfaces use the existing geometry evaluators. Every nontrivial CDT
+constraint uses the same conflict-checking insertion path. There is no second
+analytic evaluator or adjacent-edge insertion shortcut. Deflection, winding,
+endpoint and finite-domain guards are unchanged.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
