@@ -1,0 +1,96 @@
+{
+  "sources": {
+    "base": {
+      "source": "6e56fd775b43c748430a2bf9dc3f7b561a081822",
+      "tree": "5fc0a367fa21068d1d693c3678e24de6b6e9fcfd"
+    },
+    "pr1": {
+      "source": "20eae01e61adcf093e83bfa89a0ed225ffffe3b8",
+      "tree": "e645e04502203a990e48e08c03173c3e200b70cc"
+    },
+    "pr2": {
+      "source": "f0aa28a5798254b6017f5bd86444cee8c1b3a3ba",
+      "tree": "2004f694250feed57db79aa65ee97f0671362cb8"
+    },
+    "pr3": {
+      "source": "4c5acc741efc47c76b49d92f064dcf13f780f70a",
+      "tree": "8cb56f528fb7513f65d0feed5c3fe9cd70d677cc"
+    },
+    "pr4": {
+      "source": "dc67304a2ce510dd0cccf7bdd3923555fd9874d9",
+      "tree": "c18429d27619a24d78bbe97283ccb8baf00e2da3"
+    }
+  },
+  "base": "6e56fd775b43c748430a2bf9dc3f7b561a081822",
+  "corpus_commit": "3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f",
+  "cases": [
+    [
+      "cgb245",
+      "cadgenbench_inputs/cgb245.step"
+    ],
+    [
+      "string",
+      "gramel/string_post.step"
+    ],
+    [
+      "cgb243",
+      "cadgenbench_inputs/cgb243.step.gz"
+    ],
+    [
+      "cgb202",
+      "cadgenbench_inputs/cgb202.step.gz"
+    ],
+    [
+      "cgb203",
+      "cadgenbench_inputs/cgb203.step"
+    ],
+    [
+      "cgb207",
+      "cadgenbench_inputs/cgb207.step"
+    ],
+    [
+      "cgb217",
+      "cadgenbench_inputs/cgb217.step.gz"
+    ],
+    [
+      "cgb242",
+      "cadgenbench_inputs/cgb242.step.gz"
+    ]
+  ],
+  "compressed_input_sha256": {
+    "cgb245": "034d4dec7b699002d09eb45de66bd5e6971a91304589e67b105df0cbb7e40084",
+    "string": "7b7f1a4bf407ef7599d58e126e43e95f50d165212ed21bf6b2fc716d14bfdf85",
+    "cgb243": "347489379f940cf5157d5252115b08cf1f6d0038b842c490f7ac4d74799dcd5e",
+    "cgb202": "b933428be9151d702b564d5520727a32332be63e4ba66cf354eb2780f6377f7f",
+    "cgb203": "2a029868cd4517774379695ec5c5928a98a7d10ff999520c0dbce6c3cf79935e",
+    "cgb207": "0b2c689b1ec09c362c334a9b6c9714a5e4d658295f7f16078f5588472721dd26",
+    "cgb217": "5156ed29690080bb9a9aa59ac1b727b3871b83e9af81178a119841d10b29ccc0",
+    "cgb242": "74c48cccaa9fbbb14c4708c7a7290da109da29205cb5c6853faf63f364ff3144"
+  },
+  "controller_sha256": "7ca5afdcad297301aa1ffdc938dd3a3a027226d8c93edf28c7ff9de9b2d22358",
+  "probe_sha256": "942c5277a0bc6f91350319f0858d8d0d92d872af5b71ecb3e35268b4911ed210",
+  "measurement_tool": "/usr/bin/time -l",
+  "rounds_per_case_and_call_count": 10,
+  "call_counts": [
+    1,
+    10
+  ],
+  "processes": 800,
+  "mesh_calls": 4400,
+  "order": "Five Williams rotations and their reversals; one fresh process per stage/input/call-count/round.",
+  "scope": "Whole process: startup, STEP read/decompression, bounds and deflection setup, one or ten mesh calls, count checks, destruction and JSON output.",
+  "mesh_settings": "part.mesh(0.001 * finite_positive_bounds_diagonal_or_1, 0.3)",
+  "lifetimes": "One Part per process; release every mesh before next call; drop Part at end; one 64 MiB-stack worker thread.",
+  "metrics": [
+    "instructions_retired",
+    "maximum_resident_set_size",
+    "peak_memory_footprint",
+    "real_seconds",
+    "user_seconds",
+    "system_seconds"
+  ],
+  "hardware_rule": "Missing or zero instructions are unavailable, never a performance result. Peak resident size and footprint are separate byte counters.",
+  "warmup_or_excluded_rounds": false,
+  "parallel_benchmarks": false,
+  "modified_library_source": false
+}
