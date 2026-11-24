@@ -148,10 +148,9 @@ also fails, the existing `MeshRefusal` is returned.
 
 Ordinary boundary selection reads the existing geometric boundary cache without
 requesting a face integral or changing the accepted mass-boundary decision.
-Each mesh call constructs its own shared edge plans and parameter charts. A
-boundary fallback rebuilds all charts and plans; this version deliberately
-keeps the original retry and interior-refinement order. Further work reuse and
-specialised evaluators are separate performance changes.
+Each mesh call constructs its own shared edge plans and parameter charts.
+Boundary retries rebuild only affected charts and plans; interior refinement
+waits until boundary choices settle.
 
 The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
 run of samples next to both the STEP vertex and the selected curve's true end
@@ -164,6 +163,18 @@ triangle has the same sign as the determinant of the three spatial directions
 from the sphere centre. Refinement places points back on the same sphere.
 The mesh still reports the surface's usual parameters and original shared
 boundary positions.
+
+## Rebuilding affected mesh preparation
+
+A boundary retry invalidates only the faces and shared-edge plans that depend
+on that boundary. Interior refinement waits until the shared boundary plans
+settle, so a refused selected chart does not discard completed refinement of
+every face. A spherical projection is attempted only after the ordinary
+parameter chart folds, with the same area and orientation guards.
+
+The dependency state belongs to one meshing call. Retrying a boundary can still
+change the triangulation and its refinement cost. This does not change the
+general geometry, NURBS evaluators, integration rules or recognition policy.
 
 ## The native spline integration rule introduced in #281
 
@@ -319,3 +330,115 @@ Eight-input memory measurements used five fresh processes per version/input and 
 | cgb242 | 119.1289 / 179.7969 | 122.1211 / 181.6172 | 0.0000 / 43.0728 |
 
 Process peaks cover import and meshing. Private commit is not resident physical memory; working set is reported separately. Rust counts measure requested allocation bytes. Retained allocation is the increase over the post-import, post-deflection-setup state, with the mesh dropped and the Part alive. Every process releases each mesh before the next call and drops the Part at the end. Retained Rust bytes did not grow over ten calls. Valid triangulations need not be bit-identical between stages; geometric regression tests retain their reference bands and fallbacks.
+
+### Resource comparison: Rebuild only affected mesh preparation after boundary fallback
+
+Windows/i7-11800H, Rust 1.99.1/MSVC release, x86-64-v3, one pinned CPU. A single balanced five-version comparison used 30 paired rounds for cgb245, string_post and cgb243, and ten for each other input. Every version used a fresh Part and two mesh calls; import and deflection setup were outside mesh timing, with no warm-up or discarded rounds. Ratios below 1 are faster; intervals are paired 95% bootstrap intervals (5,000 samples, seed 317). The comparison is against the selected-boundary mesh fix.
+
+| Input | First-call ratio [95% CI] | Repeated-call ratio [95% CI] |
+| --- | --- | --- |
+| cgb245 | 0.924 [0.906, 0.942] | 0.999 [0.976, 1.021] |
+| string_post | 1.002 [0.973, 1.034] | 1.001 [0.973, 1.031] |
+| cgb243 | 0.662 [0.659, 0.666] | 0.485 [0.480, 0.490] |
+| cgb202 | 0.589 [0.576, 0.608] | 1.097 [1.083, 1.112] |
+| cgb203 | 0.991 [0.976, 1.005] | 1.009 [0.986, 1.034] |
+| cgb207 | 0.941 [0.922, 0.963] | 1.015 [0.990, 1.042] |
+| cgb217 | 0.972 [0.950, 0.994] | 0.998 [0.963, 1.035] |
+| cgb242 | 0.959 [0.947, 0.973] | 0.995 [0.977, 1.016] |
+
+| Input | Import ratio [95% CI] | Import plus first mesh ratio [95% CI] |
+| --- | --- | --- |
+| cgb245 | 0.991 [0.975, 1.006] | 0.958 [0.944, 0.972] |
+| string_post | 1.011 [0.988, 1.036] | 1.005 [0.982, 1.031] |
+| cgb243 | 0.992 [0.973, 1.011] | 0.685 [0.682, 0.689] |
+| cgb202 | 0.997 [0.976, 1.015] | 0.679 [0.669, 0.693] |
+| cgb203 | 0.985 [0.957, 1.014] | 0.989 [0.978, 1.002] |
+| cgb207 | 0.990 [0.977, 1.002] | 0.951 [0.935, 0.970] |
+| cgb217 | 0.965 [0.923, 1.008] | 0.969 [0.943, 0.996] |
+| cgb242 | 0.993 [0.960, 1.028] | 0.967 [0.951, 0.983] |
+
+Import plus first mesh excludes bounds/deflection setup, validation and teardown. It checks for work moved into preparation without claiming end-to-end application latency.
+
+Eight-input memory measurements used five fresh processes per version/input and ten calls per process. Median peak private commit changed by -1.6% to +8.3%; cgb243 changed from 221.57 to 218.07 MiB. The largest confirmed mesh-time regression was cgb202 (repeated call): 1.097 [1.083, 1.112]. Import plus first mesh is reported separately in the source documentation, including intervals crossing 1. These measurements are not application timings or corpus-wide resource bounds.
+
+| Input | Peak private commit: preceding / current (MiB) | Peak working set: preceding / current (MiB) | Retained Rust increase: preceding / current (MiB) |
+| --- | --- | --- | --- |
+| cgb245 | 60.6133 / 62.5742 | 64.6094 / 66.9844 | 17.4228 / 17.3707 |
+| string_post | 12.8711 / 13.9414 | 18.9609 / 19.8984 | 2.2241 / 2.2241 |
+| cgb243 | 221.5703 / 218.0664 | 219.9688 / 214.9180 | 48.6644 / 47.5904 |
+| cgb202 | 427.1523 / 449.5352 | 421.0781 / 441.7812 | 80.3429 / 73.6665 |
+| cgb203 | 80.7773 / 83.6055 | 84.7109 / 88.3320 | 5.3766 / 5.3766 |
+| cgb207 | 67.7812 / 71.1250 | 72.4453 / 75.7461 | 12.9470 / 12.8347 |
+| cgb217 | 103.0117 / 108.1914 | 105.4336 / 110.4727 | 20.9102 / 20.9102 |
+| cgb242 | 179.7969 / 188.9805 | 181.6172 / 190.0469 | 43.0728 / 42.8993 |
+
+Process peaks cover import and meshing. Private commit is not resident physical memory; working set is reported separately. Rust counts measure requested allocation bytes. Retained allocation is the increase over the post-import, post-deflection-setup state, with the mesh dropped and the Part alive. Every process releases each mesh before the next call and drops the Part at the end. Retained Rust bytes did not grow over ten calls. Valid triangulations need not be bit-identical between stages; geometric regression tests retain their reference bands and fallbacks.
+
+
+
+## ARM selected-mesh process measurements
+
+### ARM process resources: pr2
+
+On one standard ARM macOS runner (Rust 1.99.1, release, default features), I measured eight inputs and five fixed versions with `/usr/bin/time -l`: ten balanced rounds per input/call count, 800 fresh processes and 4,400 mesh calls. Each process imports one Part and makes one or ten mesh calls, releasing each mesh before the next call. The counters include startup, import/decompression, bounds setup, meshing, count checks and teardown. Ratios are candidate/comparator; peak resident sizes are medians in MiB.
+
+| Input | Calls | Process time / 6e56fd77 [95% CI] | Process time / preceding [95% CI] | Peak RSS: 6e56fd77 / preceding / current (MiB) |
+| --- | --- | --- | --- | --- |
+| cgb245 | 1 | 1.396 [1.297, 1.525] | 0.995 [0.937, 1.051] | 41.48 / 68.34 / 70.78 |
+| cgb245 | 10 | 1.370 [1.255, 1.549] | 0.986 [0.871, 1.119] | 41.80 / 69.09 / 71.21 |
+| string_post | 1 | 1.338 [1.207, 1.457] | 0.948 [0.875, 1.010] | 14.80 / 18.25 / 19.06 |
+| string_post | 10 | 1.314 [1.211, 1.447] | 1.049 [0.970, 1.139] | 15.05 / 18.70 / 19.35 |
+| cgb243 | 1 | 3.036 [2.929, 3.149] | 0.675 [0.643, 0.703] | 154.05 / 230.62 / 235.91 |
+| cgb243 | 10 | 2.305 [2.243, 2.373] | 0.511 [0.498, 0.522] | 154.16 / 232.03 / 235.98 |
+| cgb202 | 1 | 1.276 [1.169, 1.386] | 0.694 [0.660, 0.727] | 347.33 / 452.10 / 474.85 |
+| cgb202 | 10 | 1.157 [1.082, 1.228] | 0.944 [0.917, 0.971] | 348.51 / 453.20 / 478.45 |
+| cgb203 | 1 | 1.062 [1.009, 1.121] | 1.006 [0.973, 1.040] | 87.36 / 93.25 / 97.38 |
+| cgb203 | 10 | 1.073 [1.038, 1.112] | 1.010 [0.940, 1.077] | 89.60 / 94.75 / 97.85 |
+| cgb207 | 1 | 1.520 [1.438, 1.594] | 0.999 [0.971, 1.027] | 58.22 / 76.34 / 80.51 |
+| cgb207 | 10 | 1.313 [1.214, 1.458] | 1.062 [0.971, 1.209] | 58.70 / 76.99 / 80.70 |
+| cgb217 | 1 | 1.270 [1.242, 1.301] | 0.963 [0.931, 0.999] | 81.86 / 112.70 / 118.83 |
+| cgb217 | 10 | 1.030 [0.976, 1.078] | 0.968 [0.920, 1.014] | 82.21 / 114.21 / 120.58 |
+| cgb242 | 1 | 1.423 [1.354, 1.483] | 0.999 [0.942, 1.044] | 146.64 / 204.51 / 215.68 |
+| cgb242 | 10 | 1.088 [1.007, 1.163] | 0.953 [0.911, 0.984] | 146.48 / 204.45 / 215.42 |
+
+Across eight inputs, 3 one-call and 3 ten-call workloads had process-time intervals wholly below 1. Median peak RSS changed by +1.7% to +5.6% (largest increase: 25.25 MiB). Supplemental mesh-only timings also showed later-call regressions on string_post (+7.1%) and cgb202 (+4.9%).
+
+`time` prints elapsed seconds to 0.01 s; the smallest one-call workloads are about 0.07–0.10 s. Intervals are pointwise paired bootstrap intervals.
+
+The runner identifies itself as an Apple M1 virtual machine. A native 60-million-iteration probe confirmed that `/usr/bin/time -l` exposes neither retired instructions nor cycles there. These are measured time and peak-memory results, not an instruction-count comparison. The [fixed-source harness](https://github.com/xu9299/quiddity-rust/tree/ffaf56e01889d64333aef1da74933fc75ec29946/.mesh-resource) and [execution recipe](https://github.com/xu9299/quiddity-rust/blob/ffaf56e01889d64333aef1da74933fc75ec29946/.github/workflows/selected-mesh-resources-arm.yml) are available for a physical Mac. Peak physical footprint is recorded separately from peak RSS in the complete report.
+
+[Raw measurement run](https://github.com/xu9299/quiddity-rust/actions/runs/45297463459).
+
+| Input | Calls | Peak footprint: 6e56fd77 / preceding / current (MiB) |
+| --- | --- | --- |
+| cgb245 | 1 | 37.61 / 64.22 / 66.80 |
+| cgb245 | 10 | 37.92 / 64.96 / 67.23 |
+| string_post | 1 | 10.88 / 14.25 / 15.06 |
+| string_post | 10 | 11.13 / 14.70 / 15.35 |
+| cgb243 | 1 | 150.24 / 223.84 / 232.06 |
+| cgb243 | 10 | 150.36 / 224.13 / 232.15 |
+| cgb202 | 1 | 316.38 / 421.01 / 443.87 |
+| cgb202 | 10 | 316.58 / 421.03 / 446.74 |
+| cgb203 | 1 | 83.52 / 89.29 / 93.46 |
+| cgb203 | 10 | 85.77 / 90.78 / 93.95 |
+| cgb207 | 1 | 54.38 / 72.24 / 76.57 |
+| cgb207 | 10 | 54.87 / 72.88 / 76.77 |
+| cgb217 | 1 | 77.99 / 108.74 / 114.92 |
+| cgb217 | 10 | 78.33 / 110.24 / 114.99 |
+| cgb242 | 1 | 142.82 / 200.48 / 211.74 |
+| cgb242 | 10 | 142.67 / 200.41 / 211.49 |
+
+The same ten-call processes also recorded `Instant` timings inside the probe. These explanatory measurements exclude count checks and mesh release; the last nine calls are averaged within each process before comparing ten paired rounds, rather than treating 90 calls as independent. Import includes decompression. These phase timings do not replace whole-process time or hardware instructions.
+
+| Input | Import ratio [95% CI] | First mesh ratio [95% CI] | Later mesh ratio [95% CI] |
+| --- | --- | --- | --- |
+| cgb245 | 1.031 [0.988, 1.075] | 0.924 [0.733, 1.142] | 0.989 [0.872, 1.127] |
+| string_post | 0.993 [0.908, 1.088] | 1.004 [0.868, 1.170] | 1.071 [1.003, 1.169] |
+| cgb243 | 0.921 [0.846, 1.002] | 0.667 [0.620, 0.724] | 0.469 [0.458, 0.480] |
+| cgb202 | 0.900 [0.814, 0.983] | 0.603 [0.558, 0.651] | 1.049 [1.009, 1.089] |
+| cgb203 | 0.990 [0.900, 1.097] | 0.967 [0.881, 1.055] | 1.016 [0.947, 1.082] |
+| cgb207 | 1.079 [0.995, 1.177] | 0.988 [0.939, 1.045] | 1.073 [0.963, 1.257] |
+| cgb217 | 0.943 [0.877, 1.020] | 0.925 [0.853, 1.000] | 0.975 [0.920, 1.030] |
+| cgb242 | 1.010 [0.879, 1.153] | 0.926 [0.860, 0.986] | 0.955 [0.919, 0.981] |
+
+The common comparison starts at merged #317 (`6e56fd775b43c748430a2bf9dc3f7b561a081822`), whose mesher still uses spatial boundaries. The incremental comparison isolates this change on its direct predecessor. These are bounded input measurements, not corpus-wide resource limits.
