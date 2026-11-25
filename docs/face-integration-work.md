@@ -204,8 +204,16 @@ two and five inward triangles respectively. The scoped rule preserves outward
 orientation on both. On #60132 itself, 15 retained triangles face inward
 under the corpus normal check and three folded triangles were dropped.
 The two 37-degree placement checks give 0.761169% and 0.762033% with recomputed
-default deflections and 0.802070% with the original deflection. These are
-fixture measurements. Relative area on other faces and deflections can exceed 1%.
+default deflections and 0.802070% with the original deflection. Across 72
+additional placements of this face on Windows, the largest area error was
+0.863130% at the original deflection. Recomputing the deflection from each
+placed bounding box gave eight results above 1%, with a maximum of 1.010172%.
+
+On Linux x86-64, one STEP read and one whole-part mesh of cgb243 used 3.814
+times the user-space instructions of the spatial-edge baseline. The original
+PR used 5.152 times the baseline in the same run. The corresponding ratios on
+cgb202 were 2.008 and 2.003. Each measurement counted the worker thread
+through the release of the mesh and part, with eight paired observations.
 The Windows resource measurements further below precede this sampling rule.
 
 ## The native spline integration rule introduced in #281
