@@ -242,7 +242,7 @@ impl EdgeTrim {
         self.mesh_samples
             .get_or_init(|| {
                 let (a, b) = self.interval;
-                let n = 192;
+                let n = 256;
                 let ts: Vec<_> = (0..=n).map(|i| a + (b - a) * i as f64 / n as f64).collect();
                 self.sample(surface, edge, &ts)
             })

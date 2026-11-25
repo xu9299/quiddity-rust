@@ -174,7 +174,7 @@ only 174 spherical faces change, adding 10,004 interior vertices while keeping
 their shared spatial boundary points identical. Non-spherical faces are
 unchanged in this ablation. A spherical pole can retain a different equivalent
 longitude in the reported UV coordinates. The scoped sampling rule below
-gives 260,000 triangles on Windows. Every version retains just the known refusal
+gives 260,290 triangles on Windows. Every version retains just the known refusal
 at face 399. Exact totals
 can differ slightly between Windows and ARM macOS.
 
@@ -185,7 +185,7 @@ knots. Those panels are not uniform parameter stations, even when the spatial
 curve is smooth. Reusing their samples in the mesh planner can stagger the two
 sides of a narrow freeform ribbon and introduce folded triangles.
 
-The mesh planner uses 192 uniform parameter segments before chord refinement
+The mesh planner uses 256 uniform parameter segments before chord refinement
 when every incident face is freeform, or when a non-freeform carrier supplies
 the selected trim to a freeform face. It uses the surface that owns the pcurve,
 including the source surface of a transferred trim. Each of the six reported
@@ -198,15 +198,15 @@ The focused whole-part regression checks the six narrow faces of
 `threaded_connector_109` independently of the corpus perimeter allowance: each
 must be within 1% of its integral area and drop no folded triangles. The cgb243
 test still checks both single-face and whole-part calls against its independent
-area reference. On Windows both calls give 438 triangles and 0.715804% area
+area reference. On Windows both calls give 475 triangles and 0.877668% area
 error. With 128 segments on every selected edge, #50870 and #60095 gained
 two and five inward triangles respectively. The scoped rule preserves outward
-orientation on both. On #60132 itself, seven retained triangles face inward
-under the corpus normal check and four folded triangles were dropped.
-The two 37-degree placement checks give 0.810808% and 0.726102% with recomputed
-default deflections and 0.715804% with the original deflection. Across 72
-additional placements the largest area error was 0.852285% at the recomputed
-deflection. A separate set of 128 rotations gave a maximum of 0.840593%.
+orientation on both. On #60132 itself, eight retained triangles face inward
+under the corpus normal check and two folded triangles were dropped.
+The two 37-degree placement checks give 0.787233% and 0.760832% with recomputed
+default deflections and 0.877683% and 0.926941% at the original deflection.
+Across 72 additional placements the largest area error was 0.889194% at the
+recomputed deflection. A separate set of 128 rotations gave a maximum of 0.887017%.
 With 128 starting segments the corresponding maxima were 1.010172% and
 0.996699%. These figures apply to this fixture and these deflections.
 

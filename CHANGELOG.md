@@ -30,7 +30,7 @@ in [docs/alpha1.md](docs/alpha1.md).
 ### Fixed
 
 - Mesh edges incident only to freeform faces, and mixed edges with an analytic
-  trim carrier, start from 192 uniform parameter segments before chord refinement.
+  trim carrier, start from 256 uniform parameter segments before chord refinement.
   This prevents folds on narrow freeform ribbons while preserving the orientation
   of adjacent analytic faces on cgb243.
 
