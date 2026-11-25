@@ -60,8 +60,8 @@ const MAX_ROUNDS: usize = 40;
 /// single face can take (a large freeform face at a fine deflection). A face stopped by it is
 /// still meshed, coarser than asked, and says so ([`FaceMesh::converged`]).
 const MAX_VERTICES: usize = 60_000;
-/// Samples taken along a parameter line added to a face's boundary (a cut, a pole's line),
-/// before thinning.
+/// Samples along a parameter line added to a face's boundary (a cut, a pole's line), before
+/// thinning.
 const CUT_SAMPLES: usize = 128;
 /// Boundary thinning, as shares of the chordal deflection: thinning can make two close
 /// stretches of a boundary cross in parameter space (a narrow neck of the face), so a face that
@@ -148,12 +148,9 @@ impl Part {
         angular: f64,
     ) -> Result<FaceMesh, MeshRefusal> {
         let mut mesher = PartMesher::new(self, deflection, angular)?;
-        let mut result = Err(CROSSES.to_owned());
-        for level in 0..BOUNDARY_LEVELS.len() {
-            result = mesher.face(face, &|_| level);
-            if !matches!(&result, Err(why) if why == CROSSES) {
-                break;
-            }
+        let mut result = mesher.triangulate(face);
+        if result.is_err() && !mesher.use_spatial_edges([face]).is_empty() {
+            result = mesher.triangulate(face);
         }
         result.map_err(|reason| MeshRefusal { reason })
     }
@@ -163,19 +160,38 @@ impl Part {
     /// faces share their edges' points, so the mesh of a closed shell whose faces all
     /// triangulate is watertight.
     pub fn mesh(&self, deflection: f64, angular: f64) -> Vec<Result<FaceMesh, MeshRefusal>> {
-        let n = self.faces.len();
         let mut mesher = match PartMesher::new(self, deflection, angular) {
             Ok(m) => m,
-            Err(refusal) => return vec![Err(refusal); n],
+            Err(refusal) => return vec![Err(refusal); self.faces.len()],
         };
-        let mut level = vec![0usize; self.edges.len()];
-        let mut out: Vec<Option<Result<FaceMesh, String>>> = vec![None; n];
+        mesher.mesh()
+    }
+}
+
+impl PartMesher<'_> {
+    fn triangulate(&mut self, face: usize) -> Result<FaceMesh, String> {
+        let mut result = Err(CROSSES.to_owned());
+        for level in 0..BOUNDARY_LEVELS.len() {
+            result = self.face(face, &|_| level);
+            if !matches!(&result, Err(why) if why == CROSSES) {
+                break;
+            }
+        }
+        result
+    }
+
+    fn mesh(&mut self) -> Vec<Result<FaceMesh, MeshRefusal>> {
+        let part = self.part;
+        let n = part.faces.len();
+        let mut level = vec![0usize; part.edges.len()];
+        let mut out: Vec<Option<Result<PreparedFace<'_>, String>>> = (0..n).map(|_| None).collect();
         let mut dirty = vec![true; n];
-        let edge_faces = self.edge_faces();
+        let edge_faces = part.edge_faces();
+        let mut spatial_attempted = false;
         loop {
             for f in 0..n {
                 if dirty[f] {
-                    out[f] = Some(mesher.face(f, &|e| level[e]));
+                    out[f] = Some(self.prepare(f, &|e| level[e]));
                     dirty[f] = false;
                 }
             }
@@ -186,7 +202,7 @@ impl Part {
                 if !matches!(result, Some(Err(why)) if why == CROSSES) {
                     continue;
                 }
-                let edges = self.face_edges(f);
+                let edges = part.face_edges(f);
                 let Some(least) = edges.iter().map(|&e| level[e]).min() else {
                     continue;
                 };
@@ -204,12 +220,33 @@ impl Part {
                 raised = true;
             }
             if !raised {
+                if !spatial_attempted {
+                    spatial_attempted = true;
+                    let refused: Vec<_> = out
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(f, r)| matches!(r, Some(Err(_))).then_some(f))
+                        .collect();
+                    let affected = self.use_spatial_edges(refused);
+                    if !affected.is_empty() {
+                        // Restart thinning for the changed boundaries, preserving meshes
+                        // whose setups, shared plans and thinning levels are unchanged.
+                        for (f, dirty) in dirty.iter_mut().enumerate() {
+                            *dirty = affected.contains(&f)
+                                || part.face_edges(f).iter().any(|&e| level[e] != 0);
+                        }
+                        level.fill(0);
+                        continue;
+                    }
+                }
                 break;
             }
         }
         out.into_iter()
-            .map(|r| {
+            .enumerate()
+            .map(|(face, r)| {
                 r.unwrap_or_else(|| Err("the face was not meshed".into()))
+                    .map(|prepared| prepared.finish(part, face, self.deflection, self.angular))
                     .map_err(|reason| MeshRefusal { reason })
             })
             .collect()
@@ -304,6 +341,7 @@ impl<'a> Sheet<'a> {
 /// unwrapped, each edge sample's parameters, and the parameter scale its triangulation uses.
 struct Setup<'a> {
     sheet: Sheet<'a>,
+    raw: std::borrow::Cow<'a, [UvLoop]>,
     /// Per loop, its points unwrapped across a closed freeform surface's seam too.
     loops: Vec<Vec<(f64, f64)>>,
     /// (edge, sample index) → the sample's parameters in this face (its first use).
@@ -345,12 +383,21 @@ struct BNode {
     key: Option<Key>,
 }
 
+/// The selected spatial discretisation of a topological edge, in STEP vertex order.
+#[derive(Clone, Copy)]
+pub(super) struct MeshEdge<'a> {
+    pub(super) face: usize,
+    pub(super) trim: &'a crate::mass::EdgeTrim,
+    pub(super) samples: &'a crate::mass::TrimSamples,
+}
+
 struct PartMesher<'a> {
     part: &'a Part,
     deflection: f64,
     /// The boundary's angular deflection: half the triangles'.
     angular: f64,
     setups: Vec<Option<Result<Setup<'a>, String>>>,
+    selected: Vec<std::cell::OnceCell<Option<MeshEdge<'a>>>>,
     plans: BTreeMap<(usize, usize), Plan>,
     /// Per vertex of the part, the first vertex at the same point: two loops touching at a
     /// point each with its own vertex there meet at one mesh vertex.
@@ -378,6 +425,9 @@ impl<'a> PartMesher<'a> {
             // held to the whole of it.
             angular: 0.5 * angular,
             setups: (0..part.faces.len()).map(|_| None).collect(),
+            selected: (0..part.edges.len())
+                .map(|_| std::cell::OnceCell::new())
+                .collect(),
             plans: BTreeMap::new(),
             alias: vertex_alias(part),
         })
@@ -389,6 +439,88 @@ impl<'a> PartMesher<'a> {
         }
     }
 
+    fn selected_edge(&self, edge: usize) -> Option<MeshEdge<'a>> {
+        *self.selected[edge].get_or_init(|| {
+            use crate::brep::TrimCarrier;
+            let part = self.part;
+            let (carrier, _) = part.measure_trims.get(&edge)?.as_ref()?;
+            let incident = &part.edge_faces()[edge];
+            // A shared trim must be valid in every receiving chart. A
+            // selected curve well off its neighbour would make a folded strip.
+            if incident.iter().any(|&f| {
+                !matches!(part.faces[f].surface, Surface::Other { .. })
+                    && part
+                        .declared_boundary(f)
+                        .is_none_or(|b| !b.edges.contains_key(&edge))
+            }) {
+                return None;
+            }
+            let owners = match carrier {
+                TrimCarrier::Faces(owners) => owners.as_slice(),
+                TrimCarrier::Detached(_) => &[],
+            };
+            // Prefer sampling on the carrier itself. If its face fell back, another
+            // incident face can still provide the same selected spatial curve.
+            owners
+                .iter()
+                .chain(incident.iter().filter(|f| !owners.contains(f)))
+                .copied()
+                .find_map(|face| {
+                    // Boundary selection needs geometric qualification, not the
+                    // successful completion of area and flux integration.
+                    let trim = part.declared_boundary(face)?.edges.get(&edge)?;
+                    let samples = trim.mesh_samples(part, face, edge)?;
+                    samples
+                        .points
+                        .iter()
+                        .flatten()
+                        .all(|v| v.is_finite())
+                        .then_some(MeshEdge {
+                            face,
+                            trim,
+                            samples,
+                        })
+                })
+        })
+    }
+
+    fn use_spatial_edges(
+        &mut self,
+        faces: impl IntoIterator<Item = usize>,
+    ) -> std::collections::BTreeSet<usize> {
+        let mut changed = std::collections::BTreeSet::new();
+        for face in faces {
+            for edge in self.part.face_edges(face) {
+                if self.selected_edge(edge).is_some() {
+                    self.selected[edge] = std::cell::OnceCell::from(None);
+                    changed.insert(edge);
+                }
+            }
+        }
+        let incident = self.part.edge_faces();
+        let setups: std::collections::BTreeSet<_> = changed
+            .iter()
+            .flat_map(|&e| incident[e].iter().copied())
+            .collect();
+        let plans: std::collections::BTreeSet<_> = setups
+            .iter()
+            .flat_map(|&f| self.part.face_edges(f))
+            .collect();
+        for &f in &setups {
+            self.setups[f] = None;
+        }
+        self.plans.retain(|(e, _), _| !plans.contains(e));
+        plans
+            .into_iter()
+            .flat_map(|e| incident[e].iter().copied())
+            .collect()
+    }
+
+    fn edge_samples(&self, edge: usize) -> &'a [V3] {
+        self.selected_edge(edge)
+            .map_or(&self.part.edges[edge].samples, |e| &e.samples.points)
+    }
+
     fn make_setup(&self, face: usize) -> Result<Setup<'a>, String> {
         let part = self.part;
         let f = &part.faces[face];
@@ -396,9 +528,19 @@ impl<'a> PartMesher<'a> {
             return Err(format!("its surface ({kind}) did not resolve"));
         }
         let sheet = Sheet::new(&f.surface);
-        let raw = part
-            .uv_loops(face)
-            .ok_or("its boundary has no parameter-space loops")?;
+        let selected = |edge| self.selected_edge(edge);
+        let raw = if f
+            .loops
+            .iter()
+            .flat_map(|lp| &lp.edges)
+            .any(|&(e, _)| selected(e).is_some())
+        {
+            part.mesh_uv_loops(face, &selected)
+                .map(std::borrow::Cow::Owned)
+        } else {
+            part.uv_loops(face).map(std::borrow::Cow::Borrowed)
+        }
+        .ok_or("its boundary has no parameter-space loops")?;
         let mut loops = Vec::with_capacity(raw.len());
         let mut uv = BTreeMap::new();
         let mut winding_u = 0;
@@ -423,7 +565,7 @@ impl<'a> PartMesher<'a> {
             {
                 winding_u += 1;
             }
-            for (e, sample) in straying(part, face, li, &sheet, lp, &points, self.deflection) {
+            for (e, sample) in straying(self, face, li, &sheet, lp, &points) {
                 uv.remove(&(e, sample));
             }
             box_points.extend(&points);
@@ -440,6 +582,7 @@ impl<'a> PartMesher<'a> {
         let scale = parameter_scale(&sheet, &box_points, self.deflection, self.angular)?;
         Ok(Setup {
             sheet,
+            raw,
             loops,
             uv,
             scale,
@@ -460,7 +603,8 @@ impl<'a> PartMesher<'a> {
     /// Edge `edge`'s points at thinning level `level` (see [`BOUNDARY_LEVELS`]).
     fn make_plan(&self, edge: usize, level: usize) -> Plan {
         let part = self.part;
-        let samples = &part.edges[edge].samples;
+        let geom = &part.edges[edge];
+        let samples = self.edge_samples(edge);
         let n = samples.len();
         let boundary = BOUNDARY_LEVELS[level] * self.deflection;
         // The faces' views of the samples.
@@ -570,6 +714,26 @@ impl<'a> PartMesher<'a> {
                 }
             }
         }
+        if let Some(e) = self.selected_edge(edge) {
+            // A knot just inside an endpoint can yield a second mesh key at
+            // the same vertex. Remove only the unresolved run at either end.
+            let surface = &part.faces[e.face].surface;
+            let (a, b) = e.trim.interval;
+            let (start, end) = (e.trim.point(surface, a), e.trim.point(surface, b));
+            let resolution = (1e-6 * boundary).min(geom::COORD_FLOOR);
+            let distinct = |p, vertex, curve_end| {
+                geom::dist(p, vertex) > resolution || geom::dist(p, curve_end) > resolution
+            };
+            let first = at.iter().find(|(_, p)| distinct(**p, geom.start, start));
+            let last = at.iter().rev().find(|(_, p)| distinct(**p, geom.end, end));
+            if let (Some((&first, _)), Some((&last, _))) = (first, last)
+                && first <= last
+            {
+                at.retain(|&key, _| {
+                    key == (0, 0) || key == (n - 1, 0) || (first..=last).contains(&key)
+                });
+            }
+        }
         let mut plan = Plan {
             points: Vec::with_capacity(at.len()),
             at_sample: vec![None; n],
@@ -589,6 +753,15 @@ impl<'a> PartMesher<'a> {
 
     /// The face meshed, each edge `e` at thinning level `level(e)`.
     fn face(&mut self, face: usize, level: &dyn Fn(usize) -> usize) -> Result<FaceMesh, String> {
+        let prepared = self.prepare(face, level)?;
+        Ok(prepared.finish(self.part, face, self.deflection, self.angular))
+    }
+
+    fn prepare(
+        &mut self,
+        face: usize,
+        level: &dyn Fn(usize) -> usize,
+    ) -> Result<PreparedFace<'a>, String> {
         let part = self.part;
         let edges = part.face_edges(face);
         self.setup(face);
@@ -604,7 +777,7 @@ impl<'a> PartMesher<'a> {
             .iter()
             .map(|&e| (e, &self.plans[&(e, level(e))]))
             .collect();
-        triangulate_face(
+        prepare_face(
             part,
             face,
             setup,
@@ -632,15 +805,14 @@ impl<'a> PartMesher<'a> {
 /// they lie within the deflection of the line, and of the face. A stray farther off is kept,
 /// and the face is then refused if its boundary crosses.
 fn straying(
-    part: &Part,
+    mesher: &PartMesher<'_>,
     face: usize,
     li: usize,
     sheet: &Sheet<'_>,
     lp: &UvLoop,
     points: &[(f64, f64)],
-    deflection: f64,
 ) -> Vec<(usize, usize)> {
-    let f = &part.faces[face];
+    let f = &mesher.part.faces[face];
     let edges = &f.loops[li].edges;
     let n = edges.len();
     // Per edge of the loop, its points' indices in loop order.
@@ -691,8 +863,8 @@ fn straying(
                         break;
                     };
                     let e = edges[place].0;
-                    let off = geom::dist(sheet.value(on.0, on.1), part.edges[e].samples[sample]);
-                    if off > deflection {
+                    let off = geom::dist(sheet.value(on.0, on.1), mesher.edge_samples(e)[sample]);
+                    if off > mesher.deflection {
                         inside = Some(d.signum());
                         break;
                     }
@@ -736,22 +908,19 @@ fn vertex_alias(part: &Part) -> Vec<usize> {
 }
 
 /// The face's polygons from its loops and its edges' plans, triangulated.
-fn triangulate_face(
-    part: &Part,
+fn prepare_face<'a>(
+    part: &'a Part,
     face: usize,
-    setup: &Setup<'_>,
+    setup: &Setup<'a>,
     plans: &BTreeMap<usize, &Plan>,
     alias: &[usize],
     deflection: f64,
     angular: f64,
-) -> Result<FaceMesh, String> {
-    let f = &part.faces[face];
+) -> Result<PreparedFace<'a>, String> {
     let sheet = setup.sheet;
     let surface = sheet.surface;
     let period = sheet.period;
-    let raw = part
-        .uv_loops(face)
-        .ok_or("its boundary has no parameter-space loops")?;
+    let raw = &setup.raw;
     let poles = Poles::new(part, face, &sheet, plans, alias, deflection);
 
     // Each loop as polygon points, sorted into closed loops and loops that run once round.
@@ -914,16 +1083,60 @@ fn triangulate_face(
         *polygon = sampled;
     }
 
-    let refine = !matches!(surface, Surface::Plane { .. });
-    let mut mesher = Mesher::new(sheet, setup.scale, &polygons, deflection)?;
-    let converged = if refine {
-        mesher.refine(deflection, 2.0 * angular)
-    } else {
-        true
-    };
-    let mut mesh = mesher.finish(f.reversed, deflection);
-    mesh.converged = converged;
-    Ok(mesh)
+    let mesher = Mesher::new(sheet, setup.scale, &polygons, deflection, None)?;
+    Ok(PreparedFace {
+        mesher,
+        polygons,
+        lazy_sphere: matches!(&setup.raw, std::borrow::Cow::Owned(_)),
+    })
+}
+
+struct PreparedFace<'a> {
+    mesher: Mesher<'a>,
+    polygons: Vec<Vec<BNode>>,
+    lazy_sphere: bool,
+}
+
+impl PreparedFace<'_> {
+    fn finish(self, part: &Part, face: usize, deflection: f64, angular: f64) -> FaceMesh {
+        let Self {
+            mut mesher,
+            polygons,
+            lazy_sphere,
+        } = self;
+        let sheet = mesher.surface;
+        let scale = mesher.scale;
+        let surface = sheet.surface;
+        let f = &part.faces[face];
+        let mut converged = if !matches!(surface, Surface::Plane { .. }) {
+            mesher.refine(deflection, 2.0 * angular)
+        } else {
+            true
+        };
+        let mut mesh = mesher.finish(f.reversed, deflection);
+        if lazy_sphere && let Surface::Sphere { frame, .. } = surface {
+            let sign = if frame.direct() != f.reversed {
+                1.0
+            } else {
+                -1.0
+            };
+            let folded = mesh.triangles.iter().any(|triangle| {
+                let [a, b, c] = triangle.map(|i| mesh.points[i]);
+                let cross = geom::cross(geom::sub(b, a), geom::sub(c, a));
+                sign * geom::dot(cross, geom::sub(a, frame.origin)) < 0.0
+            });
+            if (folded || mesh.folded_dropped.0 > 0)
+                && let Some(chart) = SphereChart::new(part, face, &polygons)
+                && let Ok(mut mesher) =
+                    Mesher::new(sheet, scale, &polygons, deflection, Some(chart))
+            {
+                converged = mesher.refine(deflection, 2.0 * angular);
+                mesh = mesher.finish(f.reversed, deflection);
+            }
+        }
+        mesh.converged = converged;
+        mesh
+    }
 }
 
 /// The face's singular parameter lines (a sphere's poles, a cone's apex): a point on one is the
@@ -1727,9 +1940,65 @@ impl HasPosition for Node {
     }
 }
 
+/// A central projection of a spherical cap. The signed area of a projected
+/// triangle has the same sign as its spatial orientation about the sphere.
+/// This keeps narrow triangles along a curved trim from folding in UV.
+#[derive(Clone, Copy)]
+struct SphereChart {
+    frame: geom::Frame,
+    radius: f64,
+}
+
+impl SphereChart {
+    fn new(part: &Part, face: usize, polygons: &[Vec<BNode>]) -> Option<Self> {
+        let Surface::Sphere { frame, radius } = part.faces[face].surface else {
+            return None;
+        };
+        // The same boundary can enclose the complementary region of a sphere.
+        if part.face_mass(face)?[0] >= TAU * radius * radius {
+            return None;
+        }
+        let points = || polygons.iter().flatten();
+        if points().any(|n| matches!(n.key, Some(Key::Cut(_) | Key::Side(_)))) {
+            return None;
+        }
+        let radial = |n: &BNode| geom::sub(n.point, frame.origin);
+        let z = geom::unit(points().map(radial).fold([0.; 3], geom::add))?;
+        if points().any(|n| geom::dot(radial(n), z) <= 0.25 * radius) {
+            return None;
+        }
+        let across = if z[0].abs() < 0.9 {
+            [1., 0., 0.]
+        } else {
+            [0., 1., 0.]
+        };
+        let x = geom::unit(geom::cross(across, z))?;
+        let y = if frame.direct() {
+            geom::cross(z, x)
+        } else {
+            geom::cross(x, z)
+        };
+        Some(Self {
+            frame: geom::Frame {
+                origin: frame.origin,
+                x,
+                y,
+                z,
+            },
+            radius,
+        })
+    }
+
+    fn project(self, point: V3) -> Point2<f64> {
+        let [x, y, z] = self.frame.to_local(point);
+        Point2::new(self.radius * x / z, self.radius * y / z)
+    }
+}
+
 struct Mesher<'a> {
     surface: Sheet<'a>,
     scale: (f64, f64),
+    sphere: Option<SphereChart>,
     cdt: ConstrainedDelaunayTriangulation<Node>,
 }
 
@@ -1742,20 +2011,25 @@ impl<'a> Mesher<'a> {
         scale: (f64, f64),
         polygons: &[Vec<BNode>],
         deflection: f64,
+        sphere: Option<SphereChart>,
     ) -> Result<Self, String> {
         let mut mesher = Mesher {
             surface,
             scale,
+            sphere,
             cdt: ConstrainedDelaunayTriangulation::new(),
         };
         for polygon in polygons {
             let mut handles = Vec::with_capacity(polygon.len());
             for b in polygon {
-                let node = Node {
+                let mut node = Node {
                     point: b.point,
                     key: b.key,
                     ..mesher.node(b.uv)
                 };
+                if let Some(sphere) = sphere {
+                    node.position = sphere.project(b.point);
+                }
                 if let Some(existing) = mesher.cdt.locate_vertex(node.position) {
                     let data = existing.data();
                     // Two loops touching at a point (each with its own vertex there) meet at
@@ -1792,13 +2066,35 @@ impl<'a> Mesher<'a> {
     fn node(&self, uv: (f64, f64)) -> Node {
         // spade refuses coordinates nearer zero than about 1e-38 (but not zero itself).
         let flush = |x: f64| if x.abs() < 1e-30 { 0.0 } else { x };
+        let point = self.surface.value(uv.0, uv.1);
+        let position = self.sphere.map_or_else(
+            || Point2::new(uv.0 * self.scale.0, uv.1 * self.scale.1),
+            |s| s.project(point),
+        );
         Node {
-            position: Point2::new(flush(uv.0 * self.scale.0), flush(uv.1 * self.scale.1)),
+            position: Point2::new(flush(position.x), flush(position.y)),
             uv,
-            point: self.surface.value(uv.0, uv.1),
+            point,
             normal: self.surface.normal(uv.0, uv.1),
             key: None,
         }
+    }
+
+    fn mean_uv(&self, nodes: &[Node]) -> (f64, f64) {
+        let n = nodes.len() as f64;
+        let hint = (
+            nodes.iter().map(|p| p.uv.0).sum::<f64>() / n,
+            nodes.iter().map(|p| p.uv.1).sum::<f64>() / n,
+        );
+        self.sphere
+            .and_then(|s| {
+                let x = nodes.iter().map(|p| p.position.x).sum::<f64>() / n;
+                let y = nodes.iter().map(|p| p.position.y).sum::<f64>() / n;
+                let p = s.frame.to_world([x, y, s.radius]);
+                let (u, v) = self.surface.surface.parameters(p, None)?;
+                Some((geom::nearest_turn(u, hint.0), v))
+            })
+            .unwrap_or(hint)
     }
 
     /// Whether each face (by index) lies inside the polygons: flooded from the convex hull,
@@ -1857,7 +2153,7 @@ impl<'a> Mesher<'a> {
             let mut want_edge = |index: usize, a: &Node, b: &Node, wanted: &mut Vec<(f64, f64)>| {
                 if !seen[index] {
                     seen[index] = true;
-                    wanted.push(((a.uv.0 + b.uv.0) / 2.0, (a.uv.1 + b.uv.1) / 2.0));
+                    wanted.push(self.mean_uv(&[*a, *b]));
                 }
             };
             for face in self.cdt.inner_faces() {
@@ -1878,7 +2174,7 @@ impl<'a> Mesher<'a> {
                     if longest.is_none_or(|l| length > l.0) {
                         longest = Some((length, index, a, b));
                     }
-                    let mid = ((a.uv.0 + b.uv.0) / 2.0, (a.uv.1 + b.uv.1) / 2.0);
+                    let mid = self.mean_uv(&[a, b]);
                     let bent = match (a.normal, b.normal) {
                         (Some(na), Some(nb)) => angle(na, nb) > angular && length > deflection,
                         _ => false,
@@ -1898,10 +2194,7 @@ impl<'a> Mesher<'a> {
                 if parameter_sliver(&a, &b, &c) {
                     continue;
                 }
-                let uv = (
-                    (a.uv.0 + b.uv.0 + c.uv.0) / 3.0,
-                    (a.uv.1 + b.uv.1 + c.uv.1) / 3.0,
-                );
+                let uv = self.mean_uv(&[a, b, c]);
                 let off =
                     triangle_distance(self.surface.value(uv.0, uv.1), a.point, b.point, c.point);
                 let size = geom::dist(a.point, b.point)
@@ -2050,6 +2343,21 @@ impl<'a> Mesher<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_mesh_boundary_does_not_require_mass_integration() {
+        let input = include_bytes!("../tests/fixtures/master-trim-square.step");
+        let part = crate::read_step(input).unwrap();
+        // Recognition owns different boundary decisions and must not select the mesh region.
+        let _ = part.recognition_part().face_mass(0);
+        let mesh = part.triangulate(0, 1e-5, 0.3).unwrap();
+        assert!((mesh.area() - 0.999_866_666_7).abs() < 1e-5);
+        assert!(part.cache.iter().all(|cache| cache.mass.get().is_none()));
+        assert!(part.cache.iter().all(|cache| cache.moments.get().is_none()));
+        let fresh = crate::read_step(input).unwrap();
+        assert_eq!(part.face_mass(0), fresh.face_mass(0));
+        assert_eq!(part.triangulate(0, 1e-5, 0.3).unwrap(), mesh);
+    }
 
     #[test]
     fn thinning_keeps_the_ends_and_drops_collinear_points() {
