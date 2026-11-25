@@ -1,0 +1,27 @@
+name: Check retired-instruction counter availability for selected meshing
+on:
+  push:
+    branches: ['validation/selected-trim-pmu-349-20261125']
+permissions:
+  contents: read
+jobs:
+  capability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Check user-mode hardware instructions on the current thread
+        run: |
+          set -eu
+          mkdir evidence
+          uname -srm > evidence/runner.txt
+          lscpu | sed -n -e '/^Model name:/p' -e '/^Hypervisor vendor:/p' >> evidence/runner.txt
+          cat /proc/sys/kernel/perf_event_paranoid >> evidence/runner.txt
+          sha256sum .mesh-pmu/check.c > evidence/probe.sha256
+          cc -std=gnu17 -O2 -Wall -Wextra -Werror .mesh-pmu/check.c -o check
+          for n in 2000000 20000000; do ./check "$n" >> evidence/observations.jsonl; done
+          cat evidence/observations.jsonl
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: selected-mesh-pmu-capability
+          path: evidence
