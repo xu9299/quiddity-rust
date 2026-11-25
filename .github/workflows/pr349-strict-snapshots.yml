@@ -1,0 +1,59 @@
+name: Reproduce PR 349 merge snapshots
+on:
+  push:
+    branches: [validation/pr349-strict-merge-a3bb1747]
+permissions:
+  contents: read
+env:
+  SOURCE: a3bb1747773f15526c1f5603dbf7b18f8a7ca4d1
+  TREE: bf2746e47aa80d08c2d05ec1aa57bac2b266b07d
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  CARGO_TERM_COLOR: never
+jobs:
+  snapshots:
+    runs-on: macos-15
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+      - name: Verify source, corpus and toolchain
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$TREE"
+          test "$(git -C ../corpus rev-parse HEAD)" = "$CORPUS"
+          rustup toolchain install
+          mkdir -p ../strict-evidence
+          { git rev-parse HEAD 'HEAD^{tree}'; git -C ../corpus rev-parse HEAD; uname -m; sw_vers; rustc -vV; } | tee ../strict-evidence/environment.log
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source
+          shared-key: selected-mesh-consolidated-arm15
+      - name: Reproduce committed snapshots
+        run: |
+          set -euo pipefail
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../strict-evidence/strict.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: strict-snapshot-evidence
+          path: strict-evidence/
+          if-no-files-found: error
+          retention-days: 30
