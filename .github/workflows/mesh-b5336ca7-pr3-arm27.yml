@@ -1,0 +1,164 @@
+name: Validate pr3 after the narrow-face fix
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mesh-b5336ca7-main-pr3-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  SOURCE: da83535dfe28c36e517fed78072e1653f7243a90
+  TREE: 049567d19d4e82e37ff9e745011268e80dcd9dbc
+jobs:
+  reuse-passed-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify and preserve completed checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reused
+          gh run view 45639006415 -R xu9299/quiddity-rust --json headSha,jobs,status,conclusion > reused/prior-run.json
+          gh run download 45639006415 -R xu9299/quiddity-rust --name mesh-workspace-lint-evidence --dir mesh-workspace-lint-evidence
+          gh run download 45639006415 -R xu9299/quiddity-rust --name mesh-compatibility --dir mesh-compatibility
+          if ! command -v uv >/dev/null; then pipx install uv; export PATH="$HOME/.local/bin:$PATH"; fi
+          uv run --no-project --python 3.13 python - <<'PY'
+          import hashlib,json,os,pathlib
+          run=json.loads(pathlib.Path('reused/prior-run.json').read_text())
+          assert run['headSha']=='c239caf7161b5f9d96c2c61f29c866539d96bc2e'
+          jobs={j['name']:j for j in run['jobs']}
+          assert all(jobs[name]['conclusion']=='success' for name in ('lint','compatibility'))
+          expected={"mesh-compatibility/environment.log": "5f0413130e6df117cf7d2fc8cb22da8dce97bcd5e5e94aef99c3bfa288402dd1", "mesh-compatibility/semver.log": "f9d76872faf4dea3df5bc48be1aeb81f6e0bde7cb61b9f05d965f564efc475bf", "mesh-compatibility/wasm-haecceity.log": "ceea989eb0e6d3f890a444c4bcc848c182b14104133d3f67026146a06fbb925c", "mesh-compatibility/wasm-quiddity.log": "c2504593b114e909df58b271069707b0a1a62667263a5135ceeaa339857f055c", "mesh-workspace-lint-evidence/clippy.log": "1bf447eba00dda760498a1079d5c3051a6f3b2b00f1d862929e8f8c08be51095", "mesh-workspace-lint-evidence/environment.log": "553f565a23a83d991d36cd5936b3529ad34ec2187ba62a02a33ba6fa814edd72", "mesh-workspace-lint-evidence/f3d.log": "50b5594fae9459cf49252d529d3931aca26a89509b77c62759e7646b3185dda9", "mesh-workspace-lint-evidence/fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "mesh-workspace-lint-evidence/mfcadpp-score-tests.log": "f96363f8d8dff4c4abed7197c63606ead0bd955ea4259bdcb5fb6f47dbe53992", "mesh-workspace-lint-evidence/nist-json-roundtrip.log": "dfb5e5ea4e94d7c91d947c358d7f659f9a617cdbfe1dae2d72875a2b284cb141", "mesh-workspace-lint-evidence/pmi-write-feature-off.log": "babd43b2c45cd22e606105b796018d51ce24dcdd897d1726ba6995efe6028a69", "mesh-workspace-lint-evidence/presentation-feature-off.log": "f127bb55f861fdb69f44966736e3942c660f50a4de100b6bd9e49530b8b10554", "mesh-workspace-lint-evidence/score-tests.log": "913c18e247d3de9be031506782674b98d8fecdfef02adb8cbeda455ac5273fca", "mesh-workspace-lint-evidence/workflow-tests.log": "9d4d5ff70b294a0c2806a431ff70d88580a431af053ce52b0b37c4b0275afb5c"}
+          for name,digest in expected.items():
+              assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==digest,name
+          for folder in ('mesh-workspace-lint-evidence','mesh-compatibility'):
+              assert pathlib.Path(folder,'environment.log').read_text().splitlines()[:2]==[os.environ['SOURCE'],os.environ['TREE']]
+          pathlib.Path('reused/reuse.json').write_text(json.dumps({'source':os.environ['SOURCE'],'tree':os.environ['TREE'],'run':'https://github.com/xu9299/quiddity-rust/actions/runs/45639006415','reused_jobs':['lint','compatibility'],'files_sha256':expected},indent=2)+chr(10))
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mesh-workspace-lint-evidence
+          path: mesh-workspace-lint-evidence/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mesh-compatibility
+          path: mesh-compatibility/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mesh-reused-evidence
+          path: reused/
+          if-no-files-found: error
+          retention-days: 30
+  workspace-all:
+    runs-on: xcode-27
+    timeout-minutes: 355
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/source/target
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        ref: ${{ env.SOURCE }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: pzfreo/quiddity-corpus
+        ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+        path: corpus
+        persist-credentials: false
+    - run: |
+        test "$(git rev-parse HEAD^{tree})" = "$TREE"
+        test "$(uname -m)" = arm64
+        rustup toolchain install 1.99.1 --profile minimal
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        workspaces: source
+        shared-key: selected-mesh-consolidated-arm27
+    - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+      with:
+        tool: nextest@0.9.146
+    - run: |-
+        cargo nextest archive --workspace --release --locked --archive-file ../tests.tar.zst
+      id: archive
+    - name: Run every workspace case
+      if: always() && steps.archive.outcome == 'success'
+      run: |
+        mkdir -p ../evidence
+        test "$(uname -m)" = arm64
+        test "$(git rev-parse HEAD)" = "$SOURCE"
+        test "$(git rev-parse HEAD^{tree})" = "$TREE"
+        echo "$(git rev-parse HEAD) $(git -C ../corpus rev-parse HEAD)" > ../evidence/source.txt
+        { uname -a; sw_vers; rustc -vV; } > ../evidence/runner.log
+        archive=(--archive-file ../tests.tar.zst --extract-to "$PWD" --extract-overwrite --workspace-remap "$PWD")
+        cargo-nextest nextest list "${archive[@]}" --profile ci --message-format json > ../evidence/tests.json
+        cargo-nextest nextest run --no-fail-fast --profile ci "${archive[@]}" 2>&1 | tee ../evidence/workspace.log
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: mesh-workspace-all
+        path: evidence/
+        if-no-files-found: warn
+        retention-days: 30
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: mesh-test-binaries
+        path: tests.tar.zst
+        retention-days: 3
+    - name: Select a Python installation with a linkable macOS library
+      run: |
+        if ! command -v uv >/dev/null; then brew install uv; fi
+        uv python install 3.13
+        interpreter="$(uv python find --managed-python 3.13)"
+        libdir="$(uv run --no-project --python "$interpreter" python -c 'import pathlib, sys; print(next(p.parent for p in pathlib.Path(sys.base_prefix).rglob("libpython3.13.dylib") if p.is_file()))')"
+        test -f "$libdir/libpython3.13.dylib"
+        echo "PYO3_PYTHON=$interpreter" >> "$GITHUB_ENV"
+        echo "LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+        echo "DYLD_LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+    - run: |
+        mkdir -p ../arm-doc
+        { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } > ../arm-doc/environment.log
+        cargo test --doc --workspace --release --locked 2>&1 | tee ../arm-doc/doc.log
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: mesh-arm-doc
+        path: arm-doc/
+        retention-days: 30
+    - name: Reproduce strict snapshots
+      if: always()
+      run: |
+        mkdir -p ../strict-evidence
+        test "$(uname -m)" = arm64
+        test "$(git rev-parse HEAD)" = "$SOURCE"
+        test "$(git rev-parse HEAD^{tree})" = "$TREE"
+        { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } > ../strict-evidence/environment.log
+        cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../strict-evidence/strict.log
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: mesh-strict-evidence
+        path: strict-evidence/
+        if-no-files-found: warn
+        retention-days: 30
+'on':
+  push:
+    branches:
+    - validation/mesh-b5336ca7-main-pr3-arm27
