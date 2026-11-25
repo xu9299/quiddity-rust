@@ -1,0 +1,130 @@
+name: Recover unstarted PR 349 macOS test shards
+on:
+  push:
+    branches: [validation/pr349-macos-shards-b5336ca7]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  missing:
+    runs-on: macos-26
+    env:
+      CARGO_TERM_COLOR: always
+      QUIDDITY_CORPUS_REQUIRED: '1'
+      QUIDDITY_CORPUS: ${{ github.workspace }}/quiddity-corpus
+      QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/snapshot-verified
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: a3bb1747773f15526c1f5603dbf7b18f8a7ca4d1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: quiddity-corpus
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: tests-macos-latest
+          run-id: 45629320745
+          repository: xu9299/quiddity-rust
+          github-token: ${{ github.token }}
+      - name: Run unstarted shards from the upstream build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 -u - <<'PY'
+          import hashlib, json, os, platform, re, subprocess, sys, time
+          from pathlib import Path
+
+          merge = "a3bb1747773f15526c1f5603dbf7b18f8a7ca4d1"
+          corpus = "3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f"
+          base = "repos/xu9299/quiddity-rust"
+          run = base + "/actions/runs/45629320745"
+          artifact = 15035610274
+          expected_digest = "sha256:e1ba1735cf63c6bc1a60c987f62e2563702d644d008f62be24fef58c9e9ca261"
+
+          def api(endpoint):
+              for retry in range(4):
+                  result = subprocess.run(["gh", "api", endpoint], capture_output=True)
+                  if result.returncode == 0:
+                      return json.loads(result.stdout)
+                  time.sleep(2**retry)
+              raise RuntimeError(result.stderr.decode(errors="replace"))
+
+          def command(*args):
+              return subprocess.check_output(args, text=True).strip()
+
+          assert command("git", "rev-parse", "HEAD") == merge
+          assert command("git", "-C", "quiddity-corpus", "rev-parse", "HEAD") == corpus
+          version = command("sw_vers", "-productVersion")
+          assert platform.machine() == "arm64" and version.split(".")[0] == "26", version
+          meta = api(base + "/actions/artifacts/" + str(artifact))
+          assert meta["id"] == artifact and meta["digest"] == expected_digest and not meta["expired"]
+          assert meta["workflow_run"]["head_sha"] == merge
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          receipt = Path(os.environ["RUNNER_TEMP"]) / "pr349-shards"
+          receipt.mkdir()
+          tar = root / "tests-macos-latest.tar.zst"
+          archive = ["--archive-file", str(tar), "--extract-to", str(root), "--extract-overwrite", "--workspace-remap", str(root)]
+          h = hashlib.sha256()
+          with tar.open("rb") as stream:
+              for block in iter(lambda: stream.read(1048576), b""):
+                  h.update(block)
+          digest = h.hexdigest()
+          info = {"checkout":merge, "corpus":corpus, "os":version, "arch":platform.machine(),
+                  "source_run":45629320745, "artifact":artifact, "artifact_digest":expected_digest, "archive_sha256":digest}
+          (receipt/"inputs.json").write_text(json.dumps(info, indent=2)+"\n")
+          with open("tests.json","w") as out:
+              subprocess.run(["cargo-nextest","nextest","list",*archive,"--profile","ci","--message-format","json"],stdout=out,check=True)
+          completed = set()
+          while True:
+              state = api(run)
+              assert state["head_sha"] == merge
+              jobs = api(f"{run}/attempts/{state['run_attempt']}/jobs?per_page=100")["jobs"]
+              cancelled = []
+              for job in jobs:
+                  match = re.fullmatch(r"macos / test \(macos-latest, (\d+)\)",job["name"])
+                  if match and job["conclusion"] == "cancelled" and not job.get("steps") and not job.get("runner_name"):
+                      n = int(match.group(1))
+                      if n not in completed:
+                          cancelled.append((n,job["id"]))
+              if not cancelled:
+                  break
+              n, job_id = min(cancelled)
+              assert 1 <= n <= 15
+              annotations = api(base+f"/check-runs/{job_id}/annotations")
+              assert any("not acquired" in a["message"] for a in annotations), (n, annotations)
+              expr = command("python3",".github/shards.py","tests.json",".config/test-times.json","macOS",str(n),"15")
+              print(f"::group::Upstream macOS shard {n} of 15",flush=True)
+              args = ["cargo-nextest","nextest","run","--profile","ci",*archive,"-E",expr]
+              passed = None
+              regressions = []
+              with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as proc:
+                  for line in proc.stdout:
+                      sys.stdout.write(line)
+                      plain = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]","",line)
+                      summary = re.search(r"Summary\s+\[[^\]]+\]\s+(\d+) tests run:\s*(\d+) passed",plain)
+                      if summary and summary.group(1) == summary.group(2):
+                          passed = int(summary.group(2))
+                      if "PASS" in plain and ("whole_part_mesh_preserves_narrow_selected_ribbons" in plain or "selected_trim_mesh_agrees_with_the_independent_cgb243_area" in plain):
+                          regressions.append(plain.strip())
+                  code = proc.wait()
+              print("::endgroup::",flush=True)
+              if code or passed is None:
+                  raise SystemExit(f"Shard {n} exited {code}, matched summary {passed}")
+              row = {"shard":n,"shard_count":15,"passed":passed,"filter_sha256":hashlib.sha256(expr.encode()).hexdigest(),
+                     "unstarted_job":job_id,"source_attempt":state["run_attempt"],"regressions":regressions}
+              (receipt/f"shard-{n:02}.json").write_text(json.dumps(row,indent=2)+"\n")
+              completed.add(n)
+          print("Passed missing shards:", sorted(completed))
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: arm-recovery-receipts
+          path: ${{ runner.temp }}/pr349-shards/
+          if-no-files-found: ignore
