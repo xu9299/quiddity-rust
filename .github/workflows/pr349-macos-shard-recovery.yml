@@ -80,7 +80,27 @@ jobs:
           (receipt/"inputs.json").write_text(json.dumps(info, indent=2)+"\n")
           with open("tests.json","w") as out:
               subprocess.run(["cargo-nextest","nextest","list",*archive,"--profile","ci","--message-format","json"],stdout=out,check=True)
-          completed = set()
+          def plan_shard(n):
+              result = subprocess.run(["python3",".github/shards.py","tests.json",".config/test-times.json","macOS",str(n),"15"],
+                                      capture_output=True, text=True, check=True)
+              print(result.stderr.strip(), flush=True)
+              amount = re.search(rf"shard {n} of 15: (\d+) of (\d+) tests", result.stderr)
+              assert amount and int(amount.group(1)) > 0
+              return result.stdout.strip(), int(amount.group(1)), int(amount.group(2))
+
+          assert digest == "f2117a703a8cde985ec45966a42433fc0b87ca7084073c3f0078954508505758"
+          old = subprocess.check_output(["gh","api",base+"/actions/jobs/139337044987/logs"])
+          old_log = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]","",old.decode(errors="replace"))
+          old_group = re.search(r"##\[group\]Upstream macOS shard 1 of 15(.*?)##\[endgroup\]",old_log,re.S)
+          assert old_group and re.search(r"Summary\s+\[[^\]]+\]\s+1 test run:\s*1 passed",old_group.group(1))
+          assert "Shard 1 exited 0, matched summary None" in old_log
+          first_filter,first_count,total = plan_shard(1)
+          assert first_count == 1 and total == 1616
+          first = {"shard":1,"shard_count":15,"inventory":total,"passed":1,"source_attempt":2,
+                   "unstarted_job":139296041755,"filter_sha256":hashlib.sha256(first_filter.encode()).hexdigest(),
+                   "carried_job":139337044987,"carried_run":45651537530,"regressions":[]}
+          (receipt/"shard-01.json").write_text(json.dumps(first,indent=2)+"\n")
+          completed = {1}
           while True:
               state = api(run)
               assert state["head_sha"] == merge
@@ -98,25 +118,30 @@ jobs:
               assert 1 <= n <= 15
               annotations = api(base+f"/check-runs/{job_id}/annotations")
               assert any("not acquired" in a["message"] for a in annotations), (n, annotations)
-              expr = command("python3",".github/shards.py","tests.json",".config/test-times.json","macOS",str(n),"15")
+              expr, expected, inventory = plan_shard(n)
+              assert inventory == total
               print(f"::group::Upstream macOS shard {n} of 15",flush=True)
               args = ["cargo-nextest","nextest","run","--profile","ci",*archive,"-E",expr]
               passed = None
+              pass_lines = 0
               regressions = []
               with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as proc:
                   for line in proc.stdout:
                       sys.stdout.write(line)
                       plain = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]","",line)
-                      summary = re.search(r"Summary\s+\[[^\]]+\]\s+(\d+) tests run:\s*(\d+) passed",plain)
+                      if re.match(r"^\s*(?:PASS|FLAKY)\s+\[",plain):
+                          pass_lines += 1
+                      summary = re.search(r"Summary\s+\[[^\]]+\]\s+(\d+) tests? run:\s*(\d+) passed",plain)
                       if summary and summary.group(1) == summary.group(2):
                           passed = int(summary.group(2))
                       if "PASS" in plain and ("whole_part_mesh_preserves_narrow_selected_ribbons" in plain or "selected_trim_mesh_agrees_with_the_independent_cgb243_area" in plain):
                           regressions.append(plain.strip())
                   code = proc.wait()
               print("::endgroup::",flush=True)
-              if code or passed is None:
-                  raise SystemExit(f"Shard {n} exited {code}, matched summary {passed}")
-              row = {"shard":n,"shard_count":15,"passed":passed,"filter_sha256":hashlib.sha256(expr.encode()).hexdigest(),
+              measured = passed if passed is not None else pass_lines
+              if code or measured != expected:
+                  raise SystemExit(f"Shard {n} exited {code}, expected {expected}, measured {measured}")
+              row = {"shard":n,"shard_count":15,"inventory":inventory,"passed":measured,"filter_sha256":hashlib.sha256(expr.encode()).hexdigest(),
                      "unstarted_job":job_id,"source_attempt":state["run_attempt"],"regressions":regressions}
               (receipt/f"shard-{n:02}.json").write_text(json.dumps(row,indent=2)+"\n")
               completed.add(n)
