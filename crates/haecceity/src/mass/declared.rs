@@ -218,8 +218,9 @@ impl EdgeTrim {
     /// Tessellation starts from its own uniform parameter grid. Integration's knot
     /// panels are not uniform samples: feeding them to the mesh planner can stagger
     /// the two sides of a narrow ribbon and fold its triangles. Use the mesher's
-    /// parameter-side resolution before chord refinement, keeping measurement's
-    /// nodes and samples independent of this cache.
+    /// own initial resolution before chord refinement, keeping measurement's
+    /// nodes and samples independent of this cache. The grid is a tessellation
+    /// heuristic, not a bound on relative area error.
     pub(crate) fn mesh_samples(
         &self,
         s: &Surface,
@@ -228,7 +229,7 @@ impl EdgeTrim {
         self.mesh_samples
             .get_or_init(|| {
                 let (a, b) = self.interval;
-                let n = crate::mesh::CUT_SAMPLES;
+                let n = 64;
                 let ts: Vec<_> = (0..=n).map(|i| a + (b - a) * i as f64 / n as f64).collect();
                 self.sample(s, edge, &ts)
             })

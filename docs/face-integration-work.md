@@ -165,6 +165,19 @@ from the sphere centre. Refinement places points back on the same sphere.
 The mesh still reports the surface's usual parameters and original shared
 boundary positions.
 
+This chart also explains most of cgb202's triangle-count reduction. With the
+same Windows build and tolerances, the original selected-boundary implementation
+has 259,936 triangles versus 272,196 at `6e56fd77`: spherical faces account for
+a reduction of 12,598, offset by 338 additional triangles elsewhere. Disabling
+only the central projection increases the selected-boundary result to 279,944;
+only 174 spherical faces change, adding 10,004 interior vertices while keeping
+their shared spatial boundary points identical. Non-spherical faces are
+unchanged in this ablation. A spherical pole can retain a different equivalent
+longitude in the reported UV coordinates. The separate sampling cache below
+gives 259,454 triangles. The known refusal at face 399 remains in all versions;
+the reduced count does not come from dropping additional faces. Exact totals
+can differ slightly between Windows and ARM macOS.
+
 ### Separate tessellation samples from integration panels
 
 Integration partitions a selected trim at spline knots and transferred carrier
@@ -172,9 +185,9 @@ knots. Those panels are not uniform parameter stations, even when the spatial
 curve is smooth. Reusing their samples in the mesh planner can stagger the two
 sides of a narrow freeform ribbon and introduce folded triangles.
 
-Meshing now has its own trim-sample cache. It starts with the same 128 uniform
-parameter segments used for sampled parameter sides, then refines to the existing
-edge chord tolerance. The selected curve, STEP endpoints and shared edge plan
+Meshing now has its own trim-sample cache. It starts with 64 uniform parameter
+segments, then refines to the existing edge chord tolerance. The selected curve,
+STEP endpoints and shared edge plan
 remain in use; measurements keep their original nodes and sample cache. This is
 a tessellation sampling policy, not a relative-area guarantee for arbitrary faces.
 
@@ -182,7 +195,15 @@ The focused whole-part regression checks the six narrow faces of
 `threaded_connector_109` independently of the corpus perimeter allowance: each
 must be within 1% of its integral area and drop no folded triangles. The cgb243
 test still checks both single-face and whole-part calls against its independent
-area reference. On Windows, both now give 613 triangles and 0.802070% area error.
+area reference. The whole-part call on Windows gives 657 triangles and 0.993655%
+area error. Its neighbours #50870 and #60095 must also remain outward under the
+corpus winding criterion. Increasing the seed to 128 improves #60132's area but
+introduces inward analytic slivers; 256 also fails that check. Density alone is
+not an accuracy guarantee, and the grid is an empirically checked policy.
+The two existing 37-degree placement checks give 1.043417% and 0.949687% with
+their recomputed default deflections, and 0.993655% with the original deflection.
+Relative area can still exceed 1% as the requested deflection changes. This
+remains a limitation of the tessellation, not of the integral reference.
 The resource measurements below predate this separate sampling cache; they do not
 measure the updated sampler's cost.
 

@@ -190,6 +190,37 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
         );
         assert!((area / exact - 1.0).abs() <= 0.01);
     }
+    // A denser uniform seed can introduce inward slivers on neighbouring
+    // analytic faces even while #60132's area improves. Keep the original
+    // corpus winding criterion alongside the independent area check.
+    for (face, entity) in [(342, 50_870), (541, 60_095)] {
+        assert_eq!(part.face_source(face).unwrap().entity, entity);
+        let mesh = all[face].as_ref().unwrap();
+        assert!(mesh.converged);
+        for tri in &mesh.triangles {
+            let points = tri.map(|i| mesh.points[i]);
+            let uv = tri.map(|i| mesh.uv[i]);
+            let hint = (
+                uv.iter().map(|p| p.0).sum::<f64>() / 3.0,
+                uv.iter().map(|p| p.1).sum::<f64>() / 3.0,
+            );
+            let cross = geom::cross(
+                geom::sub(points[1], points[0]),
+                geom::sub(points[2], points[0]),
+            );
+            let longest = (0..3)
+                .map(|i| geom::dist(points[i], points[(i + 1) % 3]))
+                .fold(0.0, f64::max);
+            if geom::norm(cross) > 1e-6 * deflection * longest {
+                let (_, (u, v)) = off_surface(&part, face, mean(&points), hint).unwrap();
+                let normal = part.face_normal(face, u, v).unwrap();
+                assert!(
+                    geom::dot(cross, normal) > 0.0,
+                    "face {face}: inward triangle {tri:?}"
+                );
+            }
+        }
+    }
 }
 
 /// Integral knot panels must not stagger the opposite sides of a narrow ribbon
