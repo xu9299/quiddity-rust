@@ -457,8 +457,7 @@ impl<'a> PartMesher<'a> {
                     // Boundary selection needs geometric qualification, not the
                     // successful completion of area and flux integration.
                     let trim = part.declared_boundary(face)?.edges.get(&edge)?;
-                    let samples =
-                        trim.mesh_samples(&part.faces[face].surface, &part.edges[edge])?;
+                    let samples = trim.mesh_samples(part, face, edge)?;
                     samples
                         .points
                         .iter()

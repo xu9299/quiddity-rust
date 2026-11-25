@@ -29,9 +29,10 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
-- Selected-edge meshes use a separate tessellation sampling grid instead of
-  integration knot panels, preventing folded triangles on narrow freeform ribbons.
-  Area and moment integration retain their existing samples and knot partitions.
+- Mesh edges incident only to freeform faces, and mixed edges with an analytic
+  trim carrier, use uniform parameter stations before chord refinement. This
+  prevents folds on narrow freeform ribbons while preserving the orientation
+  of adjacent analytic faces on cgb243.
 
 - Face triangulation follows geometrically qualified STEP-selected parametric
   edge curves, with one spatial sampling plan shared by incident faces.

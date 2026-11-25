@@ -173,8 +173,8 @@ only the central projection increases the selected-boundary result to 279,944;
 only 174 spherical faces change, adding 10,004 interior vertices while keeping
 their shared spatial boundary points identical. Non-spherical faces are
 unchanged in this ablation. A spherical pole can retain a different equivalent
-longitude in the reported UV coordinates. The separate sampling cache below
-gives 259,454 triangles. The known refusal at face 399 remains in all versions;
+longitude in the reported UV coordinates. The scoped sampling rule below
+gives 259,934 triangles on Windows. The known refusal at face 399 remains in all versions;
 the reduced count does not come from dropping additional faces. Exact totals
 can differ slightly between Windows and ARM macOS.
 
@@ -185,27 +185,28 @@ knots. Those panels are not uniform parameter stations, even when the spatial
 curve is smooth. Reusing their samples in the mesh planner can stagger the two
 sides of a narrow freeform ribbon and introduce folded triangles.
 
-Meshing now has its own trim-sample cache. It starts with 64 uniform parameter
-segments, then refines to the existing edge chord tolerance. The selected curve,
-STEP endpoints and shared edge plan
-remain in use; measurements keep their original nodes and sample cache. This is
-a tessellation sampling policy, not a relative-area guarantee for arbitrary faces.
+The mesh planner uses 128 uniform parameter segments before chord refinement
+when every incident face is freeform, or when a non-freeform carrier supplies
+the selected trim to a freeform face. It uses the surface that owns the pcurve,
+including the source surface of a transferred trim. Each of the six reported
+ribbons shares a cylinder-owned edge with a cylindrical face. Freeform-owned
+edges with an analytic neighbour and edges with only analytic incident faces
+use the original knot-based stations. All incident faces use one shared
+spatial edge plan. Integration accesses its own knot partitions and samples.
 
 The focused whole-part regression checks the six narrow faces of
 `threaded_connector_109` independently of the corpus perimeter allowance: each
 must be within 1% of its integral area and drop no folded triangles. The cgb243
 test still checks both single-face and whole-part calls against its independent
-area reference. The whole-part call on Windows gives 657 triangles and 0.993655%
-area error. Its neighbours #50870 and #60095 must also remain outward under the
-corpus winding criterion. Increasing the seed to 128 improves #60132's area but
-introduces inward analytic slivers; 256 also fails that check. Density alone is
-not an accuracy guarantee, and the grid is an empirically checked policy.
-The two existing 37-degree placement checks give 1.043417% and 0.949687% with
-their recomputed default deflections, and 0.993655% with the original deflection.
-Relative area can still exceed 1% as the requested deflection changes. This
-remains a limitation of the tessellation, not of the integral reference.
-The resource measurements below predate this separate sampling cache; they do not
-measure the updated sampler's cost.
+area reference. On Windows both calls give 613 triangles and 0.802070% area
+error. With 128 segments on every selected edge, #50870 and #60095 gained
+two and five inward triangles respectively. The scoped rule preserves outward
+orientation on both. On #60132 itself, 15 retained triangles face inward
+under the corpus normal check and three folded triangles were dropped.
+The two 37-degree placement checks give 0.761169% and 0.762033% with recomputed
+default deflections and 0.802070% with the original deflection. These are
+fixture measurements. Relative area on other faces and deflections can exceed 1%.
+The Windows resource measurements further below precede this sampling rule.
 
 ## The native spline integration rule introduced in #281
 

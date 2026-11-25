@@ -169,7 +169,8 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
         assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
         return;
     };
-    let part = read_step_file(&dir.join("cadgenbench_inputs/cgb243.step.gz")).unwrap();
+    let path = dir.join("cadgenbench_inputs/cgb243.step.gz");
+    let part = read_step_file(&path).unwrap();
     let face = 543;
     assert_eq!(part.face_source(face).unwrap().entity, 60_132);
     // Independent Green integration of the four carrier pcurves gives
@@ -178,9 +179,9 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
     let reference = 0.481_554_764_2;
     let exact = part.face_moments(face).unwrap().area;
     assert!((exact - reference).abs() < 1e-9);
-    let deflection = deflection(&part);
-    let single = part.triangulate(face, deflection, ANGULAR).unwrap();
-    let all = part.mesh(deflection, ANGULAR);
+    let d = deflection(&part);
+    let single = part.triangulate(face, d, ANGULAR).unwrap();
+    let all = part.mesh(d, ANGULAR);
     for mesh in [&single, all[face].as_ref().unwrap()] {
         let area = mesh.area();
         eprintln!(
@@ -211,7 +212,7 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
             let longest = (0..3)
                 .map(|i| geom::dist(points[i], points[(i + 1) % 3]))
                 .fold(0.0, f64::max);
-            if geom::norm(cross) > 1e-6 * deflection * longest {
+            if geom::norm(cross) > 1e-6 * d * longest {
                 let (_, (u, v)) = off_surface(&part, face, mean(&points), hint).unwrap();
                 let normal = part.face_normal(face, u, v).unwrap();
                 assert!(
@@ -220,6 +221,20 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
                 );
             }
         }
+    }
+    // Rotating the part changes its axis-aligned bounds and hence the default
+    // deflection. The uniform 64-segment grid missed 1% on the first placement.
+    let (s, c) = 37_f64.to_radians().sin_cos();
+    for placement in [
+        [[c, -s, 0., 0.], [s, c, 0., 0.], [0., 0., 1., 0.]],
+        [[1., 0., 0., 123.456], [0., c, -s, -78.9], [0., s, c, 41.3]],
+    ] {
+        let placed = haecceity::step::read_step_file_placed(&path, &placement).unwrap();
+        assert_eq!(placed.face_source(face).unwrap().entity, 60_132);
+        let mesh = placed
+            .triangulate(face, deflection(&placed), ANGULAR)
+            .unwrap();
+        assert!((mesh.area() / reference - 1.0).abs() <= 0.01);
     }
 }
 

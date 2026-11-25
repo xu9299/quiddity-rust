@@ -215,23 +215,36 @@ impl EdgeTrim {
             .as_ref()
     }
 
-    /// Tessellation starts from its own uniform parameter grid. Integration's knot
-    /// panels are not uniform samples: feeding them to the mesh planner can stagger
-    /// the two sides of a narrow ribbon and fold its triangles. Use the mesher's
-    /// own initial resolution before chord refinement, keeping measurement's
-    /// nodes and samples independent of this cache. The grid is a tessellation
-    /// heuristic, not a bound on relative area error.
+    /// Uniform parameter stations keep opposite sides of a narrow freeform strip
+    /// aligned. On a mixed edge, use them when the selected curve comes from the
+    /// analytic carrier. A freeform trim transferred to an analytic face can
+    /// produce inward slivers there if its boundary stations change.
     pub(crate) fn mesh_samples(
         &self,
-        s: &Surface,
-        edge: &crate::brep::Edge,
+        part: &Part,
+        face: usize,
+        edge: usize,
     ) -> Option<&TrimSamples> {
+        let surface = &part.faces[face].surface;
+        let carrier = self
+            .curve
+            .transfer
+            .as_ref()
+            .map_or(surface, |tr| &tr.carrier);
+        let incident = &part.edge_faces()[edge];
+        let freeform = |&i: &usize| matches!(part.faces[i].surface, Surface::Freeform { .. });
+        let uniform = incident.iter().any(freeform)
+            && (!matches!(carrier, Surface::Freeform { .. }) || incident.iter().all(freeform));
+        let edge = &part.edges[edge];
+        if !uniform {
+            return self.samples(surface, edge);
+        }
         self.mesh_samples
             .get_or_init(|| {
                 let (a, b) = self.interval;
-                let n = 64;
+                let n = 128;
                 let ts: Vec<_> = (0..=n).map(|i| a + (b - a) * i as f64 / n as f64).collect();
-                self.sample(s, edge, &ts)
+                self.sample(surface, edge, &ts)
             })
             .as_ref()
     }
