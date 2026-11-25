@@ -226,6 +226,18 @@ with the same inputs and counter gave baseline ratios of 5.152, 2.003 and
 1.519 respectively. The Windows resource tables below precede the sampling
 change.
 
+## Rebuilding affected mesh preparation
+
+A boundary retry invalidates only the faces and shared-edge plans that depend
+on that boundary. Interior refinement waits until the shared boundary plans
+settle, so a refused selected chart does not discard completed refinement of
+every face. A spherical projection is attempted only after the ordinary
+parameter chart folds, with the same area and orientation guards.
+
+The dependency state belongs to one meshing call. Retrying a boundary can still
+change the triangulation and its refinement cost. This does not change the
+general geometry, NURBS evaluators, integration rules or recognition policy.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.
