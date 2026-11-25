@@ -174,8 +174,8 @@ only 174 spherical faces change, adding 10,004 interior vertices while keeping
 their shared spatial boundary points identical. Non-spherical faces are
 unchanged in this ablation. A spherical pole can retain a different equivalent
 longitude in the reported UV coordinates. The scoped sampling rule below
-gives 259,934 triangles on Windows. The known refusal at face 399 remains in all versions;
-the reduced count does not come from dropping additional faces. Exact totals
+gives 260,000 triangles on Windows. Every version retains just the known refusal
+at face 399. Exact totals
 can differ slightly between Windows and ARM macOS.
 
 ### Separate tessellation samples from integration panels
@@ -185,7 +185,7 @@ knots. Those panels are not uniform parameter stations, even when the spatial
 curve is smooth. Reusing their samples in the mesh planner can stagger the two
 sides of a narrow freeform ribbon and introduce folded triangles.
 
-The mesh planner uses 128 uniform parameter segments before chord refinement
+The mesh planner uses 192 uniform parameter segments before chord refinement
 when every incident face is freeform, or when a non-freeform carrier supplies
 the selected trim to a freeform face. It uses the surface that owns the pcurve,
 including the source surface of a transferred trim. Each of the six reported
@@ -198,19 +198,21 @@ The focused whole-part regression checks the six narrow faces of
 `threaded_connector_109` independently of the corpus perimeter allowance: each
 must be within 1% of its integral area and drop no folded triangles. The cgb243
 test still checks both single-face and whole-part calls against its independent
-area reference. On Windows both calls give 613 triangles and 0.802070% area
+area reference. On Windows both calls give 438 triangles and 0.715804% area
 error. With 128 segments on every selected edge, #50870 and #60095 gained
 two and five inward triangles respectively. The scoped rule preserves outward
-orientation on both. On #60132 itself, 15 retained triangles face inward
-under the corpus normal check and three folded triangles were dropped.
-The two 37-degree placement checks give 0.761169% and 0.762033% with recomputed
-default deflections and 0.802070% with the original deflection. Across 72
-additional placements of this face on Windows, the largest area error was
-0.863130% at the original deflection. Recomputing the deflection from each
-placed bounding box gave eight results above 1%, with a maximum of 1.010172%.
+orientation on both. On #60132 itself, seven retained triangles face inward
+under the corpus normal check and four folded triangles were dropped.
+The two 37-degree placement checks give 0.810808% and 0.726102% with recomputed
+default deflections and 0.715804% with the original deflection. Across 72
+additional placements the largest area error was 0.852285% at the recomputed
+deflection. A separate set of 128 rotations gave a maximum of 0.840593%.
+With 128 starting segments the corresponding maxima were 1.010172% and
+0.996699%. These figures apply to this fixture and these deflections.
 
-On Linux x86-64, one STEP read and one whole-part mesh of cgb243 used 3.814
-times the user-space instructions of the spatial-edge baseline. The original
+In an earlier trial with 128 starting segments on Linux x86-64, one STEP read
+and one whole-part mesh of cgb243 used 3.814 times the user-space instructions
+of the spatial-edge baseline. The original
 PR used 5.152 times the baseline in the same run. The corresponding ratios on
 cgb202 were 2.008 and 2.003. Each measurement counted the worker thread
 through the release of the mesh and part, with eight paired observations.

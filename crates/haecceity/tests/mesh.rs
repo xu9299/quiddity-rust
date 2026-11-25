@@ -223,11 +223,14 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
         }
     }
     // Rotating the part changes its axis-aligned bounds and hence the default
-    // deflection. The uniform 64-segment grid missed 1% on the first placement.
+    // deflection. The 64-segment grid missed 1% at 37 degrees and the scoped
+    // 128-segment grid missed it at 85 degrees around Z.
     let (s, c) = 37_f64.to_radians().sin_cos();
+    let (s85, c85) = 85_f64.to_radians().sin_cos();
     for placement in [
         [[c, -s, 0., 0.], [s, c, 0., 0.], [0., 0., 1., 0.]],
         [[1., 0., 0., 123.456], [0., c, -s, -78.9], [0., s, c, 41.3]],
+        [[c85, -s85, 0., 0.], [s85, c85, 0., 0.], [0., 0., 1., 0.]],
     ] {
         let placed = haecceity::step::read_step_file_placed(&path, &placement).unwrap();
         assert_eq!(placed.face_source(face).unwrap().entity, 60_132);
