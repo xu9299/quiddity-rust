@@ -1,0 +1,74 @@
+name: Narrow selected mesh ARM resource comparison
+on:
+  push:
+    branches: [validation/narrow-mesh-resources-349-20261125]
+permissions:
+  contents: read
+concurrency:
+  group: narrow-mesh-resources-349-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  RUSTUP_TOOLCHAIN: 1.99.1
+  RUSTFLAGS: ''
+  CARGO_BUILD_JOBS: '3'
+  CARGO_TERM_COLOR: never
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  LC_ALL: C
+jobs:
+  resources:
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 6e56fd775b43c748430a2bf9dc3f7b561a081822
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: uv
+      - name: Check native hardware counter availability
+        shell: bash
+        run: |
+          uv run --no-project --python 3.13 python controller/.mesh-resource/run.py capability --source "$PWD/source" --corpus "$PWD/corpus" --out "$PWD/resource-evidence" --plan "$PWD/controller/.mesh-resource/plan.json" --probe "$PWD/controller/.mesh-resource/probe.rs"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mesh-arm-counter-capability
+          path: |
+            resource-evidence/capability.json
+            resource-evidence/counter-probe.time.txt
+            resource-evidence/counter-probe.c
+          if-no-files-found: error
+          retention-days: 30
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: selected-mesh-resources-arm26
+      - name: Build and measure three fixed library sources sequentially
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          uv run --no-project --python 3.13 python controller/.mesh-resource/run.py measure --source "$PWD/source" --corpus "$PWD/corpus" --out "$PWD/resource-evidence" --plan "$PWD/controller/.mesh-resource/plan.json" --probe "$PWD/controller/.mesh-resource/probe.rs"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-arm-resource-evidence
+          path: |
+            resource-evidence/*.json
+            resource-evidence/*.jsonl
+            resource-evidence/*.log
+            resource-evidence/*.txt
+            resource-evidence/*.c
+          if-no-files-found: error
+          retention-days: 30
