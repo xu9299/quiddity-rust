@@ -1,0 +1,56 @@
+name: Measure retired instructions after the narrow-face fix
+on:
+  push:
+    branches: ['validation/mesh-b5336ca7-main-resources']
+permissions:
+  contents: read
+jobs:
+  instructions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1
+      RUSTFLAGS: ''
+      CARGO_BUILD_JOBS: '3'
+      CARGO_TERM_COLOR: never
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      LC_ALL: C
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 287d6270fa736dd569077319eab2e276a26ffe99
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: uv
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: selected-mesh-linux-instructions
+      - name: Calibrate the workload thread and measure the fixed density controls
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          uv run --no-project --python 3.13 python controller/.mesh-pmu/five.py source corpus evidence
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: selected-mesh-instruction-evidence-${{ github.run_attempt }}
+          path: |
+            evidence/*.json
+            evidence/*.jsonl
+            evidence/*.log
+            evidence/*.rs
+          if-no-files-found: error
+          retention-days: 30
