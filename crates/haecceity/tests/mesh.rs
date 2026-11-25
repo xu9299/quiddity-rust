@@ -198,29 +198,7 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
         assert_eq!(part.face_source(face).unwrap().entity, entity);
         let mesh = all[face].as_ref().unwrap();
         assert!(mesh.converged);
-        for tri in &mesh.triangles {
-            let points = tri.map(|i| mesh.points[i]);
-            let uv = tri.map(|i| mesh.uv[i]);
-            let hint = (
-                uv.iter().map(|p| p.0).sum::<f64>() / 3.0,
-                uv.iter().map(|p| p.1).sum::<f64>() / 3.0,
-            );
-            let cross = geom::cross(
-                geom::sub(points[1], points[0]),
-                geom::sub(points[2], points[0]),
-            );
-            let longest = (0..3)
-                .map(|i| geom::dist(points[i], points[(i + 1) % 3]))
-                .fold(0.0, f64::max);
-            if geom::norm(cross) > 1e-6 * d * longest {
-                let (_, (u, v)) = off_surface(&part, face, mean(&points), hint).unwrap();
-                let normal = part.face_normal(face, u, v).unwrap();
-                assert!(
-                    geom::dot(cross, normal) > 0.0,
-                    "face {face}: inward triangle {tri:?}"
-                );
-            }
-        }
+        assert_outward_mesh(&part, face, mesh, d);
     }
     // Rotating the part changes its axis-aligned bounds and hence the default
     // deflection. The 64-segment grid missed 1% at 37 degrees and the scoped
@@ -241,6 +219,32 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
     }
 }
 
+fn assert_outward_mesh(part: &Part, face: usize, mesh: &FaceMesh, d: f64) {
+    for tri in &mesh.triangles {
+        let points = tri.map(|i| mesh.points[i]);
+        let uv = tri.map(|i| mesh.uv[i]);
+        let hint = (
+            uv.iter().map(|p| p.0).sum::<f64>() / 3.0,
+            uv.iter().map(|p| p.1).sum::<f64>() / 3.0,
+        );
+        let cross = geom::cross(
+            geom::sub(points[1], points[0]),
+            geom::sub(points[2], points[0]),
+        );
+        let longest = (0..3)
+            .map(|i| geom::dist(points[i], points[(i + 1) % 3]))
+            .fold(0.0, f64::max);
+        if geom::norm(cross) > 1e-6 * d * longest {
+            let (_, (u, v)) = off_surface(part, face, mean(&points), hint).unwrap();
+            let normal = part.face_normal(face, u, v).unwrap();
+            assert!(
+                geom::dot(cross, normal) > 0.0,
+                "face {face}: inward triangle {tri:?}"
+            );
+        }
+    }
+}
+
 /// Integral knot panels must not stagger the opposite sides of a narrow ribbon
 /// when the part's incident faces share an edge sampling plan.
 #[test]
@@ -250,7 +254,8 @@ fn whole_part_mesh_preserves_narrow_selected_ribbons() {
         return;
     };
     let part = read_step_file(&dir.join("cadgenbench/threaded_connector_109.step")).unwrap();
-    let meshes = part.mesh(deflection(&part), ANGULAR);
+    let d = deflection(&part);
+    let meshes = part.mesh(d, ANGULAR);
     for (face, entity) in [
         (55, 9366),
         (112, 16858),
@@ -269,6 +274,12 @@ fn whole_part_mesh_preserves_narrow_selected_ribbons() {
             mesh.area()
         );
         assert_eq!(mesh.folded_dropped.0, 0, "face {face} folded");
+    }
+    // These two distinct, already inaccurate faces gained inward triangles
+    // with 192 starting segments. Check orientation independently of area.
+    for (face, entity) in [(16, 4301), (138, 20128)] {
+        assert_eq!(part.face_source(face).unwrap().entity, entity);
+        assert_outward_mesh(&part, face, meshes[face].as_ref().unwrap(), d);
     }
 }
 

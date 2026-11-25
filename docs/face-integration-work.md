@@ -196,7 +196,10 @@ spatial edge plan. Integration accesses its own knot partitions and samples.
 
 The focused whole-part regression checks the six narrow faces of
 `threaded_connector_109` independently of the corpus perimeter allowance: each
-must be within 1% of its integral area and drop no folded triangles. The cgb243
+must be within 1% of its integral area and drop no folded triangles. On two
+other faces of this part (16 and 138), the regression checks winding against
+the surface normals. They retain their known area errors. In a 192-segment
+trial these two faces gained more than 3,000 inward triangles. The cgb243
 test still checks both single-face and whole-part calls against its independent
 area reference. On Windows both calls give 475 triangles and 0.877668% area
 error. With 128 segments on every selected edge, #50870 and #60095 gained
