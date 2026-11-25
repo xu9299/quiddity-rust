@@ -165,6 +165,27 @@ from the sphere centre. Refinement places points back on the same sphere.
 The mesh still reports the surface's usual parameters and original shared
 boundary positions.
 
+### Separate tessellation samples from integration panels
+
+Integration partitions a selected trim at spline knots and transferred carrier
+knots. Those panels are not uniform parameter stations, even when the spatial
+curve is smooth. Reusing their samples in the mesh planner can stagger the two
+sides of a narrow freeform ribbon and introduce folded triangles.
+
+Meshing now has its own trim-sample cache. It starts with the same 128 uniform
+parameter segments used for sampled parameter sides, then refines to the existing
+edge chord tolerance. The selected curve, STEP endpoints and shared edge plan
+remain in use; measurements keep their original nodes and sample cache. This is
+a tessellation sampling policy, not a relative-area guarantee for arbitrary faces.
+
+The focused whole-part regression checks the six narrow faces of
+`threaded_connector_109` independently of the corpus perimeter allowance: each
+must be within 1% of its integral area and drop no folded triangles. The cgb243
+test still checks both single-face and whole-part calls against its independent
+area reference. On Windows, both now give 613 triangles and 0.802070% area error.
+The resource measurements below predate this separate sampling cache; they do not
+measure the updated sampler's cost.
+
 ## The native spline integration rule introduced in #281
 
 The original #281 fix tried this specialised integral after a refused projection.

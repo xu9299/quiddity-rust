@@ -60,9 +60,9 @@ const MAX_ROUNDS: usize = 40;
 /// single face can take (a large freeform face at a fine deflection). A face stopped by it is
 /// still meshed, coarser than asked, and says so ([`FaceMesh::converged`]).
 const MAX_VERTICES: usize = 60_000;
-/// Samples taken along a parameter line added to a face's boundary (a cut, a pole's line),
-/// before thinning.
-const CUT_SAMPLES: usize = 128;
+/// Initial segments of a selected trim, or samples along a parameter line added to
+/// a face's boundary (a cut, a pole's line), before thinning.
+pub(super) const CUT_SAMPLES: usize = 128;
 /// Boundary thinning, as shares of the chordal deflection: thinning can make two close
 /// stretches of a boundary cross in parameter space (a narrow neck of the face), so a face that
 /// crosses is tried again with its edges thinned less, down to the samples themselves.
@@ -457,7 +457,8 @@ impl<'a> PartMesher<'a> {
                     // Boundary selection needs geometric qualification, not the
                     // successful completion of area and flux integration.
                     let trim = part.declared_boundary(face)?.edges.get(&edge)?;
-                    let samples = trim.samples(&part.faces[face].surface, &part.edges[edge])?;
+                    let samples =
+                        trim.mesh_samples(&part.faces[face].surface, &part.edges[edge])?;
                     samples
                         .points
                         .iter()

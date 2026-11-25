@@ -192,6 +192,37 @@ fn selected_trim_mesh_agrees_with_the_independent_cgb243_area() {
     }
 }
 
+/// Integral knot panels must not stagger the opposite sides of a narrow ribbon
+/// when the part's incident faces share an edge sampling plan.
+#[test]
+fn whole_part_mesh_preserves_narrow_selected_ribbons() {
+    let Some(dir) = common::corpus_dir() else {
+        assert!(std::env::var_os("QUIDDITY_CORPUS_REQUIRED").is_none());
+        return;
+    };
+    let part = read_step_file(&dir.join("cadgenbench/threaded_connector_109.step")).unwrap();
+    let meshes = part.mesh(deflection(&part), ANGULAR);
+    for (face, entity) in [
+        (55, 9366),
+        (112, 16858),
+        (148, 20421),
+        (136, 20024),
+        (142, 20284),
+        (141, 20250),
+    ] {
+        assert_eq!(part.face_source(face).unwrap().entity, entity);
+        let mesh = meshes[face].as_ref().unwrap();
+        let area = part.face_moments(face).unwrap().area;
+        assert!(mesh.converged, "face {face} did not converge");
+        assert!(
+            (mesh.area() / area - 1.0).abs() <= 0.01,
+            "face {face}: {} against {area}",
+            mesh.area()
+        );
+        assert_eq!(mesh.folded_dropped.0, 0, "face {face} folded");
+    }
+}
+
 #[test]
 fn a_selected_knot_near_a_step_vertex_has_one_shared_mesh_endpoint() {
     let Some(dir) = common::corpus_dir() else {

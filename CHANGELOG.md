@@ -29,6 +29,10 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ### Fixed
 
+- Selected-edge meshes use a separate tessellation sampling grid instead of
+  integration knot panels, preventing folded triangles on narrow freeform ribbons.
+  Area and moment integration retain their existing samples and knot partitions.
+
 - Face triangulation follows geometrically qualified STEP-selected parametric
   edge curves, with one spatial sampling plan shared by incident faces.
   Compatible spherical caps use a central projection to preserve triangle
