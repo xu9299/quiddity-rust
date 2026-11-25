@@ -39,6 +39,30 @@ in [docs/alpha1.md](docs/alpha1.md).
 - Fingerprints use `quiddity-rust/fingerprint/5` because the STEP-selected boundary (#317)
   changes face and solid measurements. Regenerate earlier fingerprints from STEP before matching.
 
+### Changed
+
+- Selected-boundary preparation reuses immutable curve operands, bounded curve
+  checks, inverse seeds and receiving-surface evaluations within one part.
+  Mesh parameter loops have a separate cache from integration decisions;
+  finite-domain, endpoint and nonfinite fallbacks remain in place.
+
+### Fixed
+
+- Mesh edges incident only to freeform faces, and mixed edges with an analytic
+  trim carrier, start from 256 uniform parameter segments before chord refinement.
+  The six reported narrow faces of `threaded_connector_109` mesh with zero
+  folded triangle drops. The adjacent analytic controls on cgb243 retain
+  outward winding.
+
+- Face triangulation follows geometrically qualified STEP-selected parametric
+  edge curves, with one spatial sampling plan shared by incident faces.
+  Compatible spherical caps use a central projection to preserve triangle
+  orientation along narrow selected trims. Ordinary boundary selection does not
+  require area or flux integration; the spherical-cap compatibility check still
+  consults that face's area. Unusable selections or selected loops that still
+  refuse triangulation use shared spatial edges instead. Preparing selected
+  boundaries can increase both first and repeated mesh-call times.
+
 ### haecceity
 
 - For #351, measure whole and trimmed spherical faces, closed spline faces, and spindle torus
