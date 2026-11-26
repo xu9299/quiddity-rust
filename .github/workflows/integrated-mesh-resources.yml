@@ -1,0 +1,145 @@
+name: Integrated mesh instruction and memory comparison
+on:
+  push:
+    branches:
+      - validation/mesh-stack-resources-9a093526
+permissions:
+  contents: read
+env:
+  RUSTUP_TOOLCHAIN: '1.99.1'
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  CARGO_BUILD_JOBS: '3'
+  CARGO_TERM_COLOR: never
+  LC_ALL: C
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    outputs:
+      hardware: ${{ steps.measure.outputs.hardware }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: uv
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: integrated-mesh-resources-ubuntu-24.04
+      - name: Measure retired instructions and peak RSS
+        id: measure
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          uv run --no-project --python 3.13 python controller/.mesh-stack/bench.py source corpus evidence native
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-resources-native
+          path: |
+            evidence/*.json
+            evidence/*.jsonl
+          if-no-files-found: error
+          retention-days: 30
+  alternate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 110
+    needs: native
+    if: ${{ needs.native.result == 'success' && needs.native.outputs.hardware == 'false' }}
+    outputs:
+      hardware: ${{ steps.measure.outputs.hardware }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: uv
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: integrated-mesh-resources-ubuntu-22.04
+      - name: Measure retired instructions and peak RSS
+        id: measure
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          uv run --no-project --python 3.13 python controller/.mesh-stack/bench.py source corpus evidence hardware-only
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-resources-alternate
+          path: |
+            evidence/*.json
+            evidence/*.jsonl
+          if-no-files-found: error
+          retention-days: 30
+  arm:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 110
+    needs: alternate
+    if: ${{ needs.alternate.result == 'success' && needs.alternate.outputs.hardware == 'false' }}
+    outputs:
+      hardware: ${{ steps.measure.outputs.hardware }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: uv
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: integrated-mesh-resources-ubuntu-24.04-arm
+      - name: Measure retired instructions and peak RSS
+        id: measure
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          uv run --no-project --python 3.13 python controller/.mesh-stack/bench.py source corpus evidence hardware-only
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-resources-arm
+          path: |
+            evidence/*.json
+            evidence/*.jsonl
+          if-no-files-found: error
+          retention-days: 30
+

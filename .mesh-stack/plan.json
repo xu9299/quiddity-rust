@@ -1,0 +1,51 @@
+{
+  "corpus": "3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f",
+  "sources": {
+    "baseline": {
+      "source": "6e56fd775b43c748430a2bf9dc3f7b561a081822",
+      "tree": "5fc0a367fa21068d1d693c3678e24de6b6e9fcfd"
+    },
+    "correct": {
+      "source": "74fd289e531fb19ab3fb60bd84d31252df268a6b",
+      "tree": "83b6732081649adfa04d78a1c2f4d16a94882aea"
+    },
+    "boundary": {
+      "source": "d5ea3a83894adfe27dea47d3721ec24ca39de185",
+      "tree": "5e87a8ed5350e581cd8dbc11d0904283ff6919bd"
+    },
+    "evaluation": {
+      "source": "9a093526e2f77ec419386da4c3992c86037aecc6",
+      "tree": "952641212f7fbaa6a52f127bc0850d1a2b094181"
+    }
+  },
+  "inputs": {
+    "cgb245": {
+      "path": "cadgenbench_inputs/cgb245.step",
+      "sha256": "034d4dec7b699002d09eb45de66bd5e6971a91304589e67b105df0cbb7e40084"
+    },
+    "string": {
+      "path": "gramel/string_post.step",
+      "sha256": "7b7f1a4bf407ef7599d58e126e43e95f50d165212ed21bf6b2fc716d14bfdf85"
+    },
+    "cgb243": {
+      "path": "cadgenbench_inputs/cgb243.step.gz",
+      "sha256": "347489379f940cf5157d5252115b08cf1f6d0038b842c490f7ac4d74799dcd5e"
+    },
+    "cgb202": {
+      "path": "cadgenbench_inputs/cgb202.step.gz",
+      "sha256": "b933428be9151d702b564d5520727a32332be63e4ba66cf354eb2780f6377f7f"
+    },
+    "cgb242": {
+      "path": "cadgenbench_inputs/cgb242.step.gz",
+      "sha256": "74c48cccaa9fbbb14c4708c7a7290da109da29205cb5c6853faf63f364ff3144"
+    },
+    "narrow": {
+      "path": "cadgenbench/threaded_connector_109.step",
+      "sha256": "301cb3ce914fa28c68e3cc324d22a9b6e8ee119c7c76797e7d7052de7bccdcff"
+    },
+    "nist_ctc_04_asme1_rd": {
+      "path": "nist/nist_ctc_04_asme1_rd.stp",
+      "sha256": "cdb59a085a3364941b881f96b511265a7cb5f6e94180c4426bdc3025481f405a"
+    }
+  }
+}
