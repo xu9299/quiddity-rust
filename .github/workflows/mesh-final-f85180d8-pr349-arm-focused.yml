@@ -1,0 +1,74 @@
+name: Check PR 349 floating-point geometry on ARM Mac
+'on':
+  push:
+    branches: [validation/mesh-final-f85180d8-pr349-arm-focused]
+permissions:
+  contents: read
+env:
+  SOURCE: 4a0ae2f93dc6fae6a30b834fdb290c6781c8c70f
+  TREE: b98067bb9b1eb4442dac0cb85b5aadb68e0bcc34
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  RUSTUP_TOOLCHAIN: 1.99.1
+  RUST_MIN_STACK: '67108864'
+  CARGO_TERM_COLOR: never
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+jobs:
+  floating-and-strict:
+    runs-on: xcode-27
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: control
+          sparse-checkout: .github/mesh-validation
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+      - name: Identify release source, compiler and reference inputs
+        run: |
+          mkdir -p ../evidence
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(git -C ../corpus rev-parse HEAD)" = "$CORPUS"
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.99.1 --profile minimal
+          { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } | tee ../evidence/environment.log
+          (cd ../corpus && shasum -a 256 cadgenbench/threaded_connector_109.step cadgenbench_inputs/cgb243.step.gz) > ../evidence/inputs.sha256
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-xcode-27
+      - name: Check mesh regressions on the immutable source
+        run: |
+          cargo test -p haecceity --release --locked --test mesh -- whole_part_mesh_preserves_narrow_selected_ribbons selected_trim_mesh_agrees_with_the_independent_cgb243_area --nocapture 2>&1 | tee ../evidence/geometry.log
+      - name: Record per-face area and folded triangle counts
+        run: |
+          cargo build -p haecceity --lib --release --locked
+          rustc --edition=2024 -C opt-level=3 -L "dependency=$CARGO_TARGET_DIR/release/deps" --extern "haecceity=$CARGO_TARGET_DIR/release/libhaecceity.rlib" ../control/.github/mesh-validation/ribbons.rs -o ../ribbons
+          ../ribbons "$QUIDDITY_CORPUS/cadgenbench/threaded_connector_109.step" | tee ../evidence/ribbons.jsonl
+      - name: Reproduce the strict snapshots
+        if: always() && !cancelled()
+        run: cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-arm-focused
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
