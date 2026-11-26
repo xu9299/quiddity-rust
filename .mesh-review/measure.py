@@ -39,10 +39,19 @@ def main(source,corpus,evidence):
                 prefix=cmd
                 break
     save(evidence/"calibration.json",{"trials":trials,"command":prefix,"counter_sha256":digest(cfile)})
-    if prefix is None:raise RuntimeError("No calibrated worker instruction counter")
     cases={"cgb243":"cadgenbench_inputs/cgb243.step.gz","cgb242":"cadgenbench_inputs/cgb242.step.gz","string_post":"gramel/string_post.step"}
     stages=["pr349","stripped",*GROUPS]
-    save(evidence/"plan.json",{"stages":stages,"groups":GROUPS,"rounds":len(stages),"inputs":{k:digest(corpus/v) for k,v in cases.items()},
+    rounds=len(stages)
+    event_kind="hardware user-mode retired instructions"
+    if prefix is None:
+        subprocess.run(["sudo","-n","apt-get","update","-qq"],check=True)
+        subprocess.run(["sudo","-n","apt-get","install","-y","-qq","valgrind"],check=True)
+        subprocess.run(["cc","-O2","-c",HERE/"callgrind_counter.c","-o",countobj],check=True)
+        cases={"cgb243":cases["cgb243"]}
+        rounds=2
+        event_kind="Callgrind architectural guest instructions (Ir) on the worker"
+        save(evidence/"callgrind.json",{"version":subprocess.check_output(["valgrind","--version"]).decode().strip(),"counter_sha256":digest(HERE/"callgrind_counter.c")})
+    save(evidence/"plan.json",{"stages":stages,"groups":GROUPS,"rounds":rounds,"event":event_kind,"inputs":{k:digest(corpus/v) for k,v in cases.items()},
         "repo":HEAD,"parent":BASE,"corpus":git_bytes(corpus,"rev-parse","HEAD").decode().strip(),"rustc":subprocess.check_output(["rustc","-Vv"]).decode(),
         "kernel":subprocess.check_output(["uname","-a"]).decode(),"processor":subprocess.check_output(["lscpu"]).decode(),
         "worker_sha256":digest(HERE/"worker.rs"),"controller_sha256":digest(Path(__file__))})
@@ -71,16 +80,32 @@ def main(source,corpus,evidence):
         print("Built",stage,flush=True)
     # Every stage occupies every position once for each input in the rotated schedule.
     with (evidence/"samples.jsonl").open("w",encoding="utf8") as stream:
-        for rnd in range(len(stages)):
+        for rnd in range(rounds):
             names=list(cases)
             for ic,name in enumerate(names[rnd%len(names):]+names[:rnd%len(names)]):
                 rotation=(rnd+2*names.index(name))%len(stages)
-                for position,stage in enumerate(stages[rotation:]+stages[:rotation]):
-                    result=subprocess.run([*prefix,binaries[stage],corpus/cases[name],"1"],capture_output=True,check=True)
-                    event=json.loads(result.stderr)
-                    assert event["instructions"]>0 and event["running"]>=event["enabled"]*0.999>0
+                order=stages[rotation:]+stages[:rotation] if prefix else (stages if rnd==0 else list(reversed(stages)))
+                for position,stage in enumerate(order):
+                    args=[binaries[stage],corpus/cases[name],"1"]
+                    if prefix:
+                        result=subprocess.run([*prefix,*args],capture_output=True,check=True)
+                        event=json.loads(result.stderr)
+                        assert event["instructions"]>0 and event["running"]>=event["enabled"]*0.999>0
+                    else:
+                        pattern=f"cg-{rnd}-{stage}"
+                        base=builddir/(pattern+".%p")
+                        result=subprocess.run(["valgrind","--tool=callgrind","--cache-sim=no","--branch-sim=no","--instr-atstart=no","--separate-threads=yes","--callgrind-out-file="+str(base),*args],capture_output=True,check=True)
+                        records=[]
+                        for output in builddir.glob(pattern+".*"):
+                            with output.open(errors="replace") as cg:
+                                header=[line.strip() for _,line in zip(range(75),cg)]
+                            if any("Trigger: Client Request: mesh-workload" in line for line in header):
+                                assert "events: Ir" in header
+                                records.append(int(next(line.split()[1] for line in header if line.startswith("summary:"))))
+                        assert len(records)==1 and records[0]>0,(header,records)
+                        event={"instructions":records[0],"event":"Callgrind Ir"}
                     row=dict(round=rnd,case=name,stage=stage,position=position,**json.loads(result.stdout),**event)
                     stream.write(json.dumps(row)+"\n");stream.flush()
             print("Finished round",rnd,flush=True)
-    save(evidence/"completed.json",{"rounds":len(stages),"measurements":len(stages)**2*len(cases),"samples_sha256":digest(evidence/"samples.jsonl")})
+    save(evidence/"completed.json",{"rounds":rounds,"measurements":rounds*len(stages)*len(cases),"event":event_kind,"samples_sha256":digest(evidence/"samples.jsonl")})
 if __name__=="__main__":main(*(Path(s).resolve() for s in sys.argv[1:]))
