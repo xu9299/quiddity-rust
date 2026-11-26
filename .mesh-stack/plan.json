@@ -1,0 +1,127 @@
+{
+  "corpus": "3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f",
+  "inputs": {
+    "cgb245": {
+      "path": "cadgenbench_inputs/cgb245.step",
+      "sha256": "034d4dec7b699002d09eb45de66bd5e6971a91304589e67b105df0cbb7e40084"
+    },
+    "string": {
+      "path": "gramel/string_post.step",
+      "sha256": "7b7f1a4bf407ef7599d58e126e43e95f50d165212ed21bf6b2fc716d14bfdf85"
+    },
+    "cgb243": {
+      "path": "cadgenbench_inputs/cgb243.step.gz",
+      "sha256": "347489379f940cf5157d5252115b08cf1f6d0038b842c490f7ac4d74799dcd5e"
+    },
+    "cgb202": {
+      "path": "cadgenbench_inputs/cgb202.step.gz",
+      "sha256": "b933428be9151d702b564d5520727a32332be63e4ba66cf354eb2780f6377f7f"
+    },
+    "cgb242": {
+      "path": "cadgenbench_inputs/cgb242.step.gz",
+      "sha256": "74c48cccaa9fbbb14c4708c7a7290da109da29205cb5c6853faf63f364ff3144"
+    },
+    "narrow": {
+      "path": "cadgenbench/threaded_connector_109.step",
+      "sha256": "301cb3ce914fa28c68e3cc324d22a9b6e8ee119c7c76797e7d7052de7bccdcff"
+    },
+    "nist_ctc_04_asme1_rd": {
+      "path": "nist/nist_ctc_04_asme1_rd.stp",
+      "sha256": "cdb59a085a3364941b881f96b511265a7cb5f6e94180c4426bdc3025481f405a"
+    }
+  },
+  "orders": [
+    [
+      "baseline",
+      "main",
+      "evaluation",
+      "correct",
+      "boundary"
+    ],
+    [
+      "main",
+      "correct",
+      "baseline",
+      "boundary",
+      "evaluation"
+    ],
+    [
+      "correct",
+      "boundary",
+      "main",
+      "evaluation",
+      "baseline"
+    ],
+    [
+      "boundary",
+      "evaluation",
+      "correct",
+      "baseline",
+      "main"
+    ],
+    [
+      "evaluation",
+      "baseline",
+      "boundary",
+      "main",
+      "correct"
+    ],
+    [
+      "boundary",
+      "correct",
+      "evaluation",
+      "main",
+      "baseline"
+    ],
+    [
+      "evaluation",
+      "boundary",
+      "baseline",
+      "correct",
+      "main"
+    ],
+    [
+      "baseline",
+      "evaluation",
+      "main",
+      "boundary",
+      "correct"
+    ],
+    [
+      "main",
+      "baseline",
+      "correct",
+      "evaluation",
+      "boundary"
+    ],
+    [
+      "correct",
+      "main",
+      "boundary",
+      "baseline",
+      "evaluation"
+    ]
+  ],
+  "sources": {
+    "baseline": {
+      "source": "6e56fd775b43c748430a2bf9dc3f7b561a081822",
+      "tree": "5fc0a367fa21068d1d693c3678e24de6b6e9fcfd"
+    },
+    "main": {
+      "source": "01b4fa6d0619e933c154cb512a1f5da5cdfd1f3a",
+      "tree": "426279ed759d3931f48b140a8b9e0aac4ad362c1"
+    },
+    "correct": {
+      "source": "f68fe10e2b6e79178a03dc44b7a920d3b9987d98",
+      "tree": "726780cae14989464f69ee135bd5ef0d3982a013"
+    },
+    "boundary": {
+      "source": "190fd5dbf5f01e4a665a5a49ccd9d88bb5bde547",
+      "tree": "5d87f8abb08eb6f50c6e3965933f8e3fd9e04b77"
+    },
+    "evaluation": {
+      "source": "396c7b693c49768f1856f9afcabf731d40181b0c",
+      "tree": "e8c86a12ffbc4c2ffb897d0261e3409aaee7cb7b"
+    }
+  }
+}
