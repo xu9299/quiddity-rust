@@ -1,0 +1,53 @@
+name: Compare native and Callgrind mesh geometry on one Linux runner
+on:
+  push:
+    branches: ['validation/mesh-review-counter-geometry-2e587859']
+permissions:
+  contents: read
+jobs:
+  geometry:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1
+      RUSTFLAGS: ''
+      CARGO_BUILD_JOBS: '3'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 2e5878594a455c9564af19d3ff5024dc45f91c66
+          path: source
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: uv
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: selected-mesh-linux-instructions
+      - name: Compare the same mesh binary in both execution modes
+        run: |
+          git -C source fetch --depth=1 origin 4a0ae2f93dc6fae6a30b834fdb290c6781c8c70f
+          rustup toolchain install 1.99.1 --profile minimal
+          sudo -n apt-get update -qq
+          sudo -n apt-get install -y -qq valgrind
+          uv run --no-project --python 3.13 python controller/.mesh-review/counter_geometry.py source corpus evidence
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mesh-linux-native-geometry
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
