@@ -1,0 +1,135 @@
+name: Integrated mesh 365 ARM macOS 26 checks
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mesh-stack-365-arm26-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  SOURCE: 9a093526e2f77ec419386da4c3992c86037aecc6
+  TREE: 952641212f7fbaa6a52f127bc0850d1a2b094181
+jobs:
+  workspace-all:
+    runs-on: macos-26
+    timeout-minutes: 355
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/source/target
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        ref: ${{ env.SOURCE }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: pzfreo/quiddity-corpus
+        ref: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+        path: corpus
+        persist-credentials: false
+    - run: |
+        test "$(git rev-parse HEAD^{tree})" = "$TREE"
+        test "$(uname -m)" = arm64
+        rustup toolchain install 1.99.1 --profile minimal
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        workspaces: source
+        shared-key: selected-mesh-consolidated-arm26
+    - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+      with:
+        tool: nextest@0.9.146
+    - run: |-
+        cargo nextest archive --workspace --release --locked --archive-file ../tests.tar.zst
+      id: archive
+    - name: Run every workspace case
+      if: always() && steps.archive.outcome == 'success'
+      run: |
+        mkdir -p ../evidence
+        test "$(uname -m)" = arm64
+        test "$(git rev-parse HEAD)" = "$SOURCE"
+        test "$(git rev-parse HEAD^{tree})" = "$TREE"
+        echo "$(git rev-parse HEAD) $(git -C ../corpus rev-parse HEAD)" > ../evidence/source.txt
+        { uname -a; sw_vers; rustc -vV; } > ../evidence/runner.log
+        archive=(--archive-file ../tests.tar.zst --extract-to "$PWD" --extract-overwrite --workspace-remap "$PWD")
+        cargo-nextest nextest list "${archive[@]}" --profile ci --message-format json > ../evidence/tests.json
+        QUIDDITY_SNAPSHOT_VERIFY_DIR="$GITHUB_WORKSPACE/emitted/candidate" cargo-nextest nextest run --no-fail-fast --profile ci "${archive[@]}" 2>&1 | tee ../evidence/workspace.log
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: mesh-workspace-all
+        path: evidence/
+        if-no-files-found: warn
+        retention-days: 30
+    - name: Select a Python installation with a linkable macOS library
+      run: |
+        if ! command -v uv >/dev/null; then brew install uv; fi
+        uv python install 3.13
+        interpreter="$(uv python find --managed-python 3.13)"
+        libdir="$(uv run --no-project --python "$interpreter" python -c 'import pathlib, sys; print(next(p.parent for p in pathlib.Path(sys.base_prefix).rglob("libpython3.13.dylib") if p.is_file()))')"
+        test -f "$libdir/libpython3.13.dylib"
+        echo "PYO3_PYTHON=$interpreter" >> "$GITHUB_ENV"
+        echo "LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+        echo "DYLD_LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+    - run: |
+        mkdir -p ../arm-doc
+        { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } > ../arm-doc/environment.log
+        cargo test --doc --workspace --release --locked 2>&1 | tee ../arm-doc/doc.log
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: mesh-arm-doc
+        path: arm-doc/
+        retention-days: 30
+    - name: Reproduce strict snapshots
+      id: strict
+      if: always()
+      run: |
+        mkdir -p ../strict-evidence
+        test "$(uname -m)" = arm64
+        test "$(git rev-parse HEAD)" = "$SOURCE"
+        test "$(git rev-parse HEAD^{tree})" = "$TREE"
+        { git rev-parse HEAD HEAD^{tree}; git -C ../corpus rev-parse HEAD; uname -a; sw_vers; rustc -vV; } > ../strict-evidence/environment.log
+        cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../strict-evidence/strict.log
+    - name: Compare effective surfaces with the PR parent on this runner
+      if: always() && steps.strict.outcome == 'failure'
+      run: |
+        set -euo pipefail
+        grep -q 'Rust snapshot differs:.*effective_surfaces/' ../strict-evidence/strict.log
+        test -d ../emitted/candidate/effective_surfaces
+        git checkout --quiet --detach d5ea3a83894adfe27dea47d3721ec24ca39de185
+        test "$(git rev-parse HEAD)" = "d5ea3a83894adfe27dea47d3721ec24ca39de185"
+        QUIDDITY_SNAPSHOT_VERIFY_DIR="$GITHUB_WORKSPACE/emitted/parent" cargo test -p quiddity --lib --release --locked regression_tests::effective_surfaces::rust_snapshot_effective_surfaces -- --exact --nocapture 2>&1 | tee ../strict-evidence/parent.log
+        grep -q '1 passed; 0 failed' ../strict-evidence/parent.log
+        uv run --no-project --python 3.13 python - <<'PY' | tee ../strict-evidence/effective-control.json
+        from pathlib import Path
+        import json, hashlib
+        def hashes(p):
+            return {s.relative_to(p).as_posix():hashlib.sha256(s.read_bytes()).hexdigest() for s in p.rglob("*.json.gz")}
+        c,p=[hashes(Path("../emitted")/x/"effective_surfaces") for x in ("candidate","parent")]
+        committed=hashes(Path("tests/fixtures/rust-snapshot/effective_surfaces"))
+        assert c.keys()==p.keys()==committed.keys() and len(c)>0
+        print(json.dumps({"compared":len(c),"different_from_parent":[k for k in c if c[k]!=p[k]],"parent_differs_from_committed":[k for k in p if p[k]!=committed[k]]},sort_keys=True))
+        assert c==p
+        PY
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: mesh-strict-evidence
+        path: strict-evidence/
+        if-no-files-found: warn
+        retention-days: 30
+'on':
+  push:
+    branches:
+    - validation/mesh-stack-365-arm26-9a093526
