@@ -1,0 +1,80 @@
+name: Compare effective-surface snapshot outputs on one ARM Mac
+'on':
+  push:
+    branches: [validation/mesh-final-f85180d8-effective-control]
+permissions:
+  contents: read
+env:
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_TERM_COLOR: never
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  RUST_MIN_STACK: '67108864'
+jobs:
+  compare:
+    runs-on: xcode-27
+    timeout-minutes: 160
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+      - name: Identify platform and prepare the unchanged test producer
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(git -C ../corpus rev-parse HEAD)" = "$CORPUS"
+          cp .github/mesh-validation/compare.py ../compare.py
+          rustup toolchain install 1.99.1 --profile minimal
+          mkdir -p ../evidence
+          { uname -a; sw_vers; rustc -vV; git -C ../corpus rev-parse HEAD; } > ../evidence/environment.log
+          cat > ../replay.sh <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          label="$1"; source_id="$2"; tree="$3"
+          git checkout --quiet --detach "$source_id"
+          test "$(git rev-parse HEAD^{tree})" = "$tree"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p "../evidence/$label" "../emitted/$label"
+          QUIDDITY_SNAPSHOT_VERIFY_DIR="$GITHUB_WORKSPACE/emitted/$label" cargo test --workspace --lib --release --locked regression_tests::effective_surfaces::rust_snapshot_effective_surfaces -- --exact --nocapture 2>&1 | tee "../evidence/$label/test.log"
+          grep -q '1 passed; 0 failed' "../evidence/$label/test.log"
+          uv run --no-project --python 3.13 ../compare.py "$label" "$source_id" "$tree"
+          BASH
+          if ! command -v uv >/dev/null; then brew install uv; fi
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: master-trim-xcode-27
+      - name: Compare the upstream control and the correctness PR
+        run: |
+          bash ../replay.sh main f85180d852b4cadf3308e0857e68d9bfecb8d6ab c8a80f7bf282abbba6da26b39039849b5496b847
+          bash ../replay.sh pr349 4a0ae2f93dc6fae6a30b834fdb290c6781c8c70f b98067bb9b1eb4442dac0cb85b5aadb68e0bcc34
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: effective-main-349
+          path: evidence/
+          retention-days: 30
+      - name: Check the two performance increments and the parent of the inertia merge
+        run: |
+          bash ../replay.sh pr364 2e5878594a455c9564af19d3ff5024dc45f91c66 5106a26804c69e172ed259d86013aa470efbf49d
+          bash ../replay.sh pr365 825910cad038ee27650738e67fb10b50a63309ee 5d2f8739e843ddd0b4e85e9dc4469df9c80cf7b3
+          bash ../replay.sh before_inertia 327fa21b36fe15c3a15aa68b4ec37916d5d1acc5 e80dd7bc6d13845b8b60a214cd231e23f0a269f5
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: effective-all-sources
+          path: evidence/
+          retention-days: 30
