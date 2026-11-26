@@ -1,0 +1,12 @@
+name: PR 365 complete Linux workspace
+'on':
+  push:
+    branches: [validation/mesh-final-f85180d8-pr365-linux-workspace]
+permissions:
+  contents: read
+jobs:
+  linux:
+    uses: ./.github/workflows/mesh-final-f85180d8-linux-suite.yml
+    with:
+      os: ubuntu-latest
+      tier: ci
