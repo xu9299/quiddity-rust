@@ -50,6 +50,8 @@ mod pads;
 mod partial_hole_exits;
 #[path = "passages.rs"]
 mod passages;
+#[path = "polygonal_bosses.rs"]
+mod polygonal_bosses;
 #[path = "prismatic_pockets.rs"]
 mod prismatic_pockets;
 #[path = "publication.rs"]

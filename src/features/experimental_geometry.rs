@@ -55,7 +55,7 @@ pub struct GeometryGraph<'a> {
     pub part: &'a Part,
     /// Ascending.
     faces: Vec<usize>,
-    blends: BlendGraph<'a>,
+    blends: OnceLock<BlendGraph<'a>>,
     facts: OnceLock<Vec<BlendFact>>,
 }
 
@@ -80,7 +80,7 @@ impl<'a> GeometryGraph<'a> {
         GeometryGraph {
             part,
             faces,
-            blends: BlendGraph::new(part),
+            blends: OnceLock::new(),
             facts: OnceLock::new(),
         }
     }
@@ -110,6 +110,11 @@ impl<'a> GeometryGraph<'a> {
         face
     }
 
+    /// Bounds, native planarity and adjacency do not need the part-wide blend tables.
+    fn blends(&self) -> &BlendGraph<'a> {
+        self.blends.get_or_init(|| BlendGraph::new(self.part))
+    }
+
     /// The graph's faces sharing an edge with *face*, each once, in the face's edge order.
     pub fn neighbours(&self, face: usize) -> Vec<usize> {
         let mut out = self.part.neighbours(self.require(face));
@@ -119,12 +124,12 @@ impl<'a> GeometryGraph<'a> {
 
     /// `arc`: the kind of the join between two neighbours.
     pub fn arc(&self, a: usize, b: usize) -> Option<Arc> {
-        self.blends.arc(self.require(a), self.require(b))
+        self.blends().arc(self.require(a), self.require(b))
     }
 
     /// `smooth_side`: the proved side of a smooth join.
     pub fn smooth_side(&self, a: usize, b: usize) -> Option<SmoothSide> {
-        self.blends.smooth_side(self.require(a), self.require(b))
+        self.blends().smooth_side(self.require(a), self.require(b))
     }
 
     /// `bounds`: the face's box as `(low, high)` per axis.
@@ -146,14 +151,14 @@ impl<'a> GeometryGraph<'a> {
     /// `surface_fact`, when it is an `AnalyticSurface`: the native surface, or the one primitive
     /// a B-spline or Bezier face is certified to be. `None` is a `RefusedSurface`.
     pub fn surface_fact(&self, face: usize) -> Option<&AnalyticFact> {
-        self.blends.effective(self.require(face))
+        self.blends().effective(self.require(face))
     }
 
     /// `blend_facts`: every complete native cylindrical blend chain among the graph's faces, in
     /// discovery order (by least rolling face).
     pub fn blend_facts(&self) -> &[BlendFact] {
         self.facts.get_or_init(|| {
-            self.blends
+            self.blends()
                 .chains()
                 .into_iter()
                 .filter(|c| self.within(c))
@@ -249,5 +254,14 @@ impl<'a> GeometryGraph<'a> {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+impl GeometryGraph<'_> {
+    internal_entry! {
+        pub fn has_blend_tables(&self) -> bool {
+            self.blends.get().is_some()
+        }
     }
 }

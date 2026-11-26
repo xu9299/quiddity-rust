@@ -739,35 +739,32 @@ pub(crate) fn analyse(
     let mut refusals = Vec::new();
     let part = ctx.part;
     let tol = opts.tol.unwrap_or(TOL);
-    let graphs: Vec<GeometryGraph<'_>> = if part.solids.is_empty() {
-        vec![GeometryGraph::new(part)]
-    } else {
-        (0..part.solids.len())
-            .map(|s| GeometryGraph::for_solid(part, s))
-            .collect()
-    };
-    let mut found: Vec<(Proposal, usize)> = Vec::new();
-    for (g, graph) in graphs.iter().enumerate() {
+    let mut accepted = Vec::new();
+    // Resolve faces against their own solid before dropping its graph. The stable sort
+    // preserves solid, axis and discovery order for records with equal ordering keys.
+    let mut visit = |graph: GeometryGraph<'_>| {
+        let bridge = GeometryEvidence::new(&graph);
         for axis in AXES {
-            found.extend(
-                recognise_one(graph, tol, opts.angle_tol, false, axis, &mut refusals)
-                    .into_iter()
-                    .map(|p| (p, g)),
-            );
+            for proposal in recognise_one(&graph, tol, opts.angle_tol, false, axis, &mut refusals) {
+                let refs = bridge.refs(&proposal.sides);
+                let mut constituent = refs.clone();
+                constituent.push(
+                    proposal
+                        .terminal_cap
+                        .expect("a boss keeps its terminal cap"),
+                );
+                accepted.push(bridge.occurrence(proposal.record, &refs, &constituent));
+            }
+        }
+    };
+    if part.solids.is_empty() {
+        visit(GeometryGraph::new(part));
+    } else {
+        for solid in 0..part.solids.len() {
+            visit(GeometryGraph::for_solid(part, solid));
         }
     }
-    found.sort_by(|a, b| record_order(&a.0.record, &b.0.record));
-    let accepted = found
-        .into_iter()
-        .map(|(p, g)| {
-            let bridge = GeometryEvidence::new(&graphs[g]);
-            let refs = bridge.refs(&p.sides);
-            let terminal = p.terminal_cap.expect("a boss keeps its terminal cap");
-            let mut constituent = refs.clone();
-            constituent.push(terminal);
-            bridge.occurrence(p.record, &refs, &constituent)
-        })
-        .collect();
+    accepted.sort_by(|a, b| record_order(&a.record, &b.record));
     super::discovery::Analysis { accepted, refusals }
 }
 

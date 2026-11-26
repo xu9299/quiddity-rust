@@ -6,6 +6,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 ## Unreleased
 
+- Reduce peak memory during polygonal boss discovery on multi-solid parts by
+  processing one solid's geometry graph at a time and building blend tables on first use.
 - For #359, expose signed solid inertia tensors in haecceity and Python, with a
   parallel-axis shift and optional centroidal tensors and their reference volumes
   in the `quiddity brep` JSON report. Use the local chart for shallow spherical
