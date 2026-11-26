@@ -1,0 +1,127 @@
+name: Complete PR 349 Linux test inventory
+on:
+  push:
+    branches: [validation/pr349-main-only-4a0ae2f9]
+permissions:
+  contents: read
+  actions: read
+env:
+  MERGE: 1d432a824e903214beffe5074f61e228588d44b6
+  TREE: b98067bb9b1eb4442dac0cb85b5aadb68e0bcc34
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  DIGEST: e86db67837eef7595838d02fdf5fe890d8fa22592e6571ec6ac0a47882d4f414
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  CARGO_TERM_COLOR: never
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: ${{ env.MERGE }}
+          path: source
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Acquire the exact upstream test archive
+        id: acquire
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$MERGE"
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = "$TREE"
+          mkdir -p workload
+          if gh api repos/pzfreo/quiddity/actions/artifacts/15078986237/zip > "$RUNNER_TEMP/runner-archive.zip"; then
+            echo "$DIGEST  $RUNNER_TEMP/runner-archive.zip" | sha256sum -c -
+            unzip -q "$RUNNER_TEMP/runner-archive.zip" -d workload
+            echo "origin=upstream" >> "$GITHUB_OUTPUT"
+          else
+            echo "origin=rebuilt" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.acquire.outputs.origin == 'rebuilt'
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - if: steps.acquire.outputs.origin == 'rebuilt'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source
+      - name: Rebuild only if the upstream archive cannot be downloaded
+        if: steps.acquire.outputs.origin == 'rebuilt'
+        working-directory: source
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          cargo nextest archive --workspace --release --locked --archive-file ../workload/tests-ubuntu-latest.tar.zst
+          python3 .github/ci_tiers.py --base HEAD^1 --archive ../workload/tests-ubuntu-latest.tar.zst --output-dir ../workload/tier-plan
+      - name: Record archive identity
+        working-directory: workload
+        run: |
+          set -euo pipefail
+          test -s tests-ubuntu-latest.tar.zst
+          echo "${{ steps.acquire.outputs.origin }}" > origin.txt
+          sha256sum tests-ubuntu-latest.tar.zst tier-plan/{full,pr,main-only}.txt | tee SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr349-linux-inputs
+          path: workload/
+          compression-level: 0
+          retention-days: 1
+  complement:
+    needs: inputs
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1,2,3,4]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: control
+          sparse-checkout: .github/pr349-complement.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity
+          ref: ${{ env.MERGE }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5
+        with:
+          tool: nextest@0.9.146
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pr349-linux-inputs
+          path: workload
+      - name: Run disjoint main-only cases
+        working-directory: source
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$MERGE"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$TREE"
+          test "$(git -C ../corpus rev-parse HEAD)" = "$CORPUS"
+          (cd ../workload && sha256sum -c SHA256SUMS)
+          original="$(dirname "$(dirname "$GITHUB_WORKSPACE")")/quiddity"
+          mkdir -p "$original"
+          ln -s "$PWD" "$original/quiddity"
+          test -f "$original/quiddity/Cargo.toml"
+          python3 -u ../control/.github/pr349-complement.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: complement-${{ matrix.shard }}
+          path: receipt/
+          if-no-files-found: ignore
+          retention-days: 30
