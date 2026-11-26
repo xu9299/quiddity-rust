@@ -1,0 +1,123 @@
+name: Validate polygonal boss graph lifetime
+on:
+  push:
+    branches: [validation/polygonal-boss-57c889fe]
+permissions:
+  contents: read
+env:
+  SOURCE: e3571e24e6920479ddfefb39806468e41ddbe1f3
+  TREE: 86980915d7feb98759f7ec989f119ba012411bd7
+  BASE: 57c889fe8f1268d58adda730d6160f4512f156fd
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  RUST_MIN_STACK: '67108864'
+  RUSTUP_TOOLCHAIN: '1.99.1'
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+defaults:
+  run:
+    shell: bash
+    working-directory: source
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15, check: workspace}
+          - {os: macos-15, check: strict}
+          - {os: ubuntu-latest, check: lint}
+    name: ${{ matrix.check }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: matrix.check != 'lint'
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+      - name: Identify the source and toolchain
+        run: |
+          mkdir -p ../evidence
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$TREE"
+          test "$(git rev-parse HEAD^)" = "$BASE"
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          { git rev-parse HEAD 'HEAD^{tree}'; uname -a; rustc -vV; cargo -V; } | tee ../evidence/environment.log
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            test "$(uname -m)" = arm64
+            test "$(git -C ../corpus rev-parse HEAD)" = "$CORPUS"
+            { sw_vers; git -C ../corpus rev-parse HEAD; } | tee -a ../evidence/environment.log
+            if ! command -v uv >/dev/null; then brew install uv; fi
+            uv python install 3.13
+            py="$(uv python find --managed-python 3.13)"
+            libdir="$(uv run --no-project --python "$py" python -c 'import pathlib,sys; print(next(p.parent for p in pathlib.Path(sys.base_prefix).rglob("libpython3.13.dylib") if p.is_file()))')"
+            echo "PYO3_PYTHON=$py" >> "$GITHUB_ENV"
+            echo "LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+            echo "DYLD_LIBRARY_PATH=$libdir" >> "$GITHUB_ENV"
+          fi
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: source -> ../target
+          shared-key: polygonal-${{ matrix.os }}-${{ matrix.check }}
+      - name: Format and lint the full workspace
+        if: matrix.check == 'lint'
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings 2>&1 | tee ../evidence/clippy.log
+      - name: Run the full workspace with the pinned corpus
+        if: matrix.check == 'workspace'
+        env:
+          QUIDDITY_SNAPSHOT_VERIFY_DIR: ${{ github.workspace }}/emitted
+        run: cargo test --workspace --release --locked 2>&1 | tee ../evidence/workspace.log
+      - name: Check each emitted snapshot digest
+        id: inventory
+        if: matrix.check == 'workspace'
+        run: |
+          uv run --no-project --python 3.13 python - <<'PY'
+          import hashlib, json, os, pathlib
+          def digests(root):
+              return {p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*.json.gz")}
+          ref=digests(pathlib.Path("tests/fixtures/rust-snapshot"))
+          got=digests(pathlib.Path("../emitted"))
+          assert ref.keys()==got.keys()
+          differences=sorted(k for k in ref if ref[k]!=got[k])
+          pathlib.Path("../evidence/inventory.json").write_text(json.dumps({"count":len(ref),"differences":differences,"digests":got}))
+          with open(os.environ["GITHUB_OUTPUT"],"a") as f:
+              print("effective="+str(any(k.startswith("effective_surfaces/") for k in differences)).lower(),file=f)
+          PY
+      - name: Compare any differing effective surface snapshots with their parent
+        if: steps.inventory.outputs.effective == 'true'
+        run: |
+          git worktree add --detach ../baseline "$BASE"
+          (cd ../baseline && QUIDDITY_SNAPSHOT_VERIFY_DIR="$GITHUB_WORKSPACE/parent-emitted" cargo test -p quiddity --lib --release --locked regression_tests::effective_surfaces::rust_snapshot_effective_surfaces -- --exact) 2>&1 | tee ../evidence/parent.log
+          uv run --no-project --python 3.13 python - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          parent=Path("../parent-emitted")
+          digest={p.relative_to(parent).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in parent.rglob("*.json.gz")}
+          inventory=json.loads(Path("../evidence/inventory.json").read_text())
+          candidate={k:v for k,v in inventory["digests"].items() if k.startswith("effective_surfaces/")}
+          assert candidate and digest==candidate
+          print(len(candidate),"effective surface snapshots match the parent on the same runner")
+          Path("../evidence/parent-effective.json").write_text(json.dumps(digest))
+          PY
+      - name: Reproduce committed snapshots byte for byte
+        if: matrix.check == 'strict'
+        run: cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/strict.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: polygonal-${{ matrix.check }}
+          path: evidence
+          retention-days: 30
