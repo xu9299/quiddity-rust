@@ -150,9 +150,10 @@ impl Part {
         angular: f64,
     ) -> Result<FaceMesh, MeshRefusal> {
         let mut mesher = PartMesher::new(self, deflection, angular)?;
-        let mut result = mesher.triangulate(face);
-        if result.is_err() && !mesher.use_spatial_edges([face]).is_empty() {
-            result = mesher.triangulate(face);
+        let edges = self.face_edges(face);
+        let mut result = mesher.triangulate(face, &edges);
+        if result.is_err() && mesher.use_spatial_edges_for_face(&edges) {
+            result = mesher.triangulate(face, &edges);
         }
         result.map_err(|reason| MeshRefusal { reason })
     }
@@ -171,10 +172,10 @@ impl Part {
 }
 
 impl PartMesher<'_> {
-    fn triangulate(&mut self, face: usize) -> Result<FaceMesh, String> {
+    fn triangulate(&mut self, face: usize, edges: &[usize]) -> Result<FaceMesh, String> {
         let mut result = Err(CROSSES.to_owned());
         for level in 0..BOUNDARY_LEVELS.len() {
-            result = self.face(face, &|_| level);
+            result = self.face(face, edges, &|_| level);
             if !matches!(&result, Err(why) if why == CROSSES) {
                 break;
             }
@@ -192,7 +193,7 @@ impl PartMesher<'_> {
         loop {
             for f in 0..n {
                 if dirty[f] {
-                    out[f] = Some(self.face(f, &|e| level[e]));
+                    out[f] = Some(self.face(f, &part.face_edges(f), &|e| level[e]));
                     // This face and all its edge plans have consumed its chart at
                     // the current levels. A later retry can reconstruct it on demand.
                     self.setups[f] = None;
@@ -556,6 +557,32 @@ impl<'a> PartMesher<'a> {
             .as_ref()
     }
 
+    fn switch_to_spatial(&mut self, edge: usize) -> bool {
+        if self.selected_edge(edge).is_none() {
+            return false;
+        }
+        self.selected[edge] = std::cell::OnceCell::from(None);
+        true
+    }
+
+    fn use_spatial_edges_for_face(&mut self, edges: &[usize]) -> bool {
+        let incident = self.part.edge_faces();
+        let mut changed = false;
+        for &edge in edges {
+            if self.switch_to_spatial(edge) {
+                changed = true;
+                for &neighbour in &incident[edge] {
+                    self.setups[neighbour] = None;
+                }
+            }
+        }
+        if changed {
+            // A single-face query has only built plans for this face's edges.
+            self.plans.clear();
+        }
+        changed
+    }
+
     /// Switch selected edges of refused faces and return the faces that consume
     /// an invalidated plan. A plan reads the setups on both sides of its edge.
     fn use_spatial_edges(&mut self, faces: impl IntoIterator<Item = usize>) -> BTreeSet<usize> {
@@ -563,8 +590,7 @@ impl<'a> PartMesher<'a> {
         let mut changed_setups = BTreeSet::new();
         for face in faces {
             for edge in self.part.face_edges(face) {
-                if self.selected_edge(edge).is_some() {
-                    self.selected[edge] = std::cell::OnceCell::from(None);
+                if self.switch_to_spatial(edge) {
                     changed_setups.extend(incident[edge].iter().copied());
                 }
             }
@@ -878,11 +904,15 @@ impl<'a> PartMesher<'a> {
     }
 
     /// The face meshed, each edge `e` at thinning level `level(e)`.
-    fn face(&mut self, face: usize, level: &dyn Fn(usize) -> usize) -> Result<FaceMesh, String> {
+    fn face(
+        &mut self,
+        face: usize,
+        edges: &[usize],
+        level: &dyn Fn(usize) -> usize,
+    ) -> Result<FaceMesh, String> {
         let part = self.part;
-        let edges = part.face_edges(face);
         self.setup(face);
-        for &e in &edges {
+        for &e in edges {
             self.plan(e, level(e));
         }
         let setup = match &self.setups[face] {

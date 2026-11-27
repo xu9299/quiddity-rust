@@ -10,6 +10,8 @@ in [docs/alpha1.md](docs/alpha1.md).
 
 - `Part::mesh` reuses unaffected face meshes after a spatial-boundary fallback
   and reduces peak memory for face charts and shared edge plans.
+- `Part::triangulate` reuses the requested face's edge list across thinning
+  attempts and rebuilds only the edge plans this call needs after a fallback.
 
 ## 0.6.0 (2026-11-27)
 
