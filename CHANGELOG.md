@@ -4,6 +4,13 @@ All notable changes to quiddity-rust and haecceity. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Alpha 1's gates and their evidence are
 in [docs/alpha1.md](docs/alpha1.md).
 
+## Unreleased
+
+### haecceity
+
+- `Part::mesh` reuses unaffected face meshes after a spatial-boundary fallback
+  and reduces peak memory for face charts and shared edge plans.
+
 ## 0.6.0 (2026-11-27)
 
 ### Breaking (Rust API)

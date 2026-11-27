@@ -45,7 +45,7 @@
 //! The method is specify-core-rust's stand-in (its `triangulate.rs`, upstream need U4), with
 //! the boundary discretised per edge instead of per face.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::f64::consts::TAU;
 
 use spade::{ConstrainedDelaunayTriangulation, HasPosition, Point2, Triangulation};
@@ -151,7 +151,7 @@ impl Part {
     ) -> Result<FaceMesh, MeshRefusal> {
         let mut mesher = PartMesher::new(self, deflection, angular)?;
         let mut result = mesher.triangulate(face);
-        if result.is_err() && mesher.use_spatial_edges([face]) {
+        if result.is_err() && !mesher.use_spatial_edges([face]).is_empty() {
             result = mesher.triangulate(face);
         }
         result.map_err(|reason| MeshRefusal { reason })
@@ -166,18 +166,7 @@ impl Part {
             Ok(m) => m,
             Err(refusal) => return vec![Err(refusal); self.faces.len()],
         };
-        loop {
-            let meshes = mesher.mesh();
-            let refused = meshes
-                .iter()
-                .enumerate()
-                .filter_map(|(face, mesh)| mesh.is_err().then_some(face));
-            // Switching a shared edge can make a previously successful neighbour fail.
-            // Each retry permanently switches at least one more edge for this mesh.
-            if !mesher.use_spatial_edges(refused) {
-                return meshes;
-            }
-        }
+        mesher.mesh()
     }
 }
 
@@ -204,6 +193,9 @@ impl PartMesher<'_> {
             for f in 0..n {
                 if dirty[f] {
                     out[f] = Some(self.face(f, &|e| level[e]));
+                    // This face and all its edge plans have consumed its chart at
+                    // the current levels. A later retry can reconstruct it on demand.
+                    self.setups[f] = None;
                     dirty[f] = false;
                 }
             }
@@ -231,8 +223,33 @@ impl PartMesher<'_> {
                 }
                 raised = true;
             }
-            if !raised {
+            if raised {
+                continue;
+            }
+            let refused = out.iter().enumerate().filter_map(|(face, mesh)| {
+                mesh.as_ref().is_some_and(Result::is_err).then_some(face)
+            });
+            let affected = self.use_spatial_edges(refused);
+            if affected.is_empty() {
                 break;
+            }
+            // Restart thinning at level zero, just as for a fresh spatial retry.
+            // A switched edge can also make a previously successful face refuse.
+            for face in affected {
+                dirty[face] = true;
+            }
+            for (edge, edge_level) in level.iter_mut().enumerate() {
+                if *edge_level != 0 {
+                    *edge_level = 0;
+                    for &face in &edge_faces[edge] {
+                        dirty[face] = true;
+                    }
+                }
+            }
+            for (mesh, &changed) in out.iter_mut().zip(&dirty) {
+                if changed {
+                    *mesh = None;
+                }
             }
         }
         out.into_iter()
@@ -410,7 +427,7 @@ struct Plan {
     /// Per sample, its index in `points` if kept.
     at_sample: Vec<Option<usize>>,
     /// Per segment (sample `i` to `i + 1`), the points inside it and their fractions along it,
-    /// in order.
+    /// in order. Empty when no segment has interior points.
     between: Vec<Vec<(usize, f64)>>,
 }
 
@@ -539,21 +556,33 @@ impl<'a> PartMesher<'a> {
             .as_ref()
     }
 
-    fn use_spatial_edges(&mut self, faces: impl IntoIterator<Item = usize>) -> bool {
-        let mut changed = false;
+    /// Switch selected edges of refused faces and return the faces that consume
+    /// an invalidated plan. A plan reads the setups on both sides of its edge.
+    fn use_spatial_edges(&mut self, faces: impl IntoIterator<Item = usize>) -> BTreeSet<usize> {
+        let incident = self.part.edge_faces();
+        let mut changed_setups = BTreeSet::new();
         for face in faces {
             for edge in self.part.face_edges(face) {
                 if self.selected_edge(edge).is_some() {
                     self.selected[edge] = std::cell::OnceCell::from(None);
-                    changed = true;
+                    changed_setups.extend(incident[edge].iter().copied());
                 }
             }
         }
-        if changed {
-            self.setups.iter_mut().for_each(|setup| *setup = None);
-            self.plans.clear();
+        if changed_setups.is_empty() {
+            return changed_setups;
         }
-        changed
+        let mut changed_plans = BTreeSet::new();
+        for face in changed_setups {
+            self.setups[face] = None;
+            changed_plans.extend(self.part.face_edges(face));
+        }
+        self.plans
+            .retain(|(edge, _), _| !changed_plans.contains(edge));
+        changed_plans
+            .into_iter()
+            .flat_map(|edge| incident[edge].iter().copied())
+            .collect()
     }
 
     fn edge_samples(&self, edge: usize) -> &[V3] {
@@ -831,7 +860,7 @@ impl<'a> PartMesher<'a> {
         let mut plan = Plan {
             points: Vec::with_capacity(at.len()),
             at_sample: vec![None; n],
-            between: vec![Vec::new(); n.saturating_sub(1)],
+            between: Vec::new(),
         };
         for ((s, t), p) in at {
             let (index, t) = (plan.points.len(), f64::from_bits(t));
@@ -839,6 +868,9 @@ impl<'a> PartMesher<'a> {
             if t == 0.0 {
                 plan.at_sample[s] = Some(index);
             } else {
+                if plan.between.is_empty() {
+                    plan.between.resize_with(n - 1, Vec::new);
+                }
                 plan.between[s].push((index, t));
             }
         }
@@ -1351,12 +1383,11 @@ fn loop_nodes(
         if let Some((pe, ps, puv)) = previous
             && pe == e
             && ps.abs_diff(sample) == 1
+            && let Some(inside) = plan.between.get(ps.min(sample))
         {
             // A point on the chord between two samples sits at its place along their parameter
             // chord (inverting it instead could land anywhere on a collapsed side or a seam).
-            let segment = ps.min(sample);
             let (from, to) = if sample > ps { (puv, uv) } else { (uv, puv) };
-            let inside = &plan.between[segment];
             for step in 0..inside.len() {
                 let position = if sample < ps {
                     inside.len() - 1 - step

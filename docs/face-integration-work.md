@@ -168,8 +168,17 @@ On a placed part the mesh and measurement resolve the selection in the source
 frame and carry it to caller coordinates. Either query may populate the cache
 first. Ordinary mesh selection only requires geometric qualification.
 Each mesh call constructs its own shared edge plans and parameter charts. A
-boundary fallback rebuilds the charts and plans. Further work reuse and
-specialised evaluators are separate performance changes.
+spatial switch changes the chart of each incident face. Its other edge plans
+read that chart too, so every face sharing one of those plans is meshed again.
+The retry starts thinning at level zero. Faces on any edge whose thinning
+level was raised are also revisited, even if the edge is elsewhere in the part.
+Other faces keep their triangles.
+
+Once a face and its current edge plans have used its chart, the whole-part
+mesher releases that chart. A later retry reconstructs it on demand. Shared
+edge plans keep their points and sample indices. They allocate a table for
+points inside sample segments only when at least one segment contains a
+subdivision.
 
 The mesh keeps the shared STEP vertices at the ends of an edge. An unresolved
 run of samples next to both the STEP vertex and the selected curve's true end
