@@ -1,0 +1,84 @@
+name: Check mesh retry snapshots on ARM macOS
+
+on:
+  push:
+    branches: [validation/mesh-single-retry-53317249-arm-strict]
+
+permissions:
+  contents: read
+
+env:
+  BASE: c7c7dc572551a8b8b59b8b160cbdbaddac594e7d
+  BASE_TREE: 2f47cd5a7801f966ae6bb8ecd9dcac3af5cdd6d7
+  CANDIDATE: 533172498dd9795e42f8c2f201a6b87c83b5a182
+  CANDIDATE_TREE: 06604cabc3f7956011fa9c70c35533293d17be94
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  RUSTUP_TOOLCHAIN: '1.99.1'
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  CARGO_TERM_COLOR: never
+
+jobs:
+  snapshots:
+    runs-on: macos-15
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.BASE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+      - name: Verify the runner, source revisions and corpus
+        id: identify
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$BASE_TREE"
+          test "$(git rev-parse "$CANDIDATE^{tree}")" = "$CANDIDATE_TREE"
+          test "$(git -C ../corpus rev-parse HEAD)" = "$CORPUS"
+          git merge-base --is-ancestor "$BASE" "$CANDIDATE"
+          git diff --exit-code "$BASE" "$CANDIDATE" -- Cargo.lock rust-toolchain.toml tests/fixtures/rust-snapshot
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          mkdir -p ../evidence
+          {
+            git rev-parse HEAD 'HEAD^{tree}' "$CANDIDATE" "$CANDIDATE^{tree}"
+            git -C ../corpus rev-parse HEAD
+            sw_vers
+            uname -m
+            rustc -vV
+            cargo -V
+            shasum -a 256 Cargo.lock
+          } | tee ../evidence/environment.log
+      - name: Reproduce the official release snapshots
+        run: |
+          set -euo pipefail
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/baseline.log
+      - name: Reproduce the candidate snapshots
+        if: ${{ !cancelled() && steps.identify.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          cargo run -p snapshot-tool --release --locked -- --check 2>&1 | tee ../evidence/candidate.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ !cancelled() && steps.identify.outcome == 'success' }}
+        with:
+          name: strict-snapshot-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
