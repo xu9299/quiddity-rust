@@ -1,0 +1,122 @@
+name: Compare ARM snapshot outputs for mesh retries
+
+on:
+  push:
+    branches: [validation/mesh-single-retry-53317249-arm-compare]
+
+permissions:
+  contents: read
+
+env:
+  BASE: c7c7dc572551a8b8b59b8b160cbdbaddac594e7d
+  CANDIDATE: 533172498dd9795e42f8c2f201a6b87c83b5a182
+  CORPUS: 3ef06590a7a27ed65ca1f1a6e7f7ea4d5c328f1f
+  QUIDDITY_CORPUS: ${{ github.workspace }}/corpus
+  QUIDDITY_CORPUS_REQUIRED: '1'
+  RUSTUP_TOOLCHAIN: '1.99.1'
+  CARGO_BUILD_JOBS: '6'
+  RUST_TEST_THREADS: '6'
+  CARGO_TERM_COLOR: never
+
+jobs:
+  compare:
+    runs-on: macos-15
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.BASE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: pzfreo/quiddity-corpus
+          ref: ${{ env.CORPUS }}
+          path: corpus
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        with:
+          enable-cache: false
+      - name: Replay the producers of the 160 strict differences
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse 'HEAD^{tree}')" = 2f47cd5a7801f966ae6bb8ecd9dcac3af5cdd6d7
+          test "$(git rev-parse "$CANDIDATE^{tree}")" = 06604cabc3f7956011fa9c70c35533293d17be94
+          test "$(git -C ../corpus rev-parse HEAD)" = "$CORPUS"
+          git diff --exit-code "$BASE" "$CANDIDATE" -- Cargo.lock rust-toolchain.toml tests/fixtures
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          mkdir -p ../evidence
+          {
+            git rev-parse "$BASE" "$BASE^{tree}" "$CANDIDATE" "$CANDIDATE^{tree}"
+            git -C ../corpus rev-parse HEAD
+            sw_vers
+            uname -m
+            rustc -vV
+            cargo -V
+            shasum -a 256 Cargo.lock
+          } | tee ../evidence/environment.log
+          for rev in "$BASE" "$CANDIDATE"; do
+            git checkout --detach "$rev"
+            test "$(git rev-parse HEAD)" = "$rev"
+            export QUIDDITY_SNAPSHOT_VERIFY_DIR="$RUNNER_TEMP/$rev"
+            cargo test --workspace --release --locked -- \
+              rust_snapshot_bosses rust_snapshot_face_levels rust_snapshot_plates \
+              rust_snapshot_repeating_radial_profiles rust_snapshot_risers rust_snapshot_thin_wall_bodies \
+              rust_snapshot_cylindrical_proofs rust_snapshot_effective_surfaces rust_snapshot_frames_and_equivariance \
+              rust_snapshot_outer_profiles rust_snapshot_pmi rust_snapshot_documents::slice_ \
+              rust_snapshot_section_recess_geometry rust_snapshot_seat_and_envelope_proofs \
+              rust_snapshot_section_ring_proposals --nocapture 2>&1 | tee "../evidence/$rev.log"
+          done
+      - name: Compare the generated files and verify the inventory against the strict run
+        run: |
+          set -euo pipefail
+          uv run --no-project --python "$(command -v python3)" python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          evidence = Path("../evidence")
+          fixtures = Path("tests/fixtures/rust-snapshot")
+          reference = json.loads((fixtures / "provenance.json").read_bytes())["snapshots"]
+          trees = [Path(os.environ["RUNNER_TEMP"]) / os.environ[key] for key in ("BASE", "CANDIDATE")]
+          inventories = [{p.relative_to(t).as_posix() for p in t.rglob("*.json.gz")} for t in trees]
+          if not inventories[0] or inventories[0] != inventories[1]:
+              raise SystemExit("The two producer inventories differ or are empty.")
+          rows, changed = {}, []
+          for name in sorted(inventories[0]):
+              official, candidate = [(tree / name).read_bytes() for tree in trees]
+              if official != candidate:
+                  changed.append(name)
+              hashes = [hashlib.sha256(blob).hexdigest() for blob in (official, candidate)]
+              if hashes != [reference[name], reference[name]]:
+                  rows[name] = dict(committed=reference[name], official=hashes[0], candidate=hashes[1])
+                  for label, tree in zip(("official", "candidate"), trees):
+                      target = evidence / label / name
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copyfile(tree / name, target)
+          name_hash = hashlib.sha256(("\n".join(sorted(rows)) + "\n").encode()).hexdigest()
+          result = dict(replayed=len(inventories[0]), different_between_revisions=changed,
+                        drift_names_sha256=name_hash, comparisons=rows)
+          (evidence / "comparison.json").write_text(json.dumps(result, indent=2) + "\n")
+          print(f"{len(inventories[0])} replayed, {len(rows)} differ from the committed snapshots, "
+                f"{len(changed)} differ between the release and candidate.")
+          # Sorted paths reported by both revisions in strict run 46109147843.
+          expected_names = "c56d36f4aafbcdc0b715dacfa938005100ff276efe81a8db6df4eac25a9490e1"
+          if len(rows) != 160 or name_hash != expected_names or changed:
+              raise SystemExit("The strict differences were not reproduced identically.")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: compared-arm-snapshots
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
